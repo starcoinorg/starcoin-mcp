@@ -236,14 +236,18 @@ These defaults keep the server conservative while still supporting the canonical
 Suggested environment variable names:
 
 - `STARCOIN_NODE_MCP_RPC_ENDPOINT_URL`
+- `STARCOIN_NODE_MCP_CONNECT_TIMEOUT_MS`
 - `STARCOIN_NODE_MCP_MODE`
 - `STARCOIN_NODE_MCP_VM_PROFILE`
+- `STARCOIN_NODE_MCP_STARTUP_PROBE_TIMEOUT_MS`
 - `STARCOIN_NODE_MCP_EXPECTED_CHAIN_ID`
 - `STARCOIN_NODE_MCP_EXPECTED_NETWORK`
 - `STARCOIN_NODE_MCP_EXPECTED_GENESIS_HASH`
 - `STARCOIN_NODE_MCP_REQUIRE_GENESIS_HASH_MATCH`
 - `STARCOIN_NODE_MCP_RPC_AUTH_TOKEN`
+- `STARCOIN_NODE_MCP_RPC_HEADERS`
 - `STARCOIN_NODE_MCP_ALLOWED_RPC_HOSTS`
+- `STARCOIN_NODE_MCP_TLS_SERVER_NAME`
 - `STARCOIN_NODE_MCP_TLS_PINNED_SPKI_SHA256`
 - `STARCOIN_NODE_MCP_REQUEST_TIMEOUT_MS`
 - `STARCOIN_NODE_MCP_ALLOW_INSECURE_REMOTE_TRANSPORT`
@@ -261,6 +265,14 @@ Suggested environment variable names:
 - `STARCOIN_NODE_MCP_MAX_CONCURRENT_WATCH_REQUESTS`
 - `STARCOIN_NODE_MCP_MAX_INFLIGHT_EXPENSIVE_REQUESTS`
 - `STARCOIN_NODE_MCP_LOG_LEVEL`
+
+These names follow the precedence order defined earlier in this document:
+
+- CLI flags override environment variables
+- environment variables override config-file values
+- config-file values override built-in defaults
+
+In env-only deployments, unset optional endpoint variables fall back to config-file values when present, and otherwise to built-in defaults.
 
 ## Safe Bounds
 
