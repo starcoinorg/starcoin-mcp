@@ -65,6 +65,7 @@ This profile includes everything in `read_only` and additionally allows:
 Additional requirements:
 
 - the endpoint must pass chain pin validation
+- the endpoint should expose or be preconfigured with a trusted `genesis_hash`
 - RPC capability probing must confirm the required preparation and submission methods
 - remote endpoints should use secure transport unless a development override is explicitly enabled
 
@@ -105,7 +106,7 @@ The normal startup sequence is:
 2. `starcoin-node-mcp` loads configuration
 3. configuration validation resolves the desired capability profile
 4. the server establishes an RPC client session to the configured endpoint
-5. startup probes fetch chain identity, endpoint health, and supported capabilities
+5. startup probes fetch chain identity, including `chain_id`, network, and `genesis_hash`, plus endpoint health and supported capabilities
 6. if transaction mode is enabled, chain pinning and submission capabilities are verified
 7. the server begins serving MCP tools
 
@@ -166,6 +167,9 @@ The deployment model requires the following recovery behavior:
 2. a chain identity change invalidates transaction mode until startup checks succeed again
 3. transient query failures do not change the configured capability profile
 4. a failed signed-transaction submission call does not imply that the node definitively rejected the transaction unless the endpoint returned a structured submission error
+5. if submission outcome is uncertain, the server returns `submission_unknown` together with a deterministic `txn_hash`, and the host must reconcile by hash before any retry
+6. if the endpoint rejects a signed transaction as expired or stale, the host must restart from unsigned transaction preparation rather than re-submit the same signed bytes
+7. if reconciliation by `txn_hash` remains unresolved after timeout, the host should persist the unresolved submission state and require explicit operator action instead of automatic blind re-submission
 
 ## Local and Remote Transport Requirements
 
@@ -173,6 +177,7 @@ The first implementation should support:
 
 - local IPC, HTTP, or WebSocket endpoints for development and colocated deployments
 - remote HTTPS or secure WebSocket endpoints for hosted nodes
+- optional remote endpoint allowlisting or certificate-pinning configuration for transaction mode
 
 The first release should avoid:
 
@@ -184,9 +189,11 @@ The first release should avoid:
 The deployment model requires:
 
 - clear startup diagnostics about endpoint URL, profile, and detected chain id
+- clear startup diagnostics about detected `genesis_hash`
 - structured logs for capability probe failure
 - clear differentiation between connectivity failure and chain mismatch
 - a host-visible warning path when the node is reachable but unhealthy or lagging
+- a host-visible reconciliation hint when submission outcome is uncertain
 
 ## Non-Goals
 

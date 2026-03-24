@@ -28,6 +28,7 @@ Companion documents for this interface include:
 - `starcoin-node-mcp/docs/rpc-adapter-design.md`
 - `starcoin-node-mcp/docs/rust-implementation-strategy.md`
 - `starcoin-node-mcp/docs/design-closure-plan.md`
+- `starcoin-node-mcp/docs/testing-and-acceptance.md`
 
 ## 2. Design Principles
 
@@ -112,6 +113,7 @@ Return the current high-level chain context.
 
 - `network`
 - `chain_id`
+- `genesis_hash`
 - `head_block_number`
 - `head_block_hash`
 - `head_state_root`
@@ -499,7 +501,16 @@ Submit an already signed transaction.
 ##### Output
 
 - `txn_hash`
+- `submission_state`
+  - `accepted`
+  - `unknown`
+  - `rejected`
 - `submitted`
+- `error_code`: optional
+- `next_action`
+  - `watch_transaction`
+  - `reconcile_by_txn_hash`
+  - `reprepare_then_resign`
 - `watch_result`: optional
 
 ## 7. Result Semantics
@@ -514,6 +525,9 @@ All preparation tools should return:
 - a structured transaction view
 - a human-readable transaction summary
 - a `chain_context` snapshot describing the target endpoint and chain identity
+- `prepared_at`
+- `sequence_number_source`
+- `gas_unit_price_source`
 - `simulation_status`
 - simulation output when available
 - a `next_action` field indicating the expected wallet step
@@ -530,7 +544,26 @@ Query tools should prefer concise summaries plus raw structured objects, rather 
 
 Health and transaction-adjacent query results should also make chain context explicit enough for the host to reason about endpoint identity, lag, and retry behavior.
 
-### 7.3 Errors
+### 7.3 Submission Results
+
+Submission tools should compute and return `txn_hash` even before the endpoint confirms acceptance.
+
+Recommended interpretation:
+
+- `submission_state = accepted`
+  - the endpoint explicitly accepted the transaction
+  - `submitted = true`
+- `submission_state = unknown`
+  - the endpoint may already have received the transaction, but the caller did not receive a definitive response
+  - `submitted = false`
+  - the host should reconcile by `txn_hash` before any retry
+  - if reconciliation still times out, the host should preserve unresolved state and avoid automatic blind re-submission
+- `submission_state = rejected`
+  - the endpoint explicitly rejected the transaction
+  - `submitted = false`
+  - `transaction_expired` and `sequence_number_stale` require fresh preparation and fresh signing
+
+### 7.4 Errors
 
 Errors should reuse shared repository-level error codes where applicable.
 
@@ -539,8 +572,11 @@ Likely shared errors:
 - `node_unavailable`
 - `rpc_unavailable`
 - `invalid_chain_context`
+- `submission_unknown`
 - `simulation_failed`
 - `submission_failed`
+- `transaction_expired`
+- `sequence_number_stale`
 - `unsupported_operation`
 
 Project-local errors may include:
@@ -599,6 +635,7 @@ Summary:
 2. Admin capabilities should be separated from default user-facing capabilities.
 3. Preparation tools should simulate before returning a signing payload whenever `sender_public_key` is available.
 4. The returned transaction summary should be descriptive but not treated as the security source of truth by the wallet.
+5. `submit_signed_transaction` should derive `txn_hash` locally and must not allow blind re-submission when the prior submission outcome is uncertain.
 
 ## 12. Relationship to Repository Structure
 
@@ -615,6 +652,7 @@ Project-specific materials:
 - `starcoin-node-mcp/docs/configuration.md`
 - `starcoin-node-mcp/docs/rpc-adapter-design.md`
 - `starcoin-node-mcp/docs/rust-implementation-strategy.md`
+- `starcoin-node-mcp/docs/testing-and-acceptance.md`
 - this interface design
 
 ## 13. First-Release Decisions
@@ -623,3 +661,5 @@ Project-specific materials:
 2. `call_view_function` and `simulate_raw_transaction` remain version-neutral MCP tools; VM differences are handled by the adapter layer.
 3. Transaction summaries may include normalized fields helpful to the host or wallet flow, but they remain descriptive hints rather than wallet security truth.
 4. Read-only and transaction-enabled behavior ship as configuration profiles of one binary rather than separate binaries.
+5. Transaction mode should validate `genesis_hash` in addition to `chain_id` and network whenever that identity is available.
+6. Uncertain submission outcomes are reconciled by transaction hash before any retry.

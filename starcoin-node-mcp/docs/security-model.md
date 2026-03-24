@@ -90,10 +90,11 @@ Rules:
 
 1. transaction mode must pin at least `expected_chain_id`
 2. the implementation should also pin the expected network name when available
-3. startup probes must validate the active endpoint against configured chain pinning
-4. transaction preparation must re-check chain identity before returning a signable payload
-5. signed-transaction submission must re-check chain identity before sending bytes to txpool
-6. chain mismatch returns `invalid_chain_context`
+3. `expected_genesis_hash` should be enforced for remote transaction mode and should be used whenever the deployment can provide it
+4. startup probes must validate the active endpoint against configured chain pinning
+5. transaction preparation must re-check chain identity before returning a signable payload
+6. signed-transaction submission must re-check chain identity before sending bytes to txpool
+7. chain mismatch returns `invalid_chain_context`
 
 ## Preparation Security Rules
 
@@ -116,8 +117,11 @@ Rules:
 1. `starcoin-node-mcp` may submit only already signed transactions
 2. submission must not mutate signed bytes
 3. the server should decode enough of the signed transaction to validate chain id and basic structure before submission
-4. automatic retry or rebroadcast policy is out of scope for the first release
-5. a transport failure during submission must not be reported as confirmed rejection unless the endpoint returned a structured failure result
+4. the server should derive `txn_hash` locally before the RPC submission attempt so reconciliation never depends on a successful endpoint response
+5. automatic retry or rebroadcast policy is out of scope for the first release
+6. a transport failure during submission must not be reported as confirmed rejection unless the endpoint returned a structured failure result
+7. `submission_unknown` must be treated as a reconcile-first state, not as a retryable blind re-submit
+8. `transaction_expired` and `sequence_number_stale` require re-preparation and re-signing
 
 ## Remote Endpoint Security
 
@@ -129,6 +133,7 @@ Rules:
 2. insecure remote transport requires an explicit development override
 3. endpoint TLS or authentication settings must come from configuration, not from host tool inputs
 4. host-visible results must never echo secrets such as bearer tokens or full auth headers
+5. remote transaction mode should support endpoint allowlisting or certificate pinning where deployments require stronger trust than DNS and CA validation alone
 
 ## Logging and Redaction Rules
 
@@ -189,3 +194,18 @@ Mitigation:
 
 - configuration loader stores secrets separately from rendered diagnostics
 - redaction is applied before logging config and request metadata
+
+### Submission response is lost after the node may already have accepted the transaction
+
+Mitigation:
+
+- `txn_hash` is derived locally before submission
+- the server returns `submission_unknown`
+- the host reconciles by hash before any retry
+
+### Wallet approval finishes after the prepared transaction has already become stale
+
+Mitigation:
+
+- submission maps expiry and stale-sequence failures to explicit error codes
+- the host restarts from fresh preparation and fresh wallet approval

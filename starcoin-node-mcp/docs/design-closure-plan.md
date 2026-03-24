@@ -34,6 +34,7 @@ The following documents should exist before implementation starts:
 5. `starcoin-node-mcp/docs/configuration.md`
 6. `starcoin-node-mcp/docs/rpc-adapter-design.md`
 7. `starcoin-node-mcp/docs/rust-implementation-strategy.md`
+8. `starcoin-node-mcp/docs/testing-and-acceptance.md`
 
 ## Design Order
 
@@ -46,6 +47,7 @@ The documents should be completed in this order:
 5. configuration and capability gating
 6. RPC adapter and compatibility model
 7. Rust implementation strategy
+8. testing and acceptance criteria
 
 This order keeps tool semantics constrained by earlier chain-boundary decisions instead of re-opening them during implementation.
 
@@ -65,7 +67,10 @@ At minimum, the repository must define complete flows for:
 10. chain mismatch at startup
 11. chain mismatch detected before submission
 12. lagging or unhealthy node in transaction mode
-13. endpoint capability mismatch between VM profile and requested tool surface
+13. uncertain submission result after transport loss or timeout
+14. prepared transaction expires before wallet approval finishes
+15. sequence number becomes stale before submission
+16. endpoint capability mismatch between VM profile and requested tool surface
 
 A flow is incomplete if it documents only the happy path and does not explain:
 
@@ -88,6 +93,9 @@ The first-release chain-side design is now closed on the following decisions:
 7. Transaction summaries are useful host hints but are not the security source of truth for wallet approval.
 8. The server builds unsigned transaction bytes locally; it does not depend on node-side account-signing RPC.
 9. One `starcoin-node-mcp` process targets one configured endpoint at a time in the first release.
+10. Transaction mode should validate `genesis_hash` in addition to `chain_id` and network whenever the deployment can supply it.
+11. `submit_signed_transaction` returns a deterministic `txn_hash` even when the endpoint outcome is uncertain, and retry logic must reconcile by hash before re-submission.
+12. `transaction_expired` and `sequence_number_stale` require fresh preparation and fresh wallet approval rather than blind re-use of old signed bytes.
 
 ## First Implementation Scope Freeze
 
@@ -120,8 +128,10 @@ Before implementation begins, review the design with the following checklist:
 - Are all transaction-adjacent flows closed from preparation to submission?
 - Are VM compatibility rules owned by one adapter layer?
 - Are configuration defaults safe for remote endpoints?
+- Are unsigned transaction envelopes strong enough to carry chain identity and freshness metadata as a stable contract?
 - Are error codes mapped to shared repository vocabulary where possible?
 - Are host-visible summaries clearly separated from wallet security decisions?
+- Is uncertain submission reconciled by transaction hash before any retry?
 - Are unsupported admin or signing behaviors explicitly blocked?
 
 ## Closure Status

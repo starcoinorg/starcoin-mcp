@@ -116,6 +116,7 @@ starcoin-mcp/
       rust-implementation-strategy.md
       security-model.md
       starcoin-node-mcp-interface-design.md
+      testing-and-acceptance.md
 ```
 
 ## Design Intent

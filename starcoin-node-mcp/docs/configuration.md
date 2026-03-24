@@ -86,8 +86,15 @@ For `transaction` mode, the following settings are required:
 
 - `expected_chain_id`
 - `expected_network`
+- `require_genesis_hash_match`
 
-For `read_only` mode, they are recommended and may be omitted only when the caller explicitly accepts endpoint autodetection.
+For remote `transaction` mode, the following setting should also be treated as required:
+
+- `expected_genesis_hash`
+
+For local `transaction` mode, `expected_genesis_hash` is still strongly recommended.
+
+For `read_only` mode, chain pin settings are recommended and may be omitted only when the caller explicitly accepts endpoint autodetection.
 
 ## Optional Endpoint Settings
 
@@ -97,6 +104,8 @@ For `read_only` mode, they are recommended and may be omitted only when the call
 - `rpc_auth_token_env`
 - `rpc_headers`
 - `tls_server_name`
+- `allowed_rpc_hosts`
+- `tls_pinned_spki_sha256`
 - `allow_insecure_remote_transport`
 
 ## Transaction Safety Settings
@@ -143,6 +152,7 @@ The first implementation should use these defaults:
 
 - `mode = read_only`
 - `vm_profile = auto`
+- `require_genesis_hash_match = true`
 - `allow_insecure_remote_transport = false`
 - `allow_submit_without_prior_simulation = true`
 - `disable_disk_cache = true`
@@ -158,7 +168,11 @@ Suggested environment variable names:
 - `STARCOIN_NODE_MCP_VM_PROFILE`
 - `STARCOIN_NODE_MCP_EXPECTED_CHAIN_ID`
 - `STARCOIN_NODE_MCP_EXPECTED_NETWORK`
+- `STARCOIN_NODE_MCP_EXPECTED_GENESIS_HASH`
+- `STARCOIN_NODE_MCP_REQUIRE_GENESIS_HASH_MATCH`
 - `STARCOIN_NODE_MCP_RPC_AUTH_TOKEN`
+- `STARCOIN_NODE_MCP_ALLOWED_RPC_HOSTS`
+- `STARCOIN_NODE_MCP_TLS_PINNED_SPKI_SHA256`
 - `STARCOIN_NODE_MCP_REQUEST_TIMEOUT_MS`
 - `STARCOIN_NODE_MCP_ALLOW_INSECURE_REMOTE_TRANSPORT`
 - `STARCOIN_NODE_MCP_LOG_LEVEL`
@@ -180,8 +194,10 @@ Typical cases:
 
 - missing `expected_chain_id` in transaction mode
 - missing `expected_network` in transaction mode
+- missing `expected_genesis_hash` in remote transaction mode when `require_genesis_hash_match = true`
 - invalid or unsupported `vm_profile`
 - insecure remote endpoint without explicit override
+- configured endpoint host not present in `allowed_rpc_hosts`
 - malformed RPC header configuration
 - negative or zero timeouts after normalization
 

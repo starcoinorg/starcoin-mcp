@@ -178,9 +178,32 @@ Rules:
 The returned envelope should include additional metadata beyond the shared schema when useful, such as:
 
 - `chain_context`
+- `prepared_at`
 - `sequence_number_source`
 - `gas_unit_price_source`
-- `prepared_at`
+
+The `chain_context` snapshot should include:
+
+- `chain_id`
+- `network`
+- `genesis_hash`
+- `head_block_hash`
+- `head_block_number`
+- `observed_at`
+
+## Submission Reconciliation
+
+The adapter layer should make uncertain submission outcomes explicit.
+
+Rules:
+
+1. compute `txn_hash` locally before calling the submission RPC
+2. if the endpoint explicitly accepts the transaction, return `submission_state = accepted`
+3. if the endpoint explicitly rejects the transaction as expired or stale, map to `transaction_expired` or `sequence_number_stale`
+4. if transport breaks after the submission attempt may already have reached the endpoint, return `submission_state = unknown` and `submission_unknown`
+5. on `submission_state = unknown`, the host should reconcile by `txn_hash` through `get_transaction` or `watch_transaction` before any retry
+6. on `transaction_expired` or `sequence_number_stale`, the host should restart from fresh preparation and fresh signing
+7. if reconciliation remains unresolved after timeout, preserve `submission_unknown` state and require explicit operator action instead of automatic blind re-submission
 
 ## Result Normalization Rules
 
@@ -202,10 +225,16 @@ Recommended mapping:
   - `rpc_unavailable`
 - configured chain pin mismatch:
   - `invalid_chain_context`
+- submission may have reached the endpoint but the caller did not receive a definitive response:
+  - `submission_unknown`
 - dry run returns failed VM status:
   - `simulation_failed`
 - signed submission rejected by txpool:
   - `submission_failed`
+- endpoint rejects a signed transaction because its expiration has passed:
+  - `transaction_expired`
+- endpoint rejects a signed transaction because its sequence number is stale:
+  - `sequence_number_stale`
 - required method missing for the selected profile:
   - `unsupported_operation`
 

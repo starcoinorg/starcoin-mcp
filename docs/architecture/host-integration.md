@@ -73,7 +73,7 @@ This is the canonical cross-project transaction flow.
    - `starcoin-node-mcp.prepare_contract_call`
    - `starcoin-node-mcp.prepare_publish_package`
 2. Pass `sender_public_key` when available
-3. Inspect the returned unsigned transaction envelope
+3. Inspect the returned unsigned transaction envelope, especially `chain_context`, `prepared_at`, and any freshness metadata
 
 #### Phase C: Simulation completion
 
@@ -103,7 +103,10 @@ If the wallet request is approved:
 
 1. read `signed_txn_bcs_hex`
 2. call `starcoin-node-mcp.submit_signed_transaction`
-3. optionally call `starcoin-node-mcp.watch_transaction`
+3. if `submission_state = accepted`, optionally call `starcoin-node-mcp.watch_transaction`
+4. if `submission_state = unknown`, reconcile by `txn_hash` through `get_transaction` or `watch_transaction` before any retry
+5. if the chain-side error is `transaction_expired` or `sequence_number_stale`, restart from Phase B with fresh preparation and then request fresh wallet approval
+6. if reconciliation remains unresolved after timeout, persist the unresolved submission state and surface it to the user instead of blind re-submission
 
 ### 3. Message Signing Flow
 
@@ -146,6 +149,8 @@ The MCP host should:
 - preserve `request_id` values across retries where possible
 - preserve `client_request_id` when retrying create calls after uncertain failures
 - preserve `wallet_instance_id` selection once the user or host has chosen one
+- preserve chain-side `chain_context` and `txn_hash` metadata across retries and reconciliation
+- persist unresolved `submission_unknown` states across host interruptions where practical
 - surface approval prompts clearly to the user
 - avoid automatic re-submission of rejected wallet requests
 - keep chain-side and wallet-side errors separate in its reasoning
@@ -154,6 +159,7 @@ The MCP host should not:
 
 - assume a pending request was lost just because a poll attempt failed
 - create duplicate sign requests without checking the original request status
+- blindly re-submit a signed transaction when the previous submission result is `submission_unknown`
 - use transaction summaries as a security source of truth instead of wallet-rendered details
 
 ## Shared Contracts

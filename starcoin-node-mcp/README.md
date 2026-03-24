@@ -20,6 +20,7 @@ It does not hold private keys and does not perform wallet signing.
 - `docs/rpc-adapter-design.md`: VM compatibility and RPC normalization strategy
 - `docs/rust-implementation-strategy.md`: implementation structure for the first Rust version
 - `docs/design-closure-plan.md`: implementation-readiness checklist for the chain-side design
+- `docs/testing-and-acceptance.md`: acceptance criteria for probing, preparation, submission, reconciliation, and security
 
 ## Status
 
