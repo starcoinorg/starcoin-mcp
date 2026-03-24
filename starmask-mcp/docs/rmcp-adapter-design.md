@@ -46,6 +46,13 @@ starmask-mcp/src/
   error_mapping.rs
 ```
 
+The first implementation may keep a small tool set inside `server.rs` instead of splitting out
+`tools.rs`, as long as:
+
+1. the MCP adapter remains thin
+2. tool-specific business policy still lives in `starmaskd`
+3. the file is split once tool count or complexity grows materially
+
 ## RMCP Responsibilities
 
 `rmcp` should own:
