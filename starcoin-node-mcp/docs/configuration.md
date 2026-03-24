@@ -11,6 +11,7 @@ This document defines the configuration surface for `starcoin-node-mcp`.
 3. least capability by default
 4. bounded timeouts and watch intervals
 5. secrets come from configuration, not tool input
+6. bounded query size, payload size, and local concurrency budgets
 
 ## Configuration Sources
 
@@ -167,6 +168,42 @@ Recommended defaults:
 
 The first release should prefer in-memory caches only.
 
+## Resource Governance Settings
+
+- `max_submit_blocking_timeout_seconds`
+- `max_watch_timeout_seconds`
+- `min_watch_poll_interval_seconds`
+- `max_list_blocks_count`
+- `max_events_limit`
+- `max_account_resource_limit`
+- `max_account_module_limit`
+- `max_list_resources_size`
+- `max_list_modules_size`
+- `max_publish_package_bytes`
+- `max_concurrent_watch_requests`
+- `max_inflight_expensive_requests`
+
+Recommended defaults:
+
+- `max_submit_blocking_timeout_seconds = 60`
+- `max_watch_timeout_seconds = 300`
+- `min_watch_poll_interval_seconds = 2`
+- `max_list_blocks_count = 100`
+- `max_events_limit = 200`
+- `max_account_resource_limit = 100`
+- `max_account_module_limit = 50`
+- `max_list_resources_size = 100`
+- `max_list_modules_size = 100`
+- `max_publish_package_bytes = 524288`
+- `max_concurrent_watch_requests = 8`
+- `max_inflight_expensive_requests = 16`
+
+Rules:
+
+- caller-supplied list and watch parameters should be clamped to these bounds when truncation preserves the tool's semantics
+- oversized publish-package payloads should be rejected with `payload_too_large` rather than silently truncated
+- local concurrency exhaustion should return `rate_limited` before outbound RPC side effects occur
+
 ## Policy Defaults
 
 The first implementation should use these defaults:
@@ -196,6 +233,18 @@ Suggested environment variable names:
 - `STARCOIN_NODE_MCP_TLS_PINNED_SPKI_SHA256`
 - `STARCOIN_NODE_MCP_REQUEST_TIMEOUT_MS`
 - `STARCOIN_NODE_MCP_ALLOW_INSECURE_REMOTE_TRANSPORT`
+- `STARCOIN_NODE_MCP_MAX_SUBMIT_BLOCKING_TIMEOUT_SECONDS`
+- `STARCOIN_NODE_MCP_MAX_WATCH_TIMEOUT_SECONDS`
+- `STARCOIN_NODE_MCP_MIN_WATCH_POLL_INTERVAL_SECONDS`
+- `STARCOIN_NODE_MCP_MAX_LIST_BLOCKS_COUNT`
+- `STARCOIN_NODE_MCP_MAX_EVENTS_LIMIT`
+- `STARCOIN_NODE_MCP_MAX_ACCOUNT_RESOURCE_LIMIT`
+- `STARCOIN_NODE_MCP_MAX_ACCOUNT_MODULE_LIMIT`
+- `STARCOIN_NODE_MCP_MAX_LIST_RESOURCES_SIZE`
+- `STARCOIN_NODE_MCP_MAX_LIST_MODULES_SIZE`
+- `STARCOIN_NODE_MCP_MAX_PUBLISH_PACKAGE_BYTES`
+- `STARCOIN_NODE_MCP_MAX_CONCURRENT_WATCH_REQUESTS`
+- `STARCOIN_NODE_MCP_MAX_INFLIGHT_EXPENSIVE_REQUESTS`
 - `STARCOIN_NODE_MCP_LOG_LEVEL`
 
 ## Safe Bounds
@@ -203,9 +252,13 @@ Suggested environment variable names:
 The implementation should clamp unsafe timing values:
 
 1. `watch_poll_interval_seconds` below `1` is raised to `1`
-2. `default_expiration_ttl_seconds` below `30` is raised to `30`
-3. `default_expiration_ttl_seconds` above `max_expiration_ttl_seconds` is lowered to the configured maximum
-4. `warn_head_lag_seconds` above `max_head_lag_seconds` is lowered to `max_head_lag_seconds`
+2. caller-supplied watch poll intervals below `min_watch_poll_interval_seconds` are raised to `min_watch_poll_interval_seconds`
+3. caller-supplied watch timeouts above `max_watch_timeout_seconds` are lowered to `max_watch_timeout_seconds`
+4. caller-supplied blocking submission timeouts above `max_submit_blocking_timeout_seconds` are lowered to `max_submit_blocking_timeout_seconds`
+5. caller-supplied `count`, `limit`, `resource_limit`, `module_limit`, and `max_size` values above their configured maxima are lowered to those maxima
+6. `default_expiration_ttl_seconds` below `30` is raised to `30`
+7. `default_expiration_ttl_seconds` above `max_expiration_ttl_seconds` is lowered to the configured maximum
+8. `warn_head_lag_seconds` above `max_head_lag_seconds` is lowered to `max_head_lag_seconds`
 
 ## Configuration Errors
 
@@ -221,6 +274,8 @@ Typical cases:
 - configured endpoint host not present in `allowed_rpc_hosts`
 - malformed RPC header configuration
 - negative or zero timeouts after normalization
+- zero or negative resource-governance maxima after normalization
+- zero-valued concurrency budgets for watches or expensive requests
 
 ## Non-Goals
 

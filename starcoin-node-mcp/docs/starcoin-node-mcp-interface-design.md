@@ -39,7 +39,8 @@ Companion documents for this interface include:
 4. VM2-first semantics should be preferred in user-facing tools.
 5. Unsafe node-management operations should not be enabled in the initial release.
 6. Structured outputs must be optimized for MCP host orchestration.
-7. The first implementation should preserve explicit Rust boundaries among MCP transport, RPC adaptation, and core transaction logic.
+7. Host-triggered work should stay bounded by default rather than creating unbounded queries, watch loops, or payload handling.
+8. The first implementation should preserve explicit Rust boundaries among MCP transport, RPC adaptation, and core transaction logic.
 
 ## 3. Runtime Topology
 
@@ -98,6 +99,18 @@ For example:
 - not raw combinations of `state.get_resource`, `txpool.next_sequence_number`, and `chain.info`
 
 ## 6. MCP Tool Surface
+
+### 6.0 Resource Governance
+
+The tool surface should expose bounded work rather than raw unbounded access to the backing node.
+
+Rules:
+
+1. tools that accept caller-provided counts, limits, or time budgets should clamp those inputs to configuration-defined safe bounds
+2. when a tool clamps a caller-provided bound, the result should expose the effective applied value
+3. `rate_limited` means a local concurrency or request-budget guard fired before outbound RPC side effects occurred
+4. `payload_too_large` means the request payload exceeded local policy and was rejected before decode or RPC submission
+5. watch loops and blocking waits should remain opt-in and bounded by local policy
 
 ### 6.1 Chain Context and Health
 
@@ -180,6 +193,7 @@ Get a range-like recent block listing.
 ##### Output
 
 - `blocks`
+- `effective_count`
 
 #### `get_transaction`
 
@@ -217,6 +231,8 @@ Poll a transaction until terminal status or timeout.
 - `txn_hash`
 - `found`
 - `confirmed`
+- `effective_timeout_seconds`
+- `effective_poll_interval_seconds`
 - `transaction_info`
 - `events`
 - `status_summary`
@@ -243,6 +259,7 @@ Query events by filter.
 
 - `events`
 - `matched_count`
+- `effective_limit`
 
 ### 6.4 Account and State Queries
 
@@ -258,6 +275,7 @@ Return a task-oriented summary of an account.
 - `include_resources`: boolean, default `false`
 - `include_modules`: boolean, default `false`
 - `resource_limit`: optional
+- `module_limit`: optional
 
 ##### Output
 
@@ -268,6 +286,8 @@ Return a task-oriented summary of an account.
 - `accepted_tokens`
 - `resources`: optional
 - `modules`: optional
+- `applied_resource_limit`: optional
+- `applied_module_limit`: optional
 - `next_sequence_number_hint`
 
 #### `list_resources`
@@ -290,6 +310,7 @@ List resources for an account with optional type filter.
 - `address`
 - `state_root`
 - `resources`
+- `effective_max_size`
 
 #### `list_modules`
 
@@ -301,6 +322,7 @@ List modules for an account and optionally resolve ABI.
 
 - `address`
 - `resolve_abi`: boolean, default `true`
+- `max_size`: optional
 - `block_number`: optional
 
 ##### Output
@@ -308,6 +330,7 @@ List modules for an account and optionally resolve ABI.
 - `address`
 - `state_root`
 - `modules`
+- `effective_max_size`
 
 ### 6.5 ABI and Contract Introspection
 
@@ -454,6 +477,8 @@ Prepare an unsigned package publish transaction.
 - `expiration_time_secs`: optional
 - `gas_token`: optional
 
+Payloads above the configured size ceiling must be rejected locally with `payload_too_large`.
+
 ##### Output
 
 - envelope conforming to `shared/schemas/unsigned-transaction-envelope.schema.json`
@@ -509,6 +534,7 @@ Submit an already signed transaction.
   - `rejected`
 - `submitted`
 - `error_code`: optional
+- `effective_timeout_seconds`: optional
 - `next_action`
   - `watch_transaction`
   - `reconcile_by_txn_hash`
@@ -556,7 +582,18 @@ Query tools should prefer concise summaries plus raw structured objects, rather 
 
 Health and transaction-adjacent query results should also make chain context explicit enough for the host to reason about endpoint identity, lag, and retry behavior.
 
-### 7.4 Submission Results
+### 7.4 Resource Governance Results
+
+Whenever the caller supplies a query size or time budget that is clamped by local policy, the result should return the effective applied value.
+
+Rules:
+
+- `watch_transaction` should return `effective_timeout_seconds` and `effective_poll_interval_seconds`
+- list-like query tools should return `effective_count`, `effective_limit`, `effective_max_size`, or similar applied-limit metadata when caller-provided values were clamped
+- `rate_limited` should mean the local process rejected the request before outbound RPC side effects, so the host may retry later with backoff
+- `payload_too_large` should mean the request was rejected before decode or endpoint contact and requires a smaller payload or an explicit config change
+
+### 7.5 Submission Results
 
 Submission tools should compute and return `txn_hash` even before the endpoint confirms acceptance.
 
@@ -575,7 +612,7 @@ Recommended interpretation:
   - `submitted = false`
   - `transaction_expired` and `sequence_number_stale` require fresh preparation and fresh signing
 
-### 7.5 Errors
+### 7.6 Errors
 
 Errors should reuse shared repository-level error codes where applicable.
 
@@ -589,6 +626,8 @@ Likely shared errors:
 - `submission_failed`
 - `transaction_expired`
 - `sequence_number_stale`
+- `rate_limited`
+- `payload_too_large`
 - `unsupported_operation`
 
 Project-local errors may include:
@@ -650,6 +689,7 @@ Summary:
 3. Preparation tools should simulate before returning a signing payload whenever `sender_public_key` is available.
 4. The returned transaction summary should be descriptive but not treated as the security source of truth by the wallet.
 5. `submit_signed_transaction` should derive `txn_hash` locally and must not allow blind re-submission when the prior submission outcome is uncertain.
+6. List-style queries, watch loops, and package-publish payloads should be bounded by local policy and fail fast when that policy is exceeded.
 
 ## 12. Relationship to Repository Structure
 
@@ -677,3 +717,4 @@ Project-specific materials:
 4. Read-only and transaction-enabled behavior ship as configuration profiles of one binary rather than separate binaries.
 5. Transaction mode should validate `genesis_hash` in addition to `chain_id` and network whenever that identity is available.
 6. Uncertain submission outcomes are reconciled by transaction hash before any retry.
+7. Caller-provided bounds are clamped to configuration-defined safe limits, and local overload returns `rate_limited` before outbound RPC side effects occur.

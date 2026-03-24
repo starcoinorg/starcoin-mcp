@@ -105,9 +105,10 @@ The first implementation is a single Rust process and should realize this deploy
 Recommended Rust runtime shape:
 
 - `starcoin-node-mcp-server` owns one Tokio runtime for stdio MCP transport, RPC IO, cache access, and watch polling
-- one process-global `Arc<AppContext>` should hold normalized config, endpoint capabilities, shared RPC clients, and in-memory caches
+- one process-global `Arc<AppContext>` should hold normalized config, endpoint capabilities, shared RPC clients, in-memory caches, and concurrency guards
 - startup probes should complete before the `rmcp` server begins serving tools
 - `watch_transaction` should use `tokio::time::interval` and `tokio::time::timeout` rather than ad hoc sleep loops
+- bounded `tokio::sync::Semaphore` guards should protect watch loops and other expensive request classes from unbounded fan-out
 - tool cancellation should follow the Rust async task boundary so abandoned host requests do not leave orphaned watch loops running indefinitely
 
 The first release should not require a separate Rust daemon or any cross-process coordinator for chain-side state.
@@ -142,6 +143,19 @@ In steady state:
 In the Rust implementation, these steady-state invariants should be represented as typed in-memory state rather than mutable free-form maps keyed by raw strings.
 
 The first release assumes one endpoint per process. A single `starcoin-node-mcp` instance should not switch among multiple endpoints mid-session.
+
+## Backpressure and Resource Governance
+
+The first release should use simple local backpressure rather than hidden background queues.
+
+Rules:
+
+1. caller-supplied `count`, `limit`, `resource_limit`, `max_size`, and blocking timeout inputs must be clamped to configuration-defined safe bounds before adapter calls begin
+2. `prepare_publish_package` must validate package size against a configured byte ceiling before decode, simulation, or RPC submission
+3. watch loops and other expensive operations should acquire local permits before work starts
+4. if no permit is available, the request should fail fast with `rate_limited` instead of queuing unbounded work
+5. `rate_limited` from local policy should occur before outbound RPC side effects and therefore should not imply uncertain chain state
+6. repeated ABI or chain-status reads may use bounded in-memory caches within TTL instead of re-fetching on every tool call
 
 ## Endpoint Capability Model
 
@@ -210,6 +224,7 @@ The deployment model requires:
 - clear differentiation between connectivity failure and chain mismatch
 - a host-visible warning path when the node is reachable but unhealthy or lagging
 - a host-visible reconciliation hint when submission outcome is uncertain
+- structured diagnostics when request inputs are clamped or rejected by local resource policy
 
 ## Non-Goals
 

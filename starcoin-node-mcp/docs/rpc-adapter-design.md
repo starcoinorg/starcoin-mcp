@@ -22,6 +22,7 @@ The adapter layer should optimize for:
 3. clear capability gating between `read_only` and `transaction`
 4. deterministic chain-context handling for transaction flows
 5. minimal leakage of Starcoin JSON-RPC details into MCP hosts
+6. bounded host-driven work with predictable local overload behavior
 
 ## Adapter Layers
 
@@ -141,7 +142,7 @@ In Rust, VM compatibility should be represented by typed enums such as a backend
     - `chain.get_events_by_txn_hash2` when available
     - fallback: `chain.get_events_by_txn_hash`
 - `watch_transaction`
-  - repeated `get_transaction` and transaction-info lookups until terminal or timeout
+  - repeated `get_transaction` and transaction-info lookups until terminal or timeout, subject to local watch-permit limits
 
 ### State and ABI
 
@@ -213,6 +214,19 @@ The `chain_context` snapshot should include:
 - `head_block_number`
 - `observed_at`
 
+## Request Shaping and Backpressure
+
+The adapter layer should not fetch or poll more data than the MCP contract actually allows.
+
+Rules:
+
+1. list-style query bounds must be normalized before any RPC request is constructed
+2. the adapter should request only the effective bounded page or window from the endpoint rather than fetching unbounded data and truncating locally
+3. publish-package payload size must be checked against local policy before decode or dry-run work begins
+4. watch and reconciliation loops should acquire local permits before polling starts
+5. if local request budgets are exhausted, the adapter should surface `rate_limited` before outbound RPC side effects occur
+6. repeated chain-context and ABI fetches may use bounded in-memory caches within TTL
+
 ## Submission Reconciliation
 
 The adapter layer should make uncertain submission outcomes explicit.
@@ -247,6 +261,8 @@ Recommended mapping:
   - `node_unavailable`
 - endpoint timeout or upstream overload:
   - `rpc_unavailable`
+- local request-budget or concurrency exhaustion:
+  - `rate_limited`
 - configured chain pin mismatch:
   - `invalid_chain_context`
 - submission may have reached the endpoint but the caller did not receive a definitive response:
@@ -261,6 +277,8 @@ Recommended mapping:
   - `sequence_number_stale`
 - required method missing for the selected profile:
   - `unsupported_operation`
+- request payload exceeds local safety ceiling before endpoint contact:
+  - `payload_too_large`
 
 Project-local errors may still exist for:
 

@@ -38,6 +38,7 @@ The Rust implementation should optimize for:
 3. explicit capability gating
 4. small, replaceable RPC adapter layers
 5. minimal unsafe surface
+6. bounded async concurrency and explicit backpressure
 
 ## Workspace Shape
 
@@ -93,6 +94,12 @@ Recommended model:
 5. results are mapped back into MCP tool outputs
 
 The first implementation does not need a dedicated coordinator task or durable state machine.
+
+Runtime guardrails should include:
+
+- `tokio::sync::Semaphore` or equivalent bounded guards for watch loops and other expensive operations
+- no hidden unbounded queue between MCP tool handlers and outbound RPC work
+- cancellation paths that release permits through normal Rust drop semantics
 
 ## Type System Strategy
 
@@ -160,8 +167,22 @@ Recommended properties:
 - TTL-based expiry
 - per-endpoint cache scoping
 - explicit disable switch from config
+- bounded entry counts so caches cannot grow without limit
 
 The first release should not require a persistent cache database.
+
+## Backpressure Strategy
+
+The first implementation should use small, explicit backpressure primitives instead of a large scheduler.
+
+Rules:
+
+1. clamp caller-provided list sizes and time budgets before domain services allocate work
+2. reject publish-package payloads above the configured size ceiling with `payload_too_large`
+3. acquire permits before starting watch loops or other expensive request classes
+4. return `rate_limited` when local permits are exhausted rather than queueing unbounded tasks
+5. ensure permit guards are released on cancellation, timeout, and normal completion
+6. keep overload decisions local and deterministic so `rate_limited` never implies uncertain chain side effects
 
 ## Testing Strategy
 
@@ -173,12 +194,14 @@ The Rust implementation must cover:
 4. simulation result normalization
 5. submission error mapping
 6. MCP tool snapshots for major result shapes
+7. clamp, payload-size, and permit-release behavior under local overload
 
 Recommended test styles within the required Rust implementation:
 
 - unit tests for core orchestration
 - fixture-driven adapter tests for RPC responses
 - snapshot tests for MCP outputs
+- Tokio-aware concurrency tests for semaphore release and `rate_limited` behavior
 
 ## Security and Safety Notes
 

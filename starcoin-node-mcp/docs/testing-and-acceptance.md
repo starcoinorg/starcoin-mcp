@@ -14,6 +14,7 @@ The first release must cover:
 4. submission and reconciliation behavior
 5. security behavior
 6. configuration safety
+7. resource and performance governance
 
 These acceptance criteria assume the conforming implementation is written in Rust.
 
@@ -32,6 +33,7 @@ Rust-specific expectations:
 2. host-facing JSON results should be snapshot-tested from Rust `serde` DTOs
 3. error mapping should be tested from typed Rust errors to shared string error codes
 4. config normalization should be tested from raw deserialized input into validated runtime structs
+5. bounded-concurrency behavior should be tested so permit release and `rate_limited` handling are deterministic
 
 ## Startup and Capability Acceptance
 
@@ -101,6 +103,18 @@ The implementation must demonstrate:
 5. unsafe timeout and TTL values are clamped
 6. insecure remote transport without explicit override is rejected
 
+## Resource and Performance Governance Acceptance
+
+The implementation must demonstrate:
+
+1. `watch_transaction` clamps timeout and poll inputs to configured bounds and returns the effective applied values
+2. list-style tools clamp oversized `count`, `limit`, `resource_limit`, `module_limit`, and `max_size` inputs and surface the effective applied bounds
+3. `prepare_publish_package` rejects payloads above `max_publish_package_bytes` locally with `payload_too_large`
+4. watch requests beyond `max_concurrent_watch_requests` fail fast with `rate_limited`
+5. expensive requests beyond `max_inflight_expensive_requests` fail fast with `rate_limited` instead of creating unbounded async work
+6. cancellation or timeout of a watch releases capacity so a subsequent watch can start successfully
+7. repeated chain-status or ABI lookups within cache TTL may reuse the in-memory cache instead of repeating the same outbound RPC work
+
 ## End-to-End Scenarios
 
 The first release must pass these end-to-end scenarios:
@@ -112,6 +126,9 @@ The first release must pass these end-to-end scenarios:
 5. re-prepare and re-sign after expiry or stale sequence rejection
 6. persist and surface an unresolved submission after reconciliation timeout without blind retry
 7. fail safely on remote chain identity mismatch before any transaction tool is served
+8. clamp oversize watch and query inputs and surface the effective applied values
+9. reject an oversize publish-package payload locally before any RPC side effect
+10. return `rate_limited` when watch concurrency is exhausted and recover after an existing watch completes or is cancelled
 
 ## Release Gate
 

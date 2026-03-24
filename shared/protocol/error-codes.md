@@ -67,7 +67,9 @@ Subprojects may define additional project-local errors, but shared errors should
 - `approval_required`
   - The operation requires explicit user approval before proceeding.
 - `rate_limited`
-  - The operation has been rejected due to local rate-limiting policy.
+  - The operation has been rejected due to local rate-limiting, concurrency-protection, or overload policy before the server started unbounded work.
+- `payload_too_large`
+  - The supplied request payload exceeds a local safety limit and was rejected before execution.
 - `unsupported_operation`
   - The requested operation is recognized but not implemented in the current environment.
 

@@ -24,6 +24,7 @@ The goal is to prevent the chain-facing MCP server from hard-coding assumptions 
 7. The initial implementation scope is frozen.
 8. The required implementation language is explicit and consistent across the subproject documents.
 9. Rust type boundaries, async-runtime ownership, and crate responsibilities are explicit enough to implement without reopening architecture questions.
+10. Query bounds, payload-size limits, and local overload behavior are explicit enough to prevent unbounded host-driven work.
 
 ## Required Document Set
 
@@ -99,6 +100,7 @@ The first-release chain-side design is now closed on the following decisions:
 11. `submit_signed_transaction` returns a deterministic `txn_hash` even when the endpoint outcome is uncertain, and retry logic must reconcile by hash before re-submission.
 12. `transaction_expired` and `sequence_number_stale` require fresh preparation and fresh wallet approval rather than blind re-use of old signed bytes.
 13. The first conforming implementation of `starcoin-node-mcp` must be written in Rust.
+14. List-like queries, watch loops, and package-publish inputs are governed by configuration-defined bounds, and local overload must fail fast before outbound RPC side effects occur.
 
 ## First Implementation Scope Freeze
 
@@ -137,6 +139,7 @@ Before implementation begins, review the design with the following checklist:
 - Are host-visible summaries clearly separated from wallet security decisions?
 - Is uncertain submission reconciled by transaction hash before any retry?
 - Is the Rust implementation requirement reflected consistently across interface, configuration, testing, and implementation docs?
+- Are query-size limits, watch budgets, payload-size ceilings, and local overload semantics explicit enough to avoid unbounded work under a noisy host?
 - Are unsupported admin or signing behaviors explicitly blocked?
 
 ## Closure Status

@@ -28,6 +28,7 @@ The following rules must remain true in every implementation phase:
 5. Remote RPC responses may inform host workflows but are not the security source of truth for wallet approval.
 6. Admin or node-management operations are disabled in the first release.
 7. Endpoint credentials and sensitive payloads are not emitted to logs by default.
+8. Expensive operations are bounded by local policy so one noisy host request does not create unbounded background work.
 
 ## Trust Boundaries
 
@@ -73,6 +74,7 @@ The first implementation should explicitly defend against:
 5. accidental exposure of bearer tokens, raw package bytes, or signed payloads in logs
 6. drift between the chain context used during preparation and the endpoint used during submission
 7. misuse of raw RPC methods that bypass MCP capability gating
+8. oversized query, watch, or publish-package requests that would otherwise exhaust local process resources
 
 The first implementation does not attempt to defend against:
 
@@ -135,6 +137,18 @@ Rules:
 4. host-visible results must never echo secrets such as bearer tokens or full auth headers
 5. remote transaction mode should support endpoint allowlisting or certificate pinning where deployments require stronger trust than DNS and CA validation alone
 
+## Resource Exhaustion and Overload Safety
+
+The first release should defend against accidental local overload without turning the chain-side server into a complex scheduler.
+
+Rules:
+
+1. host-supplied query sizes, watch timeouts, and poll intervals must be clamped or rejected against configuration-defined bounds before outbound RPC work begins
+2. package publish payloads above the configured byte ceiling must be rejected locally with `payload_too_large`
+3. long-running watch loops and other expensive operations should consume bounded local permits rather than spawning unbounded async work
+4. when local concurrency or request-budget limits are exhausted, the server should return `rate_limited` before outbound RPC side effects occur
+5. task cancellation and timeout paths must release permits promptly
+
 ## Logging and Redaction Rules
 
 Logs must be useful without leaking sensitive material.
@@ -146,6 +160,7 @@ Rules:
 3. avoid logging full publish-package payloads by default
 4. include chain id, network, endpoint profile, and tool name in diagnostic logs
 5. log chain mismatch and capability mismatch as first-class structured events
+6. log local clamp and `rate_limited` decisions as first-class structured events without echoing oversized payload contents
 
 ## Rust Security Implementation Notes
 
@@ -206,6 +221,14 @@ Mitigation:
 
 - configuration loader stores secrets separately from rendered diagnostics
 - redaction is applied before logging config and request metadata
+
+### Host or agent requests too many concurrent watches or oversized payloads
+
+Mitigation:
+
+- request sizes are clamped or rejected against config-defined ceilings
+- watch and expensive-operation concurrency is protected by local permits
+- overload returns `rate_limited` before outbound RPC side effects occur
 
 ### Submission response is lost after the node may already have accepted the transaction
 
