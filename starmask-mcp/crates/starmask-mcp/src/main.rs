@@ -1,6 +1,6 @@
 #![forbid(unsafe_code)]
 
-use std::{env, path::PathBuf, time::Duration};
+use std::{env, io, path::PathBuf, time::Duration};
 
 use anyhow::Result;
 use clap::Parser;
@@ -35,6 +35,7 @@ async fn main() -> Result<()> {
         .unwrap_or_else(|| "info".to_owned());
 
     tracing_subscriber::fmt()
+        .with_writer(io::stderr)
         .with_env_filter(EnvFilter::new(log_level))
         .with_target(false)
         .init();

@@ -34,6 +34,7 @@ pub struct CoordinatorConfig {
     pub max_request_ttl: DurationSeconds,
     pub delivery_lease_ttl: DurationSeconds,
     pub presentation_lease_ttl: DurationSeconds,
+    pub wallet_offline_after: DurationSeconds,
     pub result_retention: DurationSeconds,
 }
 
@@ -48,6 +49,7 @@ impl Default for CoordinatorConfig {
             max_request_ttl: DurationSeconds::new(3600),
             delivery_lease_ttl: DurationSeconds::new(30),
             presentation_lease_ttl: DurationSeconds::new(45),
+            wallet_offline_after: DurationSeconds::new(25),
             result_retention: DurationSeconds::new(600),
         }
     }
@@ -767,6 +769,17 @@ where
             }
         }
 
+        for mut wallet_instance in self.store.list_wallet_instances(true)? {
+            if is_wallet_stale(
+                wallet_instance.last_seen_at,
+                now,
+                self.config.wallet_offline_after,
+            ) {
+                wallet_instance.connected = false;
+                self.store.upsert_wallet_instance(wallet_instance)?;
+            }
+        }
+
         let mut evicted_results = 0;
         for mut request in self
             .store
@@ -915,6 +928,19 @@ fn calculate_payload_hash(payload: &RequestPayload) -> CoreResult<PayloadHash> {
             "payload hash generation produced an invalid id: {error}"
         ))
     })
+}
+
+fn is_wallet_stale(
+    last_seen_at: TimestampMs,
+    now: TimestampMs,
+    stale_after: DurationSeconds,
+) -> bool {
+    let threshold_millis = stale_after
+        .as_secs()
+        .checked_mul(1000)
+        .and_then(|value| i64::try_from(value).ok())
+        .unwrap_or(i64::MAX);
+    now.as_millis().saturating_sub(last_seen_at.as_millis()) >= threshold_millis
 }
 
 fn project_request_summary(request: &RequestRecord) -> CreateRequestResult {
@@ -1142,9 +1168,9 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use starmask_types::{
-        ClientRequestId, DeliveryLease, DeliveryLeaseId, LockState, PresentationId,
-        RejectReasonCode, RequestPayload, RequestRecord, RequestStatus, SharedErrorCode,
-        TimestampMs, TransactionPayload, WalletAccountRecord, WalletInstanceId,
+        ClientRequestId, DeliveryLease, DeliveryLeaseId, DurationSeconds, LockState,
+        PresentationId, RejectReasonCode, RequestPayload, RequestRecord, RequestStatus,
+        SharedErrorCode, TimestampMs, TransactionPayload, WalletAccountRecord, WalletInstanceId,
         WalletInstanceRecord,
     };
 
@@ -1818,5 +1844,40 @@ mod tests {
         };
         assert_eq!(status.status, RequestStatus::Failed);
         assert_eq!(status.error_code, Some(SharedErrorCode::WalletLocked));
+    }
+
+    #[test]
+    fn maintenance_marks_stale_wallet_instances_offline() {
+        let mut coordinator = build_coordinator();
+        coordinator.config.wallet_offline_after = DurationSeconds::new(25);
+
+        let wallet_instance_id = WalletInstanceId::new("wallet-offline").unwrap();
+        coordinator
+            .dispatch(CoordinatorCommand::RegisterExtension(
+                RegisterExtensionCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    extension_id: "ext".to_owned(),
+                    extension_version: "1.0.0".to_owned(),
+                    protocol_version: 1,
+                    profile_hint: None,
+                    lock_state: LockState::Unlocked,
+                },
+            ))
+            .unwrap();
+
+        coordinator.clock.now = TimestampMs::from_millis(1_710_000_026_000);
+        coordinator
+            .dispatch(CoordinatorCommand::TickMaintenance)
+            .unwrap();
+
+        let status = coordinator
+            .dispatch(CoordinatorCommand::WalletStatus)
+            .unwrap();
+        let CoordinatorResponse::WalletStatus(status) = status else {
+            panic!("unexpected response");
+        };
+        assert!(!status.wallet_online);
+        assert_eq!(status.wallet_instances.len(), 1);
+        assert!(!status.wallet_instances[0].extension_connected);
     }
 }

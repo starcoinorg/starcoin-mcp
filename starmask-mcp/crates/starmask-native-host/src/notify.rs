@@ -56,6 +56,15 @@ impl NotificationState {
                 if let Some(wallet) = self.wallets.get_mut(wallet_instance_id.as_str()) {
                     wallet.last_available_notified = false;
                 }
+                if let NativeBridgeResponse::RequestNext {
+                    request_id,
+                    resume_required: true,
+                    ..
+                } = response
+                {
+                    self.active_requests
+                        .insert(request_id.to_string(), wallet_instance_id.clone());
+                }
             }
             NativeBridgeRequest::RequestPresented {
                 request_id,
@@ -203,4 +212,49 @@ fn emit_notification(
     let payload = serde_json::to_vec(notification)?;
     let mut writer = writer.lock().expect("stdout writer poisoned");
     write_frame(&mut *writer, &payload)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::NotificationState;
+    use starmask_types::{
+        ClientRequestId, NativeBridgeRequest, NativeBridgeResponse, PayloadHash, PresentationId,
+        RequestId, RequestKind, WalletInstanceId,
+    };
+
+    #[test]
+    fn resumed_request_is_tracked_for_cancel_notifications() {
+        let mut state = NotificationState::default();
+        let wallet_instance_id = WalletInstanceId::new("wallet-1").unwrap();
+        let request_id = RequestId::new("request-1").unwrap();
+
+        state.observe(
+            &NativeBridgeRequest::RequestPullNext {
+                message_id: "msg-1".to_owned(),
+                wallet_instance_id: wallet_instance_id.clone(),
+            },
+            &NativeBridgeResponse::RequestNext {
+                reply_to: "msg-1".to_owned(),
+                request_id: request_id.clone(),
+                client_request_id: ClientRequestId::new("client-1").unwrap(),
+                kind: RequestKind::SignMessage,
+                account_address: "0x1".to_owned(),
+                payload_hash: PayloadHash::new("hash-1").unwrap(),
+                display_hint: None,
+                client_context: None,
+                resume_required: true,
+                delivery_lease_id: None,
+                lease_expires_at: None,
+                presentation_id: Some(PresentationId::new("presentation-1").unwrap()),
+                presentation_expires_at: None,
+                raw_txn_bcs_hex: None,
+                message: Some("hello".to_owned()),
+            },
+        );
+
+        assert_eq!(
+            state.active_requests.get(request_id.as_str()),
+            Some(&wallet_instance_id)
+        );
+    }
 }

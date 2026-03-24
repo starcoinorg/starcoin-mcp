@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::{collections::BTreeSet, path::Path};
 
 use anyhow::{Context, Result};
 use serde::de::DeserializeOwned;
@@ -18,7 +18,7 @@ use starmask_core::{
     },
 };
 use starmask_types::{
-    AckResult, CancelRequestParams, CreateSignMessageParams, CreateSignTransactionParams,
+    AckResult, CancelRequestParams, Channel, CreateSignMessageParams, CreateSignTransactionParams,
     ExtensionHeartbeatParams, ExtensionRegisterParams, ExtensionRegisteredResult,
     ExtensionUpdateAccountsParams, GetRequestStatusParams, JsonRpcErrorResponse, JsonRpcRequest,
     JsonRpcResponse, JsonRpcSuccess, NativeBridgeAccount, RequestHasAvailableParams,
@@ -30,7 +30,24 @@ use starmask_types::{
 
 use crate::coordinator_runtime::CoordinatorHandle;
 
-pub async fn run_unix_server(socket_path: &Path, handle: CoordinatorHandle) -> Result<()> {
+#[derive(Clone, Debug)]
+pub struct ServerPolicy {
+    pub channel: Channel,
+    pub allowed_extension_ids: BTreeSet<String>,
+    pub native_host_name: String,
+}
+
+impl ServerPolicy {
+    fn accepts_extension(&self, extension_id: &str) -> bool {
+        self.allowed_extension_ids.contains(extension_id)
+    }
+}
+
+pub async fn run_unix_server(
+    socket_path: &Path,
+    handle: CoordinatorHandle,
+    policy: ServerPolicy,
+) -> Result<()> {
     if socket_path.exists() {
         std::fs::remove_file(socket_path)
             .with_context(|| format!("failed to remove {}", socket_path.display()))?;
@@ -45,15 +62,20 @@ pub async fn run_unix_server(socket_path: &Path, handle: CoordinatorHandle) -> R
     loop {
         let (stream, _) = listener.accept().await?;
         let handle = handle.clone();
+        let policy = policy.clone();
         tokio::spawn(async move {
-            if let Err(error) = handle_connection(stream, handle).await {
+            if let Err(error) = handle_connection(stream, handle, policy).await {
                 warn!(%error, "failed to handle daemon rpc connection");
             }
         });
     }
 }
 
-async fn handle_connection(mut stream: UnixStream, handle: CoordinatorHandle) -> Result<()> {
+async fn handle_connection(
+    mut stream: UnixStream,
+    handle: CoordinatorHandle,
+    policy: ServerPolicy,
+) -> Result<()> {
     let mut bytes = Vec::new();
     stream.read_to_end(&mut bytes).await?;
     if bytes.is_empty() {
@@ -62,7 +84,7 @@ async fn handle_connection(mut stream: UnixStream, handle: CoordinatorHandle) ->
 
     let request: JsonRpcRequest<Value> = serde_json::from_slice(&bytes)?;
     debug!(method = %request.method, id = %request.id, "received daemon rpc request");
-    let response = match dispatch_request(request, handle).await {
+    let response = match dispatch_request(request, handle, policy).await {
         Ok(response) => response,
         Err(response) => JsonRpcResponse::Error(response),
     };
@@ -75,6 +97,7 @@ async fn handle_connection(mut stream: UnixStream, handle: CoordinatorHandle) ->
 async fn dispatch_request(
     request: JsonRpcRequest<Value>,
     handle: CoordinatorHandle,
+    policy: ServerPolicy,
 ) -> Result<JsonRpcResponse<Value>, JsonRpcErrorResponse> {
     let id = request.id.clone();
     let result = match request.method.as_str() {
@@ -254,57 +277,72 @@ async fn dispatch_request(
         }
         "extension.register" => {
             let params = decode_protocol::<ExtensionRegisterParams>(&request.params)?;
-            let wallet_instance_id = params.wallet_instance_id.clone();
-            let lock_state = params.lock_state;
-            expect_response(
-                handle
-                    .dispatch(CoordinatorCommand::RegisterExtension(
-                        RegisterExtensionCommand {
-                            wallet_instance_id: wallet_instance_id.clone(),
-                            extension_id: params.extension_id,
-                            extension_version: params.extension_version,
-                            protocol_version: params.protocol_version,
-                            profile_hint: params.profile_hint,
-                            lock_state,
-                        },
-                    ))
-                    .await,
-                |response| match response {
-                    CoordinatorResponse::Ack => Ok(()),
-                    other => Err(unexpected_response(other)),
-                },
-            )?;
-            expect_response(
-                handle
-                    .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
-                        UpdateExtensionAccountsCommand {
-                            wallet_instance_id: wallet_instance_id.clone(),
-                            lock_state,
-                            accounts: params
-                                .accounts_summary
-                                .into_iter()
-                                .map(|account| {
-                                    bridge_account_to_wallet_account(
-                                        &wallet_instance_id,
-                                        account,
-                                        lock_state,
-                                    )
-                                })
-                                .collect(),
-                        },
-                    ))
-                    .await,
-                |response| match response {
-                    CoordinatorResponse::Ack => Ok(()),
-                    other => Err(unexpected_response(other)),
-                },
-            )?;
-            serde_json::to_value(ExtensionRegisteredResult {
-                wallet_instance_id,
-                daemon_protocol_version: starmask_types::DAEMON_PROTOCOL_VERSION,
-                accepted: true,
-            })
-            .map_err(|error| error_response(None, error))?
+            if !policy.accepts_extension(&params.extension_id) {
+                warn!(
+                    channel = ?policy.channel,
+                    native_host_name = %policy.native_host_name,
+                    extension_id = %params.extension_id,
+                    "rejected extension registration outside allowlist"
+                );
+                serde_json::to_value(ExtensionRegisteredResult {
+                    wallet_instance_id: params.wallet_instance_id,
+                    daemon_protocol_version: starmask_types::DAEMON_PROTOCOL_VERSION,
+                    accepted: false,
+                })
+                .map_err(|error| error_response(None, error))?
+            } else {
+                let wallet_instance_id = params.wallet_instance_id.clone();
+                let lock_state = params.lock_state;
+                expect_response(
+                    handle
+                        .dispatch(CoordinatorCommand::RegisterExtension(
+                            RegisterExtensionCommand {
+                                wallet_instance_id: wallet_instance_id.clone(),
+                                extension_id: params.extension_id,
+                                extension_version: params.extension_version,
+                                protocol_version: params.protocol_version,
+                                profile_hint: params.profile_hint,
+                                lock_state,
+                            },
+                        ))
+                        .await,
+                    |response| match response {
+                        CoordinatorResponse::Ack => Ok(()),
+                        other => Err(unexpected_response(other)),
+                    },
+                )?;
+                expect_response(
+                    handle
+                        .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
+                            UpdateExtensionAccountsCommand {
+                                wallet_instance_id: wallet_instance_id.clone(),
+                                lock_state,
+                                accounts: params
+                                    .accounts_summary
+                                    .into_iter()
+                                    .map(|account| {
+                                        bridge_account_to_wallet_account(
+                                            &wallet_instance_id,
+                                            account,
+                                            lock_state,
+                                        )
+                                    })
+                                    .collect(),
+                            },
+                        ))
+                        .await,
+                    |response| match response {
+                        CoordinatorResponse::Ack => Ok(()),
+                        other => Err(unexpected_response(other)),
+                    },
+                )?;
+                serde_json::to_value(ExtensionRegisteredResult {
+                    wallet_instance_id,
+                    daemon_protocol_version: starmask_types::DAEMON_PROTOCOL_VERSION,
+                    accepted: true,
+                })
+                .map_err(|error| error_response(None, error))?
+            }
         }
         "extension.heartbeat" => {
             let params = decode_protocol::<ExtensionHeartbeatParams>(&request.params)?;
