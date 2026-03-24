@@ -202,7 +202,8 @@ On startup, the daemon must:
 3. keep delivery leases only if still within expiry
 4. keep presentation leases only if still within expiry
 5. return expired delivery leases to `created`
-6. keep `pending_user_approval` requests pinned to their `wallet_instance_id`
+6. return requests with expired presentation leases to `created` while keeping their pinned `wallet_instance_id`
+7. keep still-valid `pending_user_approval` requests pinned to their `wallet_instance_id`
 
 ### Extension Restart
 
@@ -216,7 +217,7 @@ On reconnect, the extension must:
 Recovery behavior:
 
 1. if a request was only `dispatched`, it may be claimed again
-2. if a request was `pending_user_approval` and pinned to this instance, `request.pullNext` may return it with:
+2. if a request was `pending_user_approval`, pinned to this instance, and its presentation lease is still active, `request.pullNext` may return it with:
    - `resume_required = true`
    - the active `presentation_id`
 
@@ -247,11 +248,9 @@ Requests may only be resumed by the same `wallet_instance_id`.
 Rules:
 
 1. after `request.presented`, the request must never migrate to a different wallet instance
-2. if the same wallet instance reconnects before `expires_at`, it may resume
-3. if the same wallet instance never reconnects, the request remains pending until:
-   - the user rejects
-   - the host cancels
-   - the request expires
+2. if the same wallet instance reconnects before the presentation lease expires, it may resume
+3. once the presentation lease expires, the daemon returns the request to `created` for the same wallet instance to claim again
+4. if the same wallet instance never reconnects, the request follows normal request lifecycle handling after presentation expiry until the host cancels it or the request itself expires
 
 This resolves the re-delivery policy in favor of:
 

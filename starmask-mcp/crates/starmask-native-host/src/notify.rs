@@ -256,6 +256,7 @@ mod tests {
                 presentation_expires_at: None,
                 raw_txn_bcs_hex: None,
                 message: Some("hello".to_owned()),
+                message_format: Some(starmask_types::MessageFormat::Utf8),
             },
         );
 

@@ -5,7 +5,7 @@ use crate::{
     ids::{
         ClientRequestId, DeliveryLeaseId, PayloadHash, PresentationId, RequestId, WalletInstanceId,
     },
-    lifecycle::{LockState, RejectReasonCode, RequestKind, ResultKind},
+    lifecycle::{LockState, MessageFormat, RejectReasonCode, RequestKind, ResultKind},
     time::TimestampMs,
 };
 
@@ -145,6 +145,8 @@ pub enum NativeBridgeResponse {
         raw_txn_bcs_hex: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         message: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        message_format: Option<MessageFormat>,
     },
     #[serde(rename = "request.none")]
     RequestNone {

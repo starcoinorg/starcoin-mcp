@@ -102,6 +102,7 @@ where
                     presentation_expires_at: request.presentation_expires_at,
                     raw_txn_bcs_hex: request.raw_txn_bcs_hex,
                     message: request.message,
+                    message_format: request.message_format,
                 },
                 None => NativeBridgeResponse::RequestNone {
                     reply_to: reply_to.clone(),
@@ -310,6 +311,7 @@ mod tests {
                     presentation_expires_at: None,
                     raw_txn_bcs_hex: Some("0xabc".to_owned()),
                     message: None,
+                    message_format: None,
                 }),
             })),
         };
@@ -340,6 +342,7 @@ mod tests {
                 presentation_expires_at: None,
                 raw_txn_bcs_hex: Some("0xabc".to_owned()),
                 message: None,
+                message_format: None,
             }
         );
     }

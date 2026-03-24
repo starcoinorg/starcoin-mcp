@@ -315,20 +315,6 @@ async fn dispatch_request(
                                 protocol_version: params.protocol_version,
                                 profile_hint: params.profile_hint,
                                 lock_state,
-                            },
-                        ))
-                        .await,
-                    |response| match response {
-                        CoordinatorResponse::Ack => Ok(()),
-                        other => Err(unexpected_response(other)),
-                    },
-                )?;
-                expect_response(
-                    handle
-                        .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
-                            UpdateExtensionAccountsCommand {
-                                wallet_instance_id: wallet_instance_id.clone(),
-                                lock_state,
                                 accounts: params
                                     .accounts_summary
                                     .into_iter()

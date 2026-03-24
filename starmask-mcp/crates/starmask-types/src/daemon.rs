@@ -266,6 +266,8 @@ pub struct PulledRequest {
     pub raw_txn_bcs_hex: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message_format: Option<MessageFormat>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]

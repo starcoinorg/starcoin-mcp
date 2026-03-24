@@ -36,6 +36,7 @@ pub struct RegisterExtensionCommand {
     pub protocol_version: u32,
     pub profile_hint: Option<String>,
     pub lock_state: starmask_types::LockState,
+    pub accounts: Vec<WalletAccountRecord>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
