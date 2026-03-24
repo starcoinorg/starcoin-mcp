@@ -24,6 +24,20 @@ Precedence:
 3. config file
 4. built-in defaults
 
+## Rust Configuration Binding
+
+Recommended Rust approach:
+
+- `clap` for CLI parsing
+- `serde` for config deserialization
+- one normalized runtime config struct after merge and validation
+
+Validation should happen before:
+
+- opening the daemon listener
+- opening the SQLite database
+- starting recovery
+
 ## Default Paths
 
 ### macOS

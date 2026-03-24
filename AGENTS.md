@@ -1,0 +1,86 @@
+# Starcoin MCP
+
+This repository contains Starcoin-related MCP projects, with current emphasis on `starmask-mcp` and `starcoin-node-mcp`.
+
+These instructions apply to the whole repository unless a subproject adds stricter local guidance.
+
+## Scope
+
+- Keep repository-level architecture and shared contracts authoritative.
+- Do not bypass `shared/` definitions by inventing parallel lifecycle or error vocabularies inside subprojects.
+- When changing protocol behavior, update the relevant documents in `docs/architecture/`, `shared/`, and the affected subproject docs in the same change.
+
+## Rust Conventions
+
+- Prefer crate names with a repository-consistent prefix.
+  - For the wallet-facing implementation, prefer `starmask-...`.
+- When using `format!` and variables can be inlined into `{}`, inline them.
+- Always collapse `if` statements when doing so improves readability.
+- Prefer method references over redundant closures when they are equally clear.
+- Prefer exhaustive `match` statements over wildcard arms when practical.
+- Avoid adding or preserving stringly-typed state in core Rust logic when a typed enum or newtype is more appropriate.
+
+## API Design
+
+- Avoid bool or ambiguous `Option` parameters that create hard-to-read callsites such as `foo(false)` or `bar(None)`.
+- Prefer enums, named methods, newtypes, or dedicated request structs when they keep callsites self-documenting.
+- If an opaque positional literal is still necessary, use the `argument_comment_lint` convention:
+  - add an exact `/*param_name*/` comment before ambiguous positional literals such as `None`, booleans, and numeric literals
+  - the comment must exactly match the callee signature
+
+## Project Structure
+
+- Keep transport adapters thin.
+- Keep lifecycle policy and persistence logic out of MCP-specific adapters.
+- For `starmask-mcp`, prefer the official Rust MCP SDK `rmcp` only at the MCP shim boundary.
+- Do not let MCP SDK types leak into daemon-facing or core domain crates.
+- Prefer adding a new module over continuing to grow an already large file.
+- Target Rust modules under roughly 500 lines excluding tests.
+- If a file approaches roughly 800 lines, strongly prefer extracting new functionality into a new module unless there is a documented reason not to.
+
+## Documentation Sync
+
+- If you change an API, protocol, lifecycle rule, config surface, or persistence behavior, update the corresponding docs in the same change.
+- For `starmask-mcp`, the following docs are part of the implementation contract:
+  - `starmask-mcp/docs/starmask-mcp-interface-design.md`
+  - `starmask-mcp/docs/security-model.md`
+  - `starmask-mcp/docs/daemon-protocol.md`
+  - `starmask-mcp/docs/native-messaging-contract.md`
+  - `starmask-mcp/docs/persistence-and-recovery.md`
+  - `starmask-mcp/docs/configuration.md`
+  - `starmask-mcp/docs/approval-ui-spec.md`
+  - `starmask-mcp/docs/testing-and-acceptance.md`
+  - `starmask-mcp/docs/rust-implementation-strategy.md`
+
+## Testing
+
+- Prefer asserting equality on whole objects instead of checking fields one by one when that remains readable.
+- Prefer `pretty_assertions::assert_eq` in Rust tests.
+- Avoid mutating process environment in tests when a parameterized dependency or config object can be passed instead.
+- For protocol-heavy code, prefer fixture or snapshot-style coverage for:
+  - JSON-RPC payloads
+  - Native Messaging payloads
+  - config serialization
+  - MCP tool results
+
+## Rust Workflow
+
+- Run `cargo fmt` automatically after Rust code changes.
+- Run tests for the affected crate or binary first.
+- Do not default to `--all-features` for routine local runs.
+- Ask before running a full workspace test suite if the change is broad or expensive.
+
+## Starmask-MCP Specific Rules
+
+- `Starmask` extension is the only signing authority.
+- `starmaskd` owns lifecycle state transitions.
+- `starmask-mcp` is an MCP adapter, not a policy engine.
+- `starmask-native-host` is a transport shim, not a wallet runtime.
+- After `request.presented`, recovery is same-instance only.
+- Unsupported payloads must be rejected, not blind-signed.
+- Signed results use bounded multi-read retention in the first implementation.
+
+## Non-Goals
+
+- Do not import repository-specific conventions from unrelated projects unless they are adapted to this repository first.
+- Do not add build-system-specific guidance such as Bazel rules unless this repository actually adopts that tooling.

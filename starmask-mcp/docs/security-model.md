@@ -174,6 +174,24 @@ Rules:
 2. each channel uses a distinct Native Messaging manifest
 3. production binaries must not trust development extension IDs
 
+## Rust Implementation Security Notes
+
+The Rust workspace should default to:
+
+- `#![forbid(unsafe_code)]`
+
+If a platform shim requires unsafe code:
+
+- isolate it outside the core lifecycle and persistence crates
+- document the safety invariant
+- keep the unsafe surface minimal and auditable
+
+Additional Rust guidance:
+
+1. request ids, lease ids, and wallet instance ids should be distinct newtypes
+2. lifecycle states should be represented as enums, not mutable free-form strings
+3. redaction helpers should be used for sensitive log fields
+
 ## Threat Scenarios and Expected Mitigations
 
 ### Host provides a misleading description
@@ -214,15 +232,15 @@ Mitigation:
 - channel-specific manifest and ID allowlists
 - version compatibility checks at registration time
 
-## Security Decisions That Must Be Closed Before Implementation
+## Closed First-Release Security Decisions
 
-The following decisions must be finalized before coding starts:
+The first Rust implementation is now closed on these decisions:
 
-1. whether account listing is gated by user approval
-2. whether signed results are single-read or bounded multi-read
-3. whether message signing may ever use relaxed policy
-4. what exact transaction classes are considered unsupported for approval
-5. what exact recovery rules apply after `request.presented`
+1. account listing is not gated by an interactive approval step
+2. signed results use bounded multi-read retention
+3. message signing does not use relaxed approval policy in the first release
+4. unsupported transaction payloads must be rejected rather than blind-signed
+5. after `request.presented`, only the same `wallet_instance_id` may resume the request
 
 ## Non-Goals
 

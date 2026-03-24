@@ -26,6 +26,23 @@ This resolves the earlier design question in favor of:
 
 - one shared request table for `sign_transaction` and `sign_message`
 
+## Rust Persistence Guidance
+
+Recommended Rust approach:
+
+1. keep lifecycle logic in a coordinator owned by `starmask-core`
+2. expose persistence through repository traits
+3. keep SQLite access behind one repository implementation
+4. perform lifecycle writes inside explicit SQLite transactions
+
+The first implementation should use `rusqlite` and keep writes on a dedicated blocking path rather than issuing ad hoc SQL from arbitrary async tasks.
+
+Recommended SQLite settings at startup:
+
+- `journal_mode = WAL`
+- `foreign_keys = ON`
+- `busy_timeout` configured
+
 ## Required Persistent Entities
 
 ### `requests`

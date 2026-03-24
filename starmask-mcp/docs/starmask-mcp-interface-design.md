@@ -23,6 +23,7 @@ The design goal is to provide a safe local signing entrypoint to MCP hosts witho
 7. Requests are asynchronous by default and identified by `request_id`.
 8. Request creation is idempotent through `client_request_id`.
 9. The first release fails fast when no connected unlocked wallet instance can satisfy a signing request.
+10. The Rust implementation should keep protocol strings at the boundary and typed enums and newtypes in the core domain.
 
 ## 3. Runtime Topology
 
@@ -42,6 +43,7 @@ flowchart LR
 - Validates tool inputs at the MCP boundary.
 - Converts tool calls into daemon RPC requests.
 - Returns structured results to the host.
+- Should prefer the official Rust MCP SDK `rmcp` for MCP transport and tool wiring in the first Rust implementation.
 
 #### `starmaskd`
 

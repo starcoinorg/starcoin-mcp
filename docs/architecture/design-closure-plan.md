@@ -32,6 +32,7 @@ The following documents should exist before implementation starts:
 8. `starmask-mcp/docs/configuration.md`
 9. `starmask-mcp/docs/approval-ui-spec.md`
 10. `starmask-mcp/docs/testing-and-acceptance.md`
+11. `starmask-mcp/docs/rust-implementation-strategy.md`
 
 ## Design Order
 
@@ -43,8 +44,9 @@ The documents should be completed in this order:
 4. native messaging and extension contract
 5. persistence and recovery
 6. configuration and installation detail
-7. approval UI specification
-8. testing and acceptance criteria
+7. Rust implementation strategy
+8. approval UI specification
+9. testing and acceptance criteria
 
 This order keeps later documents constrained by earlier ones instead of re-opening top-level assumptions.
 

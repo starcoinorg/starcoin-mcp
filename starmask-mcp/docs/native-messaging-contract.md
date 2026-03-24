@@ -19,6 +19,34 @@ Properties:
 - messages are bidirectional JSON objects
 - the extension may receive daemon hints through the same port
 - correctness must not depend on hints; correctness depends on explicit claims through `request.pullNext`
+- the host process should be kept alive through `connectNative()` rather than one-shot `sendNativeMessage()`
+
+## Native Messaging Wire Format
+
+Chrome Native Messaging requires:
+
+- JSON messages
+- UTF-8 encoding
+- a 32-bit native-endian message length prefix
+
+Chrome-side limits that the host must respect:
+
+- maximum message size from host to Chrome: 1 MB
+- maximum message size from Chrome to host: 64 MiB
+
+Process rules:
+
+- the first CLI argument identifies the caller origin
+- stdout is reserved for protocol frames only
+- stderr is the correct destination for diagnostics
+
+Rust implementation guidance:
+
+1. keep framing logic in one dedicated module
+2. isolate stdout writes from logging completely
+3. validate frame length before allocation
+4. fail closed on malformed frames
+5. if Windows needs a binary-mode stdio shim, isolate it in a tiny platform-specific module
 
 ## Protocol Version
 

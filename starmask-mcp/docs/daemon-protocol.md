@@ -71,6 +71,29 @@ Every error response should contain a shared code where applicable:
 }
 ```
 
+## Rust Implementation Guidance
+
+Recommended Rust boundary model:
+
+1. parse JSON-RPC messages into DTOs with `serde`
+2. convert DTOs into typed domain commands
+3. send those commands to one daemon coordinator task
+4. let the coordinator own lifecycle transitions and persistence
+
+The daemon should not let arbitrary transport tasks mutate request state directly.
+
+Recommended crates:
+
+- `serde`
+- `serde_json`
+- Tokio for local IPC transport
+- `thiserror` for typed library errors
+
+Boundary rule:
+
+- this daemon protocol remains project-owned even if `starmask-mcp` uses `rmcp`
+- `rmcp` should not leak into daemon-facing Rust core crates
+
 ## System Methods
 
 ### `system.ping`

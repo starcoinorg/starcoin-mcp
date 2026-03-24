@@ -15,6 +15,16 @@ The first release must cover:
 5. approval UI behavior
 6. configuration safety
 
+## Rust Test Layers
+
+Recommended Rust test layout:
+
+1. unit tests in `starmask-core` for lifecycle and policy
+2. integration tests for daemon JSON-RPC transport
+3. integration tests for Native Messaging framing
+4. recovery tests using temporary SQLite databases and restart simulation
+5. serialization compatibility tests against shared schemas
+
 ## Protocol Acceptance
 
 The implementation must demonstrate:
