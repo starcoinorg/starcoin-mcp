@@ -21,8 +21,8 @@ Key architecture documents:
   - includes the interface draft for `starmask-mcp`, `starmaskd`, and the Chrome extension bridge
 - `starcoin-node-mcp/`
   - chain-facing Starcoin MCP design
-  - includes the interface draft for chain queries, transaction preparation, simulation, and signed transaction submission
+  - includes interface, security, deployment, configuration, RPC-adapter, and Rust implementation design docs for chain queries, transaction preparation, simulation, and signed transaction submission
 
 ## Status
 
-Initial project layout with wallet-facing and chain-facing subprojects.
+Wallet-facing and chain-facing subprojects both have implementation-oriented design documents for review.

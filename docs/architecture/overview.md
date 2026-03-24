@@ -109,6 +109,12 @@ starcoin-mcp/
   starcoin-node-mcp/
     README.md
     docs/
+      configuration.md
+      deployment-model.md
+      design-closure-plan.md
+      rpc-adapter-design.md
+      rust-implementation-strategy.md
+      security-model.md
       starcoin-node-mcp-interface-design.md
 ```
 
@@ -123,6 +129,9 @@ The current structure is designed so that future MCP projects can be added witho
 
 ## Design Status
 
-The repository now contains the minimum document set required to keep `starmask-mcp` design closed at the architecture, protocol, recovery, configuration, UI, and acceptance layers.
+The repository now contains:
+
+- an implementation-oriented design set for `starmask-mcp`
+- an implementation-oriented design set for `starcoin-node-mcp`
 
 Any implementation work should preserve those contracts rather than reopening them ad hoc.

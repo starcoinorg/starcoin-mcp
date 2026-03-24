@@ -1,4 +1,4 @@
-# Starcoin Node MCP Interface Design Draft
+# Starcoin Node MCP Interface Design
 
 ## 1. Purpose
 
@@ -19,6 +19,15 @@ The main goal is to give MCP hosts a stable task-oriented interface for:
 - preparing unsigned transactions
 - simulating unsigned transactions
 - submitting already signed transactions
+
+Companion documents for this interface include:
+
+- `starcoin-node-mcp/docs/security-model.md`
+- `starcoin-node-mcp/docs/deployment-model.md`
+- `starcoin-node-mcp/docs/configuration.md`
+- `starcoin-node-mcp/docs/rpc-adapter-design.md`
+- `starcoin-node-mcp/docs/rust-implementation-strategy.md`
+- `starcoin-node-mcp/docs/design-closure-plan.md`
 
 ## 2. Design Principles
 
@@ -504,6 +513,7 @@ All preparation tools should return:
 - the raw unsigned transaction in BCS hex
 - a structured transaction view
 - a human-readable transaction summary
+- a `chain_context` snapshot describing the target endpoint and chain identity
 - `simulation_status`
 - simulation output when available
 - a `next_action` field indicating the expected wallet step
@@ -517,6 +527,8 @@ If `sender_public_key` is unavailable during preparation:
 ### 7.2 Query Results
 
 Query tools should prefer concise summaries plus raw structured objects, rather than only raw RPC payloads.
+
+Health and transaction-adjacent query results should also make chain context explicit enough for the host to reason about endpoint identity, lag, and retry behavior.
 
 ### 7.3 Errors
 
@@ -552,6 +564,8 @@ Recommended internal modules:
 - `mapper`
   - maps RPC responses to MCP-friendly outputs
 
+The compatibility and normalization rules for this layer are defined in `starcoin-node-mcp/docs/rpc-adapter-design.md`.
+
 ## 9. Signing Boundary
 
 `starcoin-node-mcp` must not:
@@ -571,20 +585,13 @@ The intended pairing is:
 
 ## 10. Deployment Model
 
-### 10.1 Local Mode
+The canonical deployment and profile rules are defined in `starcoin-node-mcp/docs/deployment-model.md`.
 
-- MCP host launches `starcoin-node-mcp` locally
-- `starcoin-node-mcp` connects to local IPC or local WebSocket RPC
+Summary:
 
-### 10.2 Remote Node Mode
-
-- MCP host launches `starcoin-node-mcp` locally
-- `starcoin-node-mcp` connects to a remote Starcoin node over WebSocket
-
-### 10.3 Shared Service Mode
-
-- possible for read-only mode
-- not recommended for signer-adjacent workflows unless transaction preparation policy is well understood
+- `read_only` is the default profile
+- `transaction` mode is explicit opt-in and requires chain pin validation
+- `admin` mode remains out of scope for the first release
 
 ## 11. Safety Constraints
 
@@ -602,12 +609,17 @@ Repository-wide materials:
 
 Project-specific materials:
 
-- this interface draft
-- future transport or implementation notes under `starcoin-node-mcp/`
+- `starcoin-node-mcp/docs/design-closure-plan.md`
+- `starcoin-node-mcp/docs/security-model.md`
+- `starcoin-node-mcp/docs/deployment-model.md`
+- `starcoin-node-mcp/docs/configuration.md`
+- `starcoin-node-mcp/docs/rpc-adapter-design.md`
+- `starcoin-node-mcp/docs/rust-implementation-strategy.md`
+- this interface design
 
-## 13. Open Questions
+## 13. First-Release Decisions
 
-1. Should preparation tools always simulate, or should simulation be optionally disabled?
-2. Should `call_view_function` and `simulate_raw_transaction` be split by VM generation in later versions?
-3. Should transaction summaries include normalized fields specifically optimized for wallet approval UIs?
-4. Should read-only and transaction-enabled modes be separate binaries or configuration profiles?
+1. Preparation tools attempt simulation whenever `sender_public_key` is available.
+2. `call_view_function` and `simulate_raw_transaction` remain version-neutral MCP tools; VM differences are handled by the adapter layer.
+3. Transaction summaries may include normalized fields helpful to the host or wallet flow, but they remain descriptive hints rather than wallet security truth.
+4. Read-only and transaction-enabled behavior ship as configuration profiles of one binary rather than separate binaries.
