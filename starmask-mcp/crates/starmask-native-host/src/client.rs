@@ -2,6 +2,7 @@ use std::{
     io::{Read, Write},
     os::unix::net::UnixStream,
     path::PathBuf,
+    time::Duration,
 };
 
 use serde::{Serialize, de::DeserializeOwned};
@@ -14,6 +15,9 @@ use starmask_types::{
     RequestPullNextParams, RequestPullNextResult, RequestRejectParams, RequestResolveParams,
     SharedError,
 };
+
+const RESPONSE_READ_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_RESPONSE_BYTES: u64 = 1024 * 1024;
 
 pub trait DaemonRpc {
     fn extension_register(
@@ -72,15 +76,24 @@ impl LocalDaemonClient {
         let encoded = serde_json::to_vec(&request).map_err(shared_internal_error)?;
 
         let mut stream = UnixStream::connect(&self.socket_path).map_err(shared_transport_error)?;
+        stream
+            .set_read_timeout(Some(RESPONSE_READ_TIMEOUT))
+            .map_err(shared_transport_error)?;
         stream.write_all(&encoded).map_err(shared_transport_error)?;
         stream
             .shutdown(std::net::Shutdown::Write)
             .map_err(shared_transport_error)?;
 
         let mut response = Vec::new();
-        stream
+        std::io::Read::by_ref(&mut stream)
+            .take(MAX_RESPONSE_BYTES + 1)
             .read_to_end(&mut response)
             .map_err(shared_transport_error)?;
+        if u64::try_from(response.len()).unwrap_or(u64::MAX) > MAX_RESPONSE_BYTES {
+            return Err(shared_transport_error(format!(
+                "daemon response exceeded {MAX_RESPONSE_BYTES} bytes"
+            )));
+        }
 
         let response: JsonRpcResponse<R> =
             serde_json::from_slice(&response).map_err(shared_internal_error)?;

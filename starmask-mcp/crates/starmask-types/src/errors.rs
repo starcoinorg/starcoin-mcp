@@ -42,7 +42,6 @@ impl SharedErrorCode {
                 | Self::WalletSelectionRequired
                 | Self::ExtensionNotConnected
                 | Self::InternalBridgeError
-                | Self::ProtocolVersionMismatch
                 | Self::NodeUnavailable
                 | Self::RpcUnavailable
                 | Self::RateLimited

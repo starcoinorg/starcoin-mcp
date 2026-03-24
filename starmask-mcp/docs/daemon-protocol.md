@@ -35,6 +35,11 @@ The first implementation may use one request per local connection:
 3. the daemon writes one JSON-RPC response
 4. the connection closes
 
+Framing rule for this mode:
+
+- request body is complete when the client closes its write side (EOF)
+- daemon returns exactly one JSON-RPC response, then closes the connection
+
 Persistent local connections may be added later without changing the request and response envelope.
 
 ## Protocol Version

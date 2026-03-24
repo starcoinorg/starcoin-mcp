@@ -9,10 +9,17 @@ where
     R: Read,
 {
     let mut header = [0_u8; 4];
-    match reader.read_exact(&mut header) {
-        Ok(()) => {}
-        Err(error) if error.kind() == ErrorKind::UnexpectedEof => return Ok(None),
-        Err(error) => return Err(error.into()),
+    let mut header_read = 0;
+    while header_read < header.len() {
+        match reader.read(&mut header[header_read..]) {
+            Ok(0) if header_read == 0 => return Ok(None),
+            Ok(0) => bail!("native bridge frame header truncated after {header_read} bytes"),
+            Ok(read) => header_read += read,
+            Err(error) if error.kind() == ErrorKind::UnexpectedEof && header_read == 0 => {
+                return Ok(None);
+            }
+            Err(error) => return Err(error.into()),
+        }
     }
 
     let length = u32::from_ne_bytes(header);

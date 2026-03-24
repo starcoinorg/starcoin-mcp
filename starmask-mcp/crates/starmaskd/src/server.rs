@@ -1,11 +1,15 @@
-use std::{collections::BTreeSet, path::Path};
+use std::{collections::BTreeSet, path::Path, time::Duration};
 
-use anyhow::{Context, Result};
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+
+use anyhow::{Context, Result, anyhow, bail};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{UnixListener, UnixStream},
+    time::timeout,
 };
 use tracing::{debug, warn};
 
@@ -29,6 +33,9 @@ use starmask_types::{
 };
 
 use crate::coordinator_runtime::CoordinatorHandle;
+
+const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(5);
+const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct ServerPolicy {
@@ -55,10 +62,16 @@ pub async fn run_unix_server(
     if let Some(parent) = socket_path.parent() {
         std::fs::create_dir_all(parent)
             .with_context(|| format!("failed to create {}", parent.display()))?;
+        #[cfg(unix)]
+        std::fs::set_permissions(parent, std::fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("failed to lock down {}", parent.display()))?;
     }
 
     let listener = UnixListener::bind(socket_path)
         .with_context(|| format!("failed to bind {}", socket_path.display()))?;
+    #[cfg(unix)]
+    std::fs::set_permissions(socket_path, std::fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("failed to lock down {}", socket_path.display()))?;
     loop {
         let (stream, _) = listener.accept().await?;
         let handle = handle.clone();
@@ -76,8 +89,7 @@ async fn handle_connection(
     handle: CoordinatorHandle,
     policy: ServerPolicy,
 ) -> Result<()> {
-    let mut bytes = Vec::new();
-    stream.read_to_end(&mut bytes).await?;
+    let bytes = read_request_bytes(&mut stream).await?;
     if bytes.is_empty() {
         return Ok(());
     }
@@ -102,7 +114,7 @@ async fn dispatch_request(
     let id = request.id.clone();
     let result = match request.method.as_str() {
         "system.ping" => {
-            decode_protocol::<SystemPingParams>(&request.params)?;
+            decode_protocol::<SystemPingParams>(&id, &request.params)?;
             serde_json::to_value(expect_response(
                 handle.dispatch(CoordinatorCommand::SystemPing).await,
                 |response| match response {
@@ -113,7 +125,7 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "system.getInfo" => {
-            decode_protocol::<SystemGetInfoParams>(&request.params)?;
+            decode_protocol::<SystemGetInfoParams>(&id, &request.params)?;
             serde_json::to_value(expect_response(
                 handle.dispatch(CoordinatorCommand::SystemGetInfo).await,
                 |response| match response {
@@ -124,7 +136,7 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "wallet.status" => {
-            decode_protocol::<WalletStatusParams>(&request.params)?;
+            decode_protocol::<WalletStatusParams>(&id, &request.params)?;
             serde_json::to_value(expect_response(
                 handle.dispatch(CoordinatorCommand::WalletStatus).await,
                 |response| match response {
@@ -135,7 +147,7 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "wallet.listInstances" => {
-            let params = decode_protocol::<WalletListInstancesParams>(&request.params)?;
+            let params = decode_protocol::<WalletListInstancesParams>(&id, &request.params)?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::WalletListInstances {
@@ -150,7 +162,7 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "wallet.listAccounts" => {
-            let params = decode_protocol::<WalletListAccountsParams>(&request.params)?;
+            let params = decode_protocol::<WalletListAccountsParams>(&id, &request.params)?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::WalletListAccounts {
@@ -166,7 +178,7 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "wallet.getPublicKey" => {
-            let params = decode_protocol::<WalletGetPublicKeyParams>(&request.params)?;
+            let params = decode_protocol::<WalletGetPublicKeyParams>(&id, &request.params)?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::WalletGetPublicKey {
@@ -182,7 +194,7 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "request.createSignTransaction" => {
-            let params = decode_protocol::<CreateSignTransactionParams>(&request.params)?;
+            let params = decode_protocol::<CreateSignTransactionParams>(&id, &request.params)?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::CreateSignTransaction(
@@ -207,7 +219,7 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "request.createSignMessage" => {
-            let params = decode_protocol::<CreateSignMessageParams>(&request.params)?;
+            let params = decode_protocol::<CreateSignMessageParams>(&id, &request.params)?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::CreateSignMessage(
@@ -231,7 +243,7 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "request.getStatus" => {
-            let params = decode_protocol::<GetRequestStatusParams>(&request.params)?;
+            let params = decode_protocol::<GetRequestStatusParams>(&id, &request.params)?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::GetRequestStatus {
@@ -246,7 +258,7 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "request.hasAvailable" => {
-            let params = decode_protocol::<RequestHasAvailableParams>(&request.params)?;
+            let params = decode_protocol::<RequestHasAvailableParams>(&id, &request.params)?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::RequestHasAvailable {
@@ -261,7 +273,7 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "request.cancel" => {
-            let params = decode_protocol::<CancelRequestParams>(&request.params)?;
+            let params = decode_protocol::<CancelRequestParams>(&id, &request.params)?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::CancelRequest {
@@ -276,7 +288,7 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "extension.register" => {
-            let params = decode_protocol::<ExtensionRegisterParams>(&request.params)?;
+            let params = decode_protocol::<ExtensionRegisterParams>(&id, &request.params)?;
             if !policy.accepts_extension(&params.extension_id) {
                 warn!(
                     channel = ?policy.channel,
@@ -345,7 +357,7 @@ async fn dispatch_request(
             }
         }
         "extension.heartbeat" => {
-            let params = decode_protocol::<ExtensionHeartbeatParams>(&request.params)?;
+            let params = decode_protocol::<ExtensionHeartbeatParams>(&id, &request.params)?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::HeartbeatExtension(
@@ -363,7 +375,7 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "extension.updateAccounts" => {
-            let params = decode_protocol::<ExtensionUpdateAccountsParams>(&request.params)?;
+            let params = decode_protocol::<ExtensionUpdateAccountsParams>(&id, &request.params)?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
@@ -392,7 +404,7 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "request.pullNext" => {
-            let params = decode_protocol::<RequestPullNextParams>(&request.params)?;
+            let params = decode_protocol::<RequestPullNextParams>(&id, &request.params)?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::PullNextRequest {
@@ -407,7 +419,7 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "request.presented" => {
-            let params = decode_protocol::<RequestPresentedParams>(&request.params)?;
+            let params = decode_protocol::<RequestPresentedParams>(&id, &request.params)?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::MarkRequestPresented(
@@ -427,7 +439,7 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "request.resolve" => {
-            let params = decode_protocol::<RequestResolveParams>(&request.params)?;
+            let params = decode_protocol::<RequestResolveParams>(&id, &request.params)?;
             let result = request_result_from_params(&params)
                 .map_err(|error| error_response(Some(&id), error))?;
             serde_json::to_value(expect_response(
@@ -447,7 +459,7 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "request.reject" => {
-            let params = decode_protocol::<RequestRejectParams>(&request.params)?;
+            let params = decode_protocol::<RequestRejectParams>(&id, &request.params)?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::RejectRequest(RejectRequestCommand {
@@ -480,15 +492,15 @@ async fn dispatch_request(
     Ok(JsonRpcResponse::Success(JsonRpcSuccess::new(id, result)))
 }
 
-fn decode_protocol<T>(value: &Value) -> Result<T, JsonRpcErrorResponse>
+fn decode_protocol<T>(id: &str, value: &Value) -> Result<T, JsonRpcErrorResponse>
 where
     T: DeserializeOwned + HasProtocolVersion,
 {
-    let params =
-        serde_json::from_value::<T>(value.clone()).map_err(|error| error_response(None, error))?;
+    let params = serde_json::from_value::<T>(value.clone())
+        .map_err(|error| error_response(Some(id), error))?;
     if params.protocol_version() != starmask_types::DAEMON_PROTOCOL_VERSION {
         return Err(JsonRpcErrorResponse::new(
-            "",
+            id,
             SharedError::new(
                 SharedErrorCode::ProtocolVersionMismatch,
                 format!(
@@ -499,6 +511,30 @@ where
         ));
     }
     Ok(params)
+}
+
+async fn read_request_bytes(stream: &mut UnixStream) -> Result<Vec<u8>> {
+    timeout(REQUEST_READ_TIMEOUT, async {
+        let mut bytes = Vec::new();
+        let mut chunk = [0_u8; 8192];
+        loop {
+            let read = stream.read(&mut chunk).await?;
+            if read == 0 {
+                break;
+            }
+            let next_len = bytes
+                .len()
+                .checked_add(read)
+                .ok_or_else(|| anyhow!("daemon rpc request size overflow"))?;
+            if next_len > MAX_REQUEST_BYTES {
+                bail!("daemon rpc request exceeds {MAX_REQUEST_BYTES} bytes");
+            }
+            bytes.extend_from_slice(&chunk[..read]);
+        }
+        Ok::<_, anyhow::Error>(bytes)
+    })
+    .await
+    .map_err(|_| anyhow!("timed out waiting for daemon rpc request"))?
 }
 
 trait HasProtocolVersion {
