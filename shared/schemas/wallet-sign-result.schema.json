@@ -1,0 +1,60 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starcoin.dev/schemas/wallet-sign-result.schema.json",
+  "title": "WalletSignResult",
+  "type": "object",
+  "required": [
+    "request_id",
+    "kind",
+    "status",
+    "result_kind"
+  ],
+  "properties": {
+    "request_id": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "sign_transaction",
+        "sign_message"
+      ]
+    },
+    "status": {
+      "type": "string"
+    },
+    "result_kind": {
+      "type": "string",
+      "enum": [
+        "signed_transaction",
+        "signed_message",
+        "none"
+      ]
+    },
+    "signed_txn_bcs_hex": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "signature": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "updated_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    }
+  },
+  "additionalProperties": true
+}

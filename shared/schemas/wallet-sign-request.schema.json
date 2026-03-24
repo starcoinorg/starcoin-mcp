@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starcoin.dev/schemas/wallet-sign-request.schema.json",
+  "title": "WalletSignRequest",
+  "type": "object",
+  "required": [
+    "request_id",
+    "kind",
+    "status",
+    "account_address",
+    "payload_hash",
+    "created_at",
+    "expires_at"
+  ],
+  "properties": {
+    "request_id": {
+      "type": "string"
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "sign_transaction",
+        "sign_message"
+      ]
+    },
+    "status": {
+      "type": "string"
+    },
+    "account_address": {
+      "type": "string"
+    },
+    "wallet_instance_id": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "payload_hash": {
+      "type": "string"
+    },
+    "client_context": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "display_hint": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "created_at": {
+      "type": "string"
+    },
+    "expires_at": {
+      "type": "string"
+    },
+    "chain_id": {
+      "type": [
+        "integer",
+        "null"
+      ]
+    },
+    "raw_txn_bcs_hex": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "message": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "message_format": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "enum": [
+        "utf8",
+        "hex",
+        null
+      ]
+    }
+  },
+  "additionalProperties": true
+}

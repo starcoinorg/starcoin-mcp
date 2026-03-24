@@ -1,0 +1,57 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://starcoin.dev/schemas/unsigned-transaction-envelope.schema.json",
+  "title": "UnsignedTransactionEnvelope",
+  "type": "object",
+  "required": [
+    "transaction_kind",
+    "raw_txn_bcs_hex",
+    "transaction_summary",
+    "simulation_status",
+    "next_action"
+  ],
+  "properties": {
+    "transaction_kind": {
+      "type": "string",
+      "enum": [
+        "transfer",
+        "contract_call",
+        "publish_package",
+        "unknown"
+      ]
+    },
+    "raw_txn_bcs_hex": {
+      "type": "string"
+    },
+    "raw_txn": {
+      "type": "object"
+    },
+    "transaction_summary": {
+      "type": "object"
+    },
+    "simulation_status": {
+      "type": "string",
+      "enum": [
+        "performed",
+        "skipped_missing_public_key",
+        "skipped_by_policy",
+        "failed"
+      ]
+    },
+    "simulation": {
+      "type": [
+        "object",
+        "null"
+      ]
+    },
+    "next_action": {
+      "type": "string",
+      "enum": [
+        "sign_transaction",
+        "get_public_key_then_simulate_or_sign",
+        "simulate_then_sign"
+      ]
+    }
+  },
+  "additionalProperties": true
+}
