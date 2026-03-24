@@ -1,4 +1,4 @@
-# Starcoin Node MCP Interface Design Draft
+# Starcoin Node MCP Interface Design
 
 ## 1. Purpose
 
@@ -10,6 +10,7 @@ The design assumptions are:
 - `starcoin-node-mcp` may connect to a local node or a remote node
 - `starcoin-node-mcp` does not hold private keys
 - signing is delegated to a separate wallet-facing system such as `starmask-mcp`
+- the first conforming implementation is written in Rust
 
 The main goal is to give MCP hosts a stable task-oriented interface for:
 
@@ -20,6 +21,16 @@ The main goal is to give MCP hosts a stable task-oriented interface for:
 - simulating unsigned transactions
 - submitting already signed transactions
 
+Companion documents for this interface include:
+
+- `starcoin-node-mcp/docs/security-model.md`
+- `starcoin-node-mcp/docs/deployment-model.md`
+- `starcoin-node-mcp/docs/configuration.md`
+- `starcoin-node-mcp/docs/rpc-adapter-design.md`
+- `starcoin-node-mcp/docs/rust-implementation-strategy.md`
+- `starcoin-node-mcp/docs/design-closure-plan.md`
+- `starcoin-node-mcp/docs/testing-and-acceptance.md`
+
 ## 2. Design Principles
 
 1. `starcoin-node-mcp` is read-first.
@@ -28,6 +39,8 @@ The main goal is to give MCP hosts a stable task-oriented interface for:
 4. VM2-first semantics should be preferred in user-facing tools.
 5. Unsafe node-management operations should not be enabled in the initial release.
 6. Structured outputs must be optimized for MCP host orchestration.
+7. Host-triggered work should stay bounded by default rather than creating unbounded queries, watch loops, or payload handling.
+8. The first implementation should preserve explicit Rust boundaries among MCP transport, RPC adaptation, and core transaction logic.
 
 ## 3. Runtime Topology
 
@@ -87,6 +100,18 @@ For example:
 
 ## 6. MCP Tool Surface
 
+### 6.0 Resource Governance
+
+The tool surface should expose bounded work rather than raw unbounded access to the backing node.
+
+Rules:
+
+1. tools that accept caller-provided counts, limits, or time budgets should clamp those inputs to configuration-defined safe bounds
+2. when a tool clamps a caller-provided bound, the result should expose the effective applied value
+3. `rate_limited` means a local concurrency or request-budget guard fired before outbound RPC side effects occurred
+4. `payload_too_large` means the request payload exceeded local policy and was rejected before decode or RPC submission
+5. watch loops and blocking waits should remain opt-in and bounded by local policy
+
 ### 6.1 Chain Context and Health
 
 #### `chain_status`
@@ -103,6 +128,7 @@ Return the current high-level chain context.
 
 - `network`
 - `chain_id`
+- `genesis_hash`
 - `head_block_number`
 - `head_block_hash`
 - `head_state_root`
@@ -167,6 +193,7 @@ Get a range-like recent block listing.
 ##### Output
 
 - `blocks`
+- `effective_count`
 
 #### `get_transaction`
 
@@ -204,6 +231,8 @@ Poll a transaction until terminal status or timeout.
 - `txn_hash`
 - `found`
 - `confirmed`
+- `effective_timeout_seconds`
+- `effective_poll_interval_seconds`
 - `transaction_info`
 - `events`
 - `status_summary`
@@ -230,6 +259,7 @@ Query events by filter.
 
 - `events`
 - `matched_count`
+- `effective_limit`
 
 ### 6.4 Account and State Queries
 
@@ -245,6 +275,7 @@ Return a task-oriented summary of an account.
 - `include_resources`: boolean, default `false`
 - `include_modules`: boolean, default `false`
 - `resource_limit`: optional
+- `module_limit`: optional
 
 ##### Output
 
@@ -255,6 +286,8 @@ Return a task-oriented summary of an account.
 - `accepted_tokens`
 - `resources`: optional
 - `modules`: optional
+- `applied_resource_limit`: optional
+- `applied_module_limit`: optional
 - `next_sequence_number_hint`
 
 #### `list_resources`
@@ -277,6 +310,7 @@ List resources for an account with optional type filter.
 - `address`
 - `state_root`
 - `resources`
+- `effective_max_size`
 
 #### `list_modules`
 
@@ -288,6 +322,7 @@ List modules for an account and optionally resolve ABI.
 
 - `address`
 - `resolve_abi`: boolean, default `true`
+- `max_size`: optional
 - `block_number`: optional
 
 ##### Output
@@ -295,6 +330,7 @@ List modules for an account and optionally resolve ABI.
 - `address`
 - `state_root`
 - `modules`
+- `effective_max_size`
 
 ### 6.5 ABI and Contract Introspection
 
@@ -441,6 +477,8 @@ Prepare an unsigned package publish transaction.
 - `expiration_time_secs`: optional
 - `gas_token`: optional
 
+Payloads above the configured size ceiling must be rejected locally with `payload_too_large`.
+
 ##### Output
 
 - envelope conforming to `shared/schemas/unsigned-transaction-envelope.schema.json`
@@ -490,7 +528,17 @@ Submit an already signed transaction.
 ##### Output
 
 - `txn_hash`
+- `submission_state`
+  - `accepted`
+  - `unknown`
+  - `rejected`
 - `submitted`
+- `error_code`: optional
+- `effective_timeout_seconds`: optional
+- `next_action`
+  - `watch_transaction`
+  - `reconcile_by_txn_hash`
+  - `reprepare_then_resign`
 - `watch_result`: optional
 
 ## 7. Result Semantics
@@ -504,6 +552,10 @@ All preparation tools should return:
 - the raw unsigned transaction in BCS hex
 - a structured transaction view
 - a human-readable transaction summary
+- a `chain_context` snapshot describing the target endpoint and chain identity
+- `prepared_at`
+- `sequence_number_source`
+- `gas_unit_price_source`
 - `simulation_status`
 - simulation output when available
 - a `next_action` field indicating the expected wallet step
@@ -514,11 +566,53 @@ If `sender_public_key` is unavailable during preparation:
 - omit or null the `simulation` field
 - set `next_action = get_public_key_then_simulate_or_sign`
 
-### 7.2 Query Results
+### 7.2 Rust Boundary DTOs
+
+Because the first conforming implementation is Rust, public MCP inputs and outputs should be defined as explicit `serde` DTOs rather than assembled from untyped maps.
+
+Required Rust-oriented rules:
+
+- `simulation_status`, `next_action`, and `submission_state` should map to Rust enums serialized in stable snake_case values
+- large payloads such as raw transactions, simulation details, and decoded summaries should be carried by dedicated Rust structs rather than `serde_json::Value` blobs where avoidable
+- DTOs used at the MCP boundary should remain separate from core orchestration types so domain logic is not coupled to transport serialization
+
+### 7.3 Query Results
 
 Query tools should prefer concise summaries plus raw structured objects, rather than only raw RPC payloads.
 
-### 7.3 Errors
+Health and transaction-adjacent query results should also make chain context explicit enough for the host to reason about endpoint identity, lag, and retry behavior.
+
+### 7.4 Resource Governance Results
+
+Whenever the caller supplies a query size or time budget that is clamped by local policy, the result should return the effective applied value.
+
+Rules:
+
+- `watch_transaction` should return `effective_timeout_seconds` and `effective_poll_interval_seconds`
+- list-like query tools should return `effective_count`, `effective_limit`, `effective_max_size`, or similar applied-limit metadata when caller-provided values were clamped
+- `rate_limited` should mean the local process rejected the request before outbound RPC side effects, so the host may retry later with backoff
+- `payload_too_large` should mean the request was rejected before decode or endpoint contact and requires a smaller payload or an explicit config change
+
+### 7.5 Submission Results
+
+Submission tools should compute and return `txn_hash` even before the endpoint confirms acceptance.
+
+Recommended interpretation:
+
+- `submission_state = accepted`
+  - the endpoint explicitly accepted the transaction
+  - `submitted = true`
+- `submission_state = unknown`
+  - the endpoint may already have received the transaction, but the caller did not receive a definitive response
+  - `submitted = false`
+  - the host should reconcile by `txn_hash` before any retry
+  - if reconciliation still times out, the host should preserve unresolved state and avoid automatic blind re-submission
+- `submission_state = rejected`
+  - the endpoint explicitly rejected the transaction
+  - `submitted = false`
+  - `transaction_expired` and `sequence_number_stale` require fresh preparation and fresh signing
+
+### 7.6 Errors
 
 Errors should reuse shared repository-level error codes where applicable.
 
@@ -527,8 +621,13 @@ Likely shared errors:
 - `node_unavailable`
 - `rpc_unavailable`
 - `invalid_chain_context`
+- `submission_unknown`
 - `simulation_failed`
 - `submission_failed`
+- `transaction_expired`
+- `sequence_number_stale`
+- `rate_limited`
+- `payload_too_large`
 - `unsupported_operation`
 
 Project-local errors may include:
@@ -552,6 +651,10 @@ Recommended internal modules:
 - `mapper`
   - maps RPC responses to MCP-friendly outputs
 
+The compatibility and normalization rules for this layer are defined in `starcoin-node-mcp/docs/rpc-adapter-design.md`.
+
+In the Rust implementation, these modules should be separate crates or crate-local modules with `TryFrom` or mapper boundaries rather than direct tool-handler access to RPC response structs.
+
 ## 9. Signing Boundary
 
 `starcoin-node-mcp` must not:
@@ -571,20 +674,13 @@ The intended pairing is:
 
 ## 10. Deployment Model
 
-### 10.1 Local Mode
+The canonical deployment and profile rules are defined in `starcoin-node-mcp/docs/deployment-model.md`.
 
-- MCP host launches `starcoin-node-mcp` locally
-- `starcoin-node-mcp` connects to local IPC or local WebSocket RPC
+Summary:
 
-### 10.2 Remote Node Mode
-
-- MCP host launches `starcoin-node-mcp` locally
-- `starcoin-node-mcp` connects to a remote Starcoin node over WebSocket
-
-### 10.3 Shared Service Mode
-
-- possible for read-only mode
-- not recommended for signer-adjacent workflows unless transaction preparation policy is well understood
+- `read_only` is the default profile
+- `transaction` mode is explicit opt-in and requires chain pin validation
+- `admin` mode remains out of scope for the first release
 
 ## 11. Safety Constraints
 
@@ -592,6 +688,8 @@ The intended pairing is:
 2. Admin capabilities should be separated from default user-facing capabilities.
 3. Preparation tools should simulate before returning a signing payload whenever `sender_public_key` is available.
 4. The returned transaction summary should be descriptive but not treated as the security source of truth by the wallet.
+5. `submit_signed_transaction` should derive `txn_hash` locally and must not allow blind re-submission when the prior submission outcome is uncertain.
+6. List-style queries, watch loops, and package-publish payloads should be bounded by local policy and fail fast when that policy is exceeded.
 
 ## 12. Relationship to Repository Structure
 
@@ -602,12 +700,21 @@ Repository-wide materials:
 
 Project-specific materials:
 
-- this interface draft
-- future transport or implementation notes under `starcoin-node-mcp/`
+- `starcoin-node-mcp/docs/design-closure-plan.md`
+- `starcoin-node-mcp/docs/security-model.md`
+- `starcoin-node-mcp/docs/deployment-model.md`
+- `starcoin-node-mcp/docs/configuration.md`
+- `starcoin-node-mcp/docs/rpc-adapter-design.md`
+- `starcoin-node-mcp/docs/rust-implementation-strategy.md`
+- `starcoin-node-mcp/docs/testing-and-acceptance.md`
+- this interface design
 
-## 13. Open Questions
+## 13. First-Release Decisions
 
-1. Should preparation tools always simulate, or should simulation be optionally disabled?
-2. Should `call_view_function` and `simulate_raw_transaction` be split by VM generation in later versions?
-3. Should transaction summaries include normalized fields specifically optimized for wallet approval UIs?
-4. Should read-only and transaction-enabled modes be separate binaries or configuration profiles?
+1. Preparation tools attempt simulation whenever `sender_public_key` is available.
+2. `call_view_function` and `simulate_raw_transaction` remain version-neutral MCP tools; VM differences are handled by the adapter layer.
+3. Transaction summaries may include normalized fields helpful to the host or wallet flow, but they remain descriptive hints rather than wallet security truth.
+4. Read-only and transaction-enabled behavior ship as configuration profiles of one binary rather than separate binaries.
+5. Transaction mode should validate `genesis_hash` in addition to `chain_id` and network whenever that identity is available.
+6. Uncertain submission outcomes are reconciled by transaction hash before any retry.
+7. Caller-provided bounds are clamped to configuration-defined safe limits, and local overload returns `rate_limited` before outbound RPC side effects occur.

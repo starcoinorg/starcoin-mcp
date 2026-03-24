@@ -1,6 +1,6 @@
 # Starcoin Node MCP
 
-This subproject contains the interface design draft for the chain-facing Starcoin MCP server.
+This subproject contains the design set for the chain-facing Starcoin MCP server.
 
 The intended role of `starcoin-node-mcp` is:
 
@@ -11,10 +11,19 @@ The intended role of `starcoin-node-mcp` is:
 
 It does not hold private keys and does not perform wallet signing.
 
+The first conforming implementation of `starcoin-node-mcp` is required to be written in Rust.
+
 ## Contents
 
-- `docs/starcoin-node-mcp-interface-design.md`: detailed interface design draft
+- `docs/starcoin-node-mcp-interface-design.md`: MCP tool surface and result semantics
+- `docs/security-model.md`: chain-side trust boundary and safety rules
+- `docs/deployment-model.md`: runtime topology and capability profiles
+- `docs/configuration.md`: endpoint, chain pinning, and timeout configuration
+- `docs/rpc-adapter-design.md`: VM compatibility and RPC normalization strategy
+- `docs/rust-implementation-strategy.md`: implementation structure for the first Rust version
+- `docs/design-closure-plan.md`: implementation-readiness checklist for the chain-side design
+- `docs/testing-and-acceptance.md`: acceptance criteria for probing, preparation, submission, reconciliation, and security
 
 ## Status
 
-Draft for review as a subproject of `starcoin-mcp`.
+Implementation-oriented design set for review as a subproject of `starcoin-mcp`.

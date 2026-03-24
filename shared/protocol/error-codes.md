@@ -49,10 +49,16 @@ Subprojects may define additional project-local errors, but shared errors should
   - The backing RPC service is unavailable or unhealthy.
 - `invalid_chain_context`
   - The requested operation conflicts with the active network or chain configuration.
+- `submission_unknown`
+  - The signed transaction may or may not have reached the submission endpoint; the caller must reconcile by transaction hash before retrying.
 - `simulation_failed`
   - Transaction simulation completed but returned a failed execution status.
 - `submission_failed`
   - The signed transaction could not be accepted by the txpool or submission endpoint.
+- `transaction_expired`
+  - The transaction expiration timestamp has passed before the node accepted the transaction.
+- `sequence_number_stale`
+  - The transaction sequence number is lower than the node's accepted or pending next sequence number.
 
 ## Policy and Access Errors
 
@@ -61,7 +67,9 @@ Subprojects may define additional project-local errors, but shared errors should
 - `approval_required`
   - The operation requires explicit user approval before proceeding.
 - `rate_limited`
-  - The operation has been rejected due to local rate-limiting policy.
+  - The operation has been rejected due to local rate-limiting, concurrency-protection, or overload policy before the server started unbounded work.
+- `payload_too_large`
+  - The supplied request payload exceeds a local safety limit and was rejected before execution.
 - `unsupported_operation`
   - The requested operation is recognized but not implemented in the current environment.
 

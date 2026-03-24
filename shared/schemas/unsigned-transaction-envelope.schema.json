@@ -7,6 +7,8 @@
     "transaction_kind",
     "raw_txn_bcs_hex",
     "transaction_summary",
+    "chain_context",
+    "prepared_at",
     "simulation_status",
     "next_action"
   ],
@@ -28,6 +30,55 @@
     },
     "transaction_summary": {
       "type": "object"
+    },
+    "chain_context": {
+      "type": "object",
+      "required": [
+        "chain_id",
+        "network",
+        "genesis_hash",
+        "head_block_hash",
+        "head_block_number",
+        "observed_at"
+      ],
+      "properties": {
+        "chain_id": {
+          "type": [
+            "integer",
+            "string"
+          ]
+        },
+        "network": {
+          "type": "string"
+        },
+        "genesis_hash": {
+          "type": "string"
+        },
+        "head_block_hash": {
+          "type": "string"
+        },
+        "head_block_number": {
+          "type": "integer"
+        },
+        "head_state_root": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      },
+      "additionalProperties": true
+    },
+    "prepared_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "sequence_number_source": {
+      "type": "string"
+    },
+    "gas_unit_price_source": {
+      "type": "string"
     },
     "simulation_status": {
       "type": "string",
