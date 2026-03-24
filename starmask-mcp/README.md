@@ -19,7 +19,12 @@ This subproject contains the interface design draft for `starmask-mcp` under the
 - `docs/approval-ui-spec.md`: approval UI interaction and information requirements
 - `docs/testing-and-acceptance.md`: end-to-end acceptance matrix
 - `docs/rust-implementation-strategy.md`: Rust workspace, runtime, persistence, and IPC strategy
+- `docs/rust-core-api-design.md`: core crate API, coordinator command model, and repository traits
+- `docs/sqlite-schema-and-migrations.md`: SQLite physical schema, indexes, and migration strategy
+- `docs/rmcp-adapter-design.md`: MCP shim structure around `rmcp`
+- `docs/native-messaging-examples.md`: canonical Native Messaging sample payloads
+- `docs/test-harness-design.md`: test layering and fake-component strategy
 
 ## Status
 
-Design is closed at the protocol level, and Rust-focused implementation planning is now in progress.
+Design is now closed far enough to begin Phase 1 Rust implementation, local integration work, and acceptance-oriented test scaffolding.

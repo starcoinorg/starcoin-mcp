@@ -21,6 +21,28 @@ Properties:
 - correctness must not depend on hints; correctness depends on explicit claims through `request.pullNext`
 - the host process should be kept alive through `connectNative()` rather than one-shot `sendNativeMessage()`
 
+## Message Envelope
+
+This contract uses a lightweight message envelope rather than JSON-RPC.
+
+Rules:
+
+1. every extension-originated command message must include:
+   - `message_id`
+   - `type`
+2. every daemon response to an extension command must include:
+   - `reply_to`
+   - `type`
+3. daemon notifications that are not direct replies do not include `reply_to`
+4. the extension must tolerate notifications interleaving with replies
+5. the extension may keep only a small number of in-flight commands, but correctness must not depend on strict request serialization
+
+Recommended envelope fields:
+
+- `type`
+- `message_id`: for extension commands
+- `reply_to`: for daemon responses
+
 ## Native Messaging Wire Format
 
 Chrome Native Messaging requires:
@@ -79,7 +101,10 @@ and the extension must not continue normal request handling.
 ### Daemon to Extension
 
 - `extension.registered`
+- `extension.ack`
 - `request.available`
+- `request.next`
+- `request.none`
 - `request.cancelled`
 - `extension.error`
 
@@ -93,6 +118,7 @@ Purpose:
 
 Payload:
 
+- `message_id`
 - `protocol_version`
 - `wallet_instance_id`
 - `extension_id`
@@ -110,6 +136,7 @@ Daemon behavior:
 
 Response:
 
+- `reply_to`
 - `type = extension.registered`
 - `wallet_instance_id`
 - `daemon_protocol_version`
@@ -125,6 +152,7 @@ Purpose:
 
 Payload:
 
+- `message_id`
 - `wallet_instance_id`
 - `presented_request_ids`: optional array
 
@@ -132,6 +160,7 @@ Daemon behavior:
 
 - update `last_seen_at`
 - extend presentation lease for any listed presented requests owned by this instance
+- respond with `extension.ack`
 
 ## Account Updates
 
@@ -143,6 +172,7 @@ Purpose:
 
 Payload:
 
+- `message_id`
 - `wallet_instance_id`
 - `lock_state`
 - `accounts`
@@ -155,6 +185,7 @@ Daemon behavior:
 
 - replace the visible account cache for that wallet instance
 - update routing eligibility
+- respond with `extension.ack`
 
 ## Request Delivery Model
 
@@ -191,10 +222,13 @@ Purpose:
 
 Payload:
 
+- `message_id`
 - `wallet_instance_id`
 
 Response when work exists:
 
+- `reply_to`
+- `type = request.next`
 - `request_id`
 - `client_request_id`
 - `kind`
@@ -212,6 +246,12 @@ Response when work exists:
 - one of:
   - `raw_txn_bcs_hex`
   - `message`
+
+Response when no work exists:
+
+- `reply_to`
+- `type = request.none`
+- `wallet_instance_id`
 
 Claim rules:
 
@@ -240,6 +280,7 @@ Purpose:
 
 Payload:
 
+- `message_id`
 - `wallet_instance_id`
 - `request_id`
 - `delivery_lease_id`
@@ -253,6 +294,7 @@ Daemon behavior:
    - `wallet_instance_id`
    - `presentation_id`
 4. start or extend the presentation lease
+5. respond with `extension.ack`
 
 Rules:
 
@@ -269,6 +311,7 @@ Purpose:
 
 Payload for transaction signing:
 
+- `message_id`
 - `wallet_instance_id`
 - `request_id`
 - `presentation_id`
@@ -277,6 +320,7 @@ Payload for transaction signing:
 
 Payload for message signing:
 
+- `message_id`
 - `wallet_instance_id`
 - `request_id`
 - `presentation_id`
@@ -288,6 +332,7 @@ Daemon behavior:
 1. validate presentation ownership
 2. move the request to `approved`
 3. store the result payload until `result_expires_at`
+4. respond with `extension.ack`
 
 ## `request.reject`
 
@@ -297,6 +342,7 @@ Purpose:
 
 Payload:
 
+- `message_id`
 - `wallet_instance_id`
 - `request_id`
 - `presentation_id`: optional when UI was not yet shown
@@ -318,6 +364,7 @@ Daemon behavior:
    - `rejected`
    - `expired`
    - `failed`
+3. respond with `extension.ack`
 
 ## `request.cancelled`
 

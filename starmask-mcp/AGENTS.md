@@ -30,6 +30,8 @@ This file adds stricter instructions for the `starmask-mcp` subproject.
 - Keep `rmcp` dependency scoped to the `starmask-mcp` crate.
 - Do not couple `starmask-core` or `starmaskd` to MCP SDK types.
 
+This is a project-wide layering rule, not a special exception for this subproject.
+
 ## Domain Types
 
 - Use typed ids and enums in Rust core code:
@@ -86,3 +88,10 @@ Any change to behavior covered by these docs must update the docs in the same ch
 - `docs/approval-ui-spec.md`
 - `docs/testing-and-acceptance.md`
 - `docs/rust-implementation-strategy.md`
+- `docs/rust-core-api-design.md`
+- `docs/sqlite-schema-and-migrations.md`
+- `docs/rmcp-adapter-design.md`
+- `docs/native-messaging-examples.md`
+- `docs/test-harness-design.md`
+
+If a change alters subproject-specific workflow or layering guidance, update this `AGENTS.md` in the same change.

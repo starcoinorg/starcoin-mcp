@@ -32,8 +32,8 @@ These instructions apply to the whole repository unless a subproject adds strict
 
 - Keep transport adapters thin.
 - Keep lifecycle policy and persistence logic out of MCP-specific adapters.
-- For `starmask-mcp`, prefer the official Rust MCP SDK `rmcp` only at the MCP shim boundary.
-- Do not let MCP SDK types leak into daemon-facing or core domain crates.
+- Prefer mature MCP SDKs such as the official Rust SDK `rmcp` at MCP server boundaries.
+- Do not let MCP SDK types leak into shared protocol crates, core domain crates, persistence layers, or bridge layers.
 - Prefer adding a new module over continuing to grow an already large file.
 - Target Rust modules under roughly 500 lines excluding tests.
 - If a file approaches roughly 800 lines, strongly prefer extracting new functionality into a new module unless there is a documented reason not to.
@@ -41,6 +41,8 @@ These instructions apply to the whole repository unless a subproject adds strict
 ## Documentation Sync
 
 - If you change an API, protocol, lifecycle rule, config surface, or persistence behavior, update the corresponding docs in the same change.
+- If you change repository-wide engineering conventions, layering rules, SDK usage policy, or workflow expectations, update `AGENTS.md` in the same change.
+- Do not update `AGENTS.md` for incidental implementation details that do not change project guidance.
 - For `starmask-mcp`, the following docs are part of the implementation contract:
   - `starmask-mcp/docs/starmask-mcp-interface-design.md`
   - `starmask-mcp/docs/security-model.md`
@@ -75,6 +77,7 @@ These instructions apply to the whole repository unless a subproject adds strict
 - `Starmask` extension is the only signing authority.
 - `starmaskd` owns lifecycle state transitions.
 - `starmask-mcp` is an MCP adapter, not a policy engine.
+- `rmcp` belongs at the MCP shim boundary, not inside `starmaskd` or `starmask-core`.
 - `starmask-native-host` is a transport shim, not a wallet runtime.
 - After `request.presented`, recovery is same-instance only.
 - Unsupported payloads must be rejected, not blind-signed.

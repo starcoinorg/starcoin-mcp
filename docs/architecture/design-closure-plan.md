@@ -33,6 +33,11 @@ The following documents should exist before implementation starts:
 9. `starmask-mcp/docs/approval-ui-spec.md`
 10. `starmask-mcp/docs/testing-and-acceptance.md`
 11. `starmask-mcp/docs/rust-implementation-strategy.md`
+12. `starmask-mcp/docs/rust-core-api-design.md`
+13. `starmask-mcp/docs/sqlite-schema-and-migrations.md`
+14. `starmask-mcp/docs/rmcp-adapter-design.md`
+15. `starmask-mcp/docs/native-messaging-examples.md`
+16. `starmask-mcp/docs/test-harness-design.md`
 
 ## Design Order
 
@@ -45,8 +50,13 @@ The documents should be completed in this order:
 5. persistence and recovery
 6. configuration and installation detail
 7. Rust implementation strategy
-8. approval UI specification
-9. testing and acceptance criteria
+8. core Rust API design
+9. SQLite schema and migration design
+10. MCP shim adapter design
+11. native messaging examples
+12. approval UI specification
+13. testing and acceptance criteria
+14. test harness design
 
 This order keeps later documents constrained by earlier ones instead of re-opening top-level assumptions.
 
@@ -128,6 +138,6 @@ Before implementation begins, review the design with the following checklist:
 
 ## Closure Status
 
-The required first-round document set now exists.
+The required implementation-readiness document set now exists.
 
-Before implementation begins, the remaining work is review and consistency checking, not additional top-level design expansion.
+At this point, remaining pre-code work should focus on review and targeted refinements, not missing architectural layers.
