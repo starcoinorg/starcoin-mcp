@@ -40,8 +40,15 @@ impl NotificationState {
         match request {
             NativeBridgeRequest::ExtensionRegister {
                 wallet_instance_id, ..
+            } => {
+                if matches!(
+                    response,
+                    NativeBridgeResponse::ExtensionRegistered { accepted: true, .. }
+                ) {
+                    self.ensure_wallet(wallet_instance_id.clone());
+                }
             }
-            | NativeBridgeRequest::ExtensionHeartbeat {
+            NativeBridgeRequest::ExtensionHeartbeat {
                 wallet_instance_id, ..
             }
             | NativeBridgeRequest::ExtensionUpdateAccounts {
@@ -256,5 +263,32 @@ mod tests {
             state.active_requests.get(request_id.as_str()),
             Some(&wallet_instance_id)
         );
+    }
+
+    #[test]
+    fn rejected_extension_registration_is_not_tracked() {
+        let mut state = NotificationState::default();
+        let wallet_instance_id = WalletInstanceId::new("wallet-1").unwrap();
+
+        state.observe(
+            &NativeBridgeRequest::ExtensionRegister {
+                message_id: "msg-1".to_owned(),
+                protocol_version: 1,
+                wallet_instance_id: wallet_instance_id.clone(),
+                extension_id: "ext.blocked".to_owned(),
+                extension_version: "1.0.0".to_owned(),
+                profile_hint: None,
+                lock_state: starmask_types::LockState::Unlocked,
+                accounts_summary: Vec::new(),
+            },
+            &NativeBridgeResponse::ExtensionRegistered {
+                reply_to: "msg-1".to_owned(),
+                wallet_instance_id,
+                daemon_protocol_version: 1,
+                accepted: false,
+            },
+        );
+
+        assert!(state.wallets.is_empty());
     }
 }
