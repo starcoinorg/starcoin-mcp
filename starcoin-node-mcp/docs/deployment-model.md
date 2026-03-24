@@ -123,7 +123,8 @@ The normal startup sequence is:
 4. the server establishes an RPC client session to the configured endpoint
 5. startup probes fetch chain identity, including `chain_id`, network, and `genesis_hash`, plus endpoint health and supported capabilities
 6. if transaction mode is enabled, chain pinning and submission capabilities are verified
-7. the server begins serving MCP tools
+7. if `read_only` mode is using explicit autodetect override without configured chain pins, the server emits a high-severity warning before serving tools
+8. the server begins serving MCP tools
 
 Startup must fail fast when:
 
@@ -225,6 +226,7 @@ The deployment model requires:
 - a host-visible warning path when the node is reachable but unhealthy or lagging
 - a host-visible reconciliation hint when submission outcome is uncertain
 - structured diagnostics when request inputs are clamped or rejected by local resource policy
+- a high-severity startup warning when `read_only` runs with explicit chain autodetection instead of configured pins
 
 ## Non-Goals
 

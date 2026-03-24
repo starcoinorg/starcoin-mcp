@@ -116,7 +116,19 @@ For remote `transaction` mode, the following setting should also be treated as r
 
 For local `transaction` mode, `expected_genesis_hash` is still strongly recommended.
 
-For `read_only` mode, chain pin settings are recommended and may be omitted only when the caller explicitly accepts endpoint autodetection.
+For `read_only` mode, chain pin settings are still strongly recommended.
+
+They may be omitted only when:
+
+- `allow_read_only_chain_autodetect = true`
+- the operator explicitly accepts endpoint autodetection for that deployment
+
+If `read_only` starts without `expected_chain_id` or `expected_network` under this override, startup should emit a high-severity warning that includes:
+
+- the detected `chain_id`
+- the detected network name
+- the detected `genesis_hash` when available
+- the fact that read-only queries are running without configured chain pins
 
 ## Optional Endpoint Settings
 
@@ -129,6 +141,7 @@ For `read_only` mode, chain pin settings are recommended and may be omitted only
 - `allowed_rpc_hosts`
 - `tls_pinned_spki_sha256`
 - `allow_insecure_remote_transport`
+- `allow_read_only_chain_autodetect`
 
 ## Transaction Safety Settings
 
@@ -212,6 +225,7 @@ The first implementation should use these defaults:
 - `vm_profile = auto`
 - `require_genesis_hash_match = true`
 - `allow_insecure_remote_transport = false`
+- `allow_read_only_chain_autodetect = false`
 - `allow_submit_without_prior_simulation = true`
 - `disable_disk_cache = true`
 
@@ -233,6 +247,7 @@ Suggested environment variable names:
 - `STARCOIN_NODE_MCP_TLS_PINNED_SPKI_SHA256`
 - `STARCOIN_NODE_MCP_REQUEST_TIMEOUT_MS`
 - `STARCOIN_NODE_MCP_ALLOW_INSECURE_REMOTE_TRANSPORT`
+- `STARCOIN_NODE_MCP_ALLOW_READ_ONLY_CHAIN_AUTODETECT`
 - `STARCOIN_NODE_MCP_MAX_SUBMIT_BLOCKING_TIMEOUT_SECONDS`
 - `STARCOIN_NODE_MCP_MAX_WATCH_TIMEOUT_SECONDS`
 - `STARCOIN_NODE_MCP_MIN_WATCH_POLL_INTERVAL_SECONDS`
@@ -268,6 +283,7 @@ Typical cases:
 
 - missing `expected_chain_id` in transaction mode
 - missing `expected_network` in transaction mode
+- missing `expected_chain_id` or `expected_network` in `read_only` mode when `allow_read_only_chain_autodetect = false`
 - missing `expected_genesis_hash` in remote transaction mode when `require_genesis_hash_match = true`
 - invalid or unsupported `vm_profile`
 - insecure remote endpoint without explicit override

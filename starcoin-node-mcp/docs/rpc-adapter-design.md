@@ -73,6 +73,7 @@ Startup probing should classify endpoint support into three buckets:
 
 - `chain.info`
 - `node.status`
+- `node.info`
 - one block lookup path
 - one transaction lookup path
 - state or contract methods required by the enabled tools
@@ -183,8 +184,10 @@ In Rust, VM compatibility should be represented by typed enums such as a backend
 ### Submission
 
 - `submit_signed_transaction`
+  - `chain.info` to re-validate pinned chain identity immediately before submission
   - `txpool.submit_transaction2` when available
   - fallback: `txpool.submit_transaction`
+  - return `invalid_chain_context` if the pre-submit chain re-check fails
 
 ## Deterministic Transaction Preparation
 
@@ -233,13 +236,15 @@ The adapter layer should make uncertain submission outcomes explicit.
 
 Rules:
 
-1. compute `txn_hash` locally before calling the submission RPC
-2. if the endpoint explicitly accepts the transaction, return `submission_state = accepted`
-3. if the endpoint explicitly rejects the transaction as expired or stale, map to `transaction_expired` or `sequence_number_stale`
-4. if transport breaks after the submission attempt may already have reached the endpoint, return `submission_state = unknown` and `submission_unknown`
-5. on `submission_state = unknown`, the host should reconcile by `txn_hash` through `get_transaction` or `watch_transaction` before any retry
-6. on `transaction_expired` or `sequence_number_stale`, the host should restart from fresh preparation and fresh signing
-7. if reconciliation remains unresolved after timeout, preserve `submission_unknown` state and require explicit operator action instead of automatic blind re-submission
+1. re-check pinned chain identity with a fresh `chain.info` read before calling the submission RPC
+2. if the pre-submit chain re-check fails, abort with `invalid_chain_context` and do not contact txpool
+3. compute `txn_hash` locally before calling the submission RPC
+4. if the endpoint explicitly accepts the transaction, return `submission_state = accepted`
+5. if the endpoint explicitly rejects the transaction as expired or stale, map to `transaction_expired` or `sequence_number_stale`
+6. if transport breaks after the submission attempt may already have reached the endpoint, return `submission_state = unknown` and `submission_unknown`
+7. on `submission_state = unknown`, the host should reconcile by `txn_hash` through `get_transaction` or `watch_transaction` before any retry
+8. on `transaction_expired` or `sequence_number_stale`, the host should restart from fresh preparation and fresh signing
+9. if reconciliation remains unresolved after timeout, preserve `submission_unknown` state and require explicit operator action instead of automatic blind re-submission
 
 ## Result Normalization Rules
 

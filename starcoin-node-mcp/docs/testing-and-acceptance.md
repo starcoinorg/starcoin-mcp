@@ -40,11 +40,13 @@ Rust-specific expectations:
 The implementation must demonstrate:
 
 1. startup succeeds in `read_only` mode against a healthy local endpoint
-2. startup succeeds in `transaction` mode only when required preparation and submission capabilities are present
-3. startup fails safely on `chain_id` mismatch
-4. startup fails safely on network mismatch
-5. remote `transaction` mode fails safely on `genesis_hash` mismatch when genesis matching is required
-6. capability refresh happens after endpoint reconnect before transaction tools are re-enabled
+2. `read_only` without configured chain pins fails safely unless `allow_read_only_chain_autodetect = true`
+3. `read_only` with `allow_read_only_chain_autodetect = true` emits a high-severity warning that the endpoint identity is autodetected rather than pinned
+4. startup succeeds in `transaction` mode only when required preparation and submission capabilities are present
+5. startup fails safely on `chain_id` mismatch
+6. startup fails safely on network mismatch
+7. remote `transaction` mode fails safely on `genesis_hash` mismatch when genesis matching is required
+8. capability refresh happens after endpoint reconnect before transaction tools are re-enabled
 
 ## Query and ABI Acceptance
 
@@ -98,10 +100,11 @@ The implementation must demonstrate:
 
 1. missing `expected_chain_id` in transaction mode fails safely
 2. missing `expected_network` in transaction mode fails safely
-3. missing `expected_genesis_hash` in remote transaction mode fails safely when genesis matching is required
-4. disallowed endpoint hosts are rejected when allowlisting is configured
-5. unsafe timeout and TTL values are clamped
-6. insecure remote transport without explicit override is rejected
+3. missing `expected_chain_id` or `expected_network` in `read_only` mode fails safely unless `allow_read_only_chain_autodetect = true`
+4. missing `expected_genesis_hash` in remote transaction mode fails safely when genesis matching is required
+5. disallowed endpoint hosts are rejected when allowlisting is configured
+6. unsafe timeout and TTL values are clamped
+7. insecure remote transport without explicit override is rejected
 
 ## Resource and Performance Governance Acceptance
 
