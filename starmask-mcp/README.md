@@ -10,6 +10,13 @@ This subproject contains the interface design draft for `starmask-mcp` under the
 ## Contents
 
 - `docs/starmask-mcp-interface-design.md`: detailed interface design draft
+- `docs/security-model.md`: security assumptions, trust boundaries, and implementation gates
+- `docs/daemon-protocol.md`: JSON-RPC contract between `starmask-mcp` and `starmaskd`
+- `docs/native-messaging-contract.md`: bridge contract between the daemon side and the Chrome extension
+- `docs/persistence-and-recovery.md`: request storage, lease, retention, and restart rules
+- `docs/configuration.md`: default paths, timing, and policy settings
+- `docs/approval-ui-spec.md`: approval UI interaction and information requirements
+- `docs/testing-and-acceptance.md`: end-to-end acceptance matrix
 
 ## Status
 

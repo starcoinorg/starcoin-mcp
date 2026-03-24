@@ -7,6 +7,13 @@ Repository-level materials live under:
 - `docs/architecture/`
 - `shared/`
 
+Key architecture documents:
+
+- `docs/architecture/overview.md`
+- `docs/architecture/host-integration.md`
+- `docs/architecture/design-closure-plan.md`
+- `docs/architecture/deployment-model.md`
+
 ## Subprojects
 
 - `starmask-mcp/`

@@ -5,12 +5,17 @@
   "type": "object",
   "required": [
     "request_id",
+    "client_request_id",
     "kind",
     "status",
-    "result_kind"
+    "result_kind",
+    "result_available"
   ],
   "properties": {
     "request_id": {
+      "type": "string"
+    },
+    "client_request_id": {
       "type": "string"
     },
     "kind": {
@@ -31,6 +36,15 @@
         "none"
       ]
     },
+    "result_available": {
+      "type": "boolean"
+    },
+    "result_expires_at": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
     "signed_txn_bcs_hex": {
       "type": [
         "string",
@@ -44,6 +58,12 @@
       ]
     },
     "reason": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "error_code": {
       "type": [
         "string",
         "null"

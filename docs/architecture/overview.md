@@ -37,6 +37,7 @@ Typical contents:
 - overall architecture overview
 - host integration model
 - deployment model
+- design closure plan
 - signing architecture
 - trust boundaries
 
@@ -82,6 +83,8 @@ starcoin-mcp/
   README.md
   docs/
     architecture/
+      design-closure-plan.md
+      deployment-model.md
       overview.md
       host-integration.md
   shared/
@@ -95,7 +98,14 @@ starcoin-mcp/
   starmask-mcp/
     README.md
     docs/
+      approval-ui-spec.md
+      configuration.md
+      daemon-protocol.md
+      native-messaging-contract.md
+      persistence-and-recovery.md
+      security-model.md
       starmask-mcp-interface-design.md
+      testing-and-acceptance.md
   starcoin-node-mcp/
     README.md
     docs/
@@ -111,8 +121,8 @@ The current structure is designed so that future MCP projects can be added witho
 - security assumptions
 - repository-level architecture decisions
 
-## Immediate Next Extensions
+## Design Status
 
-Likely next additions:
+The repository now contains the minimum document set required to keep `starmask-mcp` design closed at the architecture, protocol, recovery, configuration, UI, and acceptance layers.
 
-- `docs/architecture/deployment-model.md`
+Any implementation work should preserve those contracts rather than reopening them ad hoc.

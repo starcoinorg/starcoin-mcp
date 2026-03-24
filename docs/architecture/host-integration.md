@@ -88,12 +88,14 @@ The host may require successful simulation before requesting wallet approval.
 
 1. Call `starmask-mcp.wallet_request_sign_transaction`
 2. Include:
+   - `client_request_id`
    - `wallet_instance_id` when selection is explicit
    - `account_address`
    - `chain_id`
    - `raw_txn_bcs_hex`
-3. Poll `starmask-mcp.wallet_get_request_status`
-4. Continue until a terminal lifecycle state is reached
+3. The first release expects the selected wallet instance to be connected and unlocked before request creation succeeds
+4. Poll `starmask-mcp.wallet_get_request_status`
+5. Continue until a terminal lifecycle state is reached
 
 #### Phase E: Submission
 
@@ -113,6 +115,7 @@ Typical sequence:
 2. `wallet_list_accounts`
 3. select `wallet_instance_id` if needed
 4. `wallet_sign_message`
+   - include `client_request_id`
 5. poll `wallet_get_request_status`
 6. retrieve `signature` after approval
 
@@ -141,6 +144,7 @@ If `wallet_selection_required` is returned:
 The MCP host should:
 
 - preserve `request_id` values across retries where possible
+- preserve `client_request_id` when retrying create calls after uncertain failures
 - preserve `wallet_instance_id` selection once the user or host has chosen one
 - surface approval prompts clearly to the user
 - avoid automatic re-submission of rejected wallet requests

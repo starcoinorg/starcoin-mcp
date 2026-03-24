@@ -11,4 +11,9 @@ Current schemas:
 - `wallet-sign-result.schema.json`
   - canonical asynchronous wallet approval result shape
 
+These schemas also capture:
+
+- host-visible idempotency through `client_request_id`
+- bounded result retention through `result_available` and `result_expires_at`
+
 These schemas are intentionally narrow and may be extended as additional subprojects are added.

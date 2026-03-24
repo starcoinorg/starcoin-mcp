@@ -82,7 +82,17 @@ The canonical delivery model is:
 
 If a wallet runtime disconnects or loses its lease before presenting approval UI, the request should return to `created`.
 
-If a wallet runtime disconnects after presenting approval UI but before final resolution, the request may return to `created` for re-delivery unless local policy marks it failed.
+If a wallet runtime disconnects after presenting approval UI but before final resolution, the request remains `pending_user_approval` and may be resumed only by the same wallet instance according to local recovery policy.
+
+## Result Retention Guidance
+
+Approved results may remain readable for a bounded retention window.
+
+After the retention window:
+
+- the request remains terminal
+- result payload bytes may be evicted
+- polling should still return terminal metadata
 
 ## TTL Guidance
 

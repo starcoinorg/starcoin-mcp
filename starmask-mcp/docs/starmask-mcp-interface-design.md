@@ -21,6 +21,8 @@ The design goal is to provide a safe local signing entrypoint to MCP hosts witho
 5. MCP hosts interact only with `starmask-mcp`.
 6. All non-MCP transports are local-only.
 7. Requests are asynchronous by default and identified by `request_id`.
+8. Request creation is idempotent through `client_request_id`.
+9. The first release fails fast when no connected unlocked wallet instance can satisfy a signing request.
 
 ## 3. Runtime Topology
 
@@ -125,6 +127,11 @@ List accounts currently exposed by Starmask to the local daemon.
 - `wallet_instance_id`: optional filter
 - `include_public_key`: boolean, default `false`
 
+Policy:
+
+- the first release does not require an interactive approval gate for account listing
+- account listing is treated as local metadata access, not signing authority
+
 #### Output
 
 - `wallet_instances`: array of
@@ -154,6 +161,11 @@ If `wallet_instance_id` is omitted:
 - the daemon may auto-select when exactly one wallet instance exposes the account
 - otherwise the request fails with `wallet_selection_required`
 
+Lookup rules:
+
+- cached public keys may be returned without interactive approval
+- if the key is unknown and the selected wallet is locked, the request fails with `wallet_locked`
+
 #### Output
 
 - `address`
@@ -168,6 +180,7 @@ Create an asynchronous signing request for a Starcoin raw transaction.
 
 #### Input
 
+- `client_request_id`
 - `account_address`
 - `wallet_instance_id`: optional explicit route target
 - `chain_id`
@@ -188,12 +201,20 @@ If `wallet_instance_id` is omitted:
 - the daemon may auto-route the request when exactly one known wallet instance exposes the requested account
 - otherwise the request fails with `wallet_selection_required`
 
+Creation policy:
+
+- the selected wallet instance must be connected and unlocked
+- the first release fails fast instead of queueing requests for a later wallet reconnect
+
 #### Output
 
 - `request_id`
+- `client_request_id`
 - `status`
   - initial value is typically `created`, and may advance to `dispatched` or `pending_user_approval` before the host polls again
-- `wallet_instance_id`: optional
+- `wallet_instance_id`
+- `created_at`
+- `expires_at`
 - `message`
 
 ### 5.5 `wallet_get_request_status`
@@ -209,6 +230,7 @@ Poll signing request state.
 #### Output
 
 - `request_id`
+- `client_request_id`
 - `kind`
 - `status`
   - one of the shared lifecycle states defined in `shared/protocol/request-lifecycle.md`
@@ -217,6 +239,9 @@ Poll signing request state.
   - `signed_transaction`
   - `signed_message`
   - `none`
+- `result_available`
+- `result_expires_at`
+- `error_code`: optional shared error code
 - `reason`: optional
 - `signed_txn_bcs_hex`: only when `approved`
 - `signature`: only when `kind = sign_message` and `approved`
@@ -245,6 +270,7 @@ Support message signing for login, challenge-response, or off-chain authorizatio
 
 #### Input
 
+- `client_request_id`
 - `account_address`
 - `wallet_instance_id`: optional explicit route target
 - `message`
@@ -258,6 +284,7 @@ Support message signing for login, challenge-response, or off-chain authorizatio
 #### Output
 
 - `request_id`
+- `client_request_id`
 - `kind`
 - `status`
   - initial value is typically `created`, and may advance asynchronously
@@ -295,6 +322,7 @@ The most relevant shared errors for this project are:
 - `request_expired`
 - `request_not_found`
 - `request_rejected`
+- `idempotency_key_conflict`
 - `invalid_transaction_payload`
 - `unsupported_chain`
 - `internal_bridge_error`
@@ -344,6 +372,7 @@ The canonical envelope should align with `shared/schemas/wallet-sign-request.sch
 ### 8.1 Common Required Fields
 
 - `request_id`
+- `client_request_id`
 - `kind`
   - `sign_transaction`
   - `sign_message`
@@ -359,9 +388,11 @@ The canonical envelope should align with `shared/schemas/wallet-sign-request.sch
 - `client_context`
 - `display_hint`
 - `failure_reason`
+- `error_code`
 - `approved_at`
 - `rejected_at`
 - `updated_at`
+- `result_expires_at`
 
 ### 8.3 Transaction-Signing Fields
 
@@ -454,7 +485,8 @@ The canonical delivery model is durable and lease-based.
 - Requests are first persisted in `created`.
 - `request.pullNext` assigns a delivery lease to a wallet instance.
 - If the wallet disconnects before calling `request.presented`, the daemon may return the request to `created`.
-- If the wallet disconnects after `request.presented` but before final resolution, the daemon may return the request to `created` for re-delivery unless local policy marks it failed.
+- If the wallet disconnects after `request.presented`, the request remains pinned to the same `wallet_instance_id` and may only be resumed by that same instance.
+- Approved results are retained for bounded multi-read retrieval until `result_expires_at`.
 - Hosts must treat requests as asynchronous and poll until a terminal state is reached.
 
 ### 10.4 Restart Scenarios
@@ -529,10 +561,14 @@ The extension must decode and render the transaction itself. It must not trust `
 - protocol versions compatible
 - wallet accounts visible
 
-## 15. Open Questions
+## 15. Resolved First-Release Decisions
 
-1. Should `wallet_list_accounts` require an initial user approval gate?
-2. Should the daemon support multiple extension instances and explicit instance selection?
-3. Should approved signed transactions be single-read or multi-read?
-4. Should message signing and transaction signing share the same request storage table?
-5. Should policy allow pre-approved accounts for low-risk message signing in later versions?
+Resolved first-release decisions:
+
+1. `wallet_list_accounts` does not require an interactive approval gate in the first release.
+2. The daemon supports multiple extension instances and requires explicit selection whenever routing is ambiguous.
+3. Approved results use bounded multi-read retention, not single-read delivery.
+4. Message-signing and transaction-signing requests share one canonical request table with kind-specific payload fields.
+5. Low-risk message-signing policy exceptions are out of scope for the first release.
+6. After `request.presented`, a request may be resumed only by the same `wallet_instance_id`.
+7. Request creation is idempotent through required `client_request_id`.

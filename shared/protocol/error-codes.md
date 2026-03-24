@@ -36,6 +36,10 @@ Subprojects may define additional project-local errors, but shared errors should
   - A local transport or bridge failure occurred between MCP, daemon, native host, or extension.
 - `result_unavailable`
   - A request exists but no terminal result is available yet for retrieval.
+- `idempotency_key_conflict`
+  - The caller retried a create operation with the same client idempotency key but a different payload.
+- `protocol_version_mismatch`
+  - The caller and callee do not support a mutually compatible local bridge protocol version.
 
 ## Node and Chain Errors
 
