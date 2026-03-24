@@ -73,6 +73,7 @@ Each subproject should contain:
 - a local README
 - project-specific interface design docs
 - implementation notes if needed
+- implementation-language constraints when the first release is intentionally language-specific
 
 Subprojects should not redefine shared protocol concepts unless they are intentionally project-local.
 
@@ -134,5 +135,7 @@ The repository now contains:
 
 - an implementation-oriented design set for `starmask-mcp`
 - an implementation-oriented design set for `starcoin-node-mcp`
+
+For the current first-release design set, the local MCP binaries are specified with Rust-first implementation constraints in their subproject documents.
 
 Any implementation work should preserve those contracts rather than reopening them ad hoc.

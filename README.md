@@ -22,6 +22,7 @@ Key architecture documents:
 - `starcoin-node-mcp/`
   - chain-facing Starcoin MCP design
   - includes interface, security, deployment, configuration, RPC-adapter, and Rust implementation design docs for chain queries, transaction preparation, simulation, and signed transaction submission
+  - the first conforming implementation is expected to be written in Rust
 
 ## Status
 

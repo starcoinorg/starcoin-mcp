@@ -21,19 +21,40 @@ Precedence:
 3. config file
 4. built-in defaults
 
-## Rust Configuration Binding
+## Required Rust Configuration Binding
 
-Recommended Rust approach:
+The first conforming implementation is Rust, so runtime configuration should be represented with Rust-native typed configuration objects.
+
+Required Rust approach:
 
 - `clap` for CLI parsing
 - `serde` for config deserialization
 - one normalized runtime config struct after merge and validation
+- raw config structs separated from validated runtime config structs
+- time and retry settings normalized into `std::time::Duration`
+- endpoint URLs parsed into typed URL values before runtime startup
+- secret-bearing fields stored in redaction-aware wrappers rather than plain strings
 
 Validation must happen before:
 
 - opening the MCP server
 - probing the RPC endpoint
 - enabling transaction tools
+
+Recommended Rust-native normalized types:
+
+- `rpc_endpoint_url`
+  - `url::Url`
+- file and cache paths
+  - `std::path::PathBuf`
+- timeout and polling fields
+  - `std::time::Duration`
+- bounded numeric settings
+  - non-zero integer wrappers where appropriate
+- auth tokens and sensitive headers
+  - secret wrappers that do not expose values through `Debug`
+- chain pin configuration
+  - one typed `ChainPin` struct rather than scattered optional strings
 
 ## Default Paths
 

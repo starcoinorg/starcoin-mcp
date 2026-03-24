@@ -11,6 +11,8 @@ The intended role of `starcoin-node-mcp` is:
 
 It does not hold private keys and does not perform wallet signing.
 
+The first conforming implementation of `starcoin-node-mcp` is required to be written in Rust.
+
 ## Contents
 
 - `docs/starcoin-node-mcp-interface-design.md`: MCP tool surface and result semantics

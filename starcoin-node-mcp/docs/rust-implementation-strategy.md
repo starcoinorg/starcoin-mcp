@@ -2,15 +2,17 @@
 
 ## Purpose
 
-This document defines how the first `starcoin-node-mcp` implementation should be structured when Rust is the primary implementation language.
+This document defines how the required first `starcoin-node-mcp` implementation should be structured in Rust.
 
 It translates the chain-side interface, deployment, configuration, and adapter documents into Rust-specific implementation constraints.
 
-## Language Allocation
+## Language Requirement
 
-The recommended first implementation is:
+The first conforming implementation is:
 
 - `starcoin-node-mcp`: Rust
+
+No alternative implementation language is in scope for the first release.
 
 No separate daemon is required for the first release because the chain-facing server does not need durable asynchronous state.
 
@@ -163,7 +165,7 @@ The first release should not require a persistent cache database.
 
 ## Testing Strategy
 
-The Rust implementation should cover:
+The Rust implementation must cover:
 
 1. endpoint probe and capability classification
 2. chain pin validation
@@ -172,7 +174,7 @@ The Rust implementation should cover:
 5. submission error mapping
 6. MCP tool snapshots for major result shapes
 
-Recommended test styles:
+Recommended test styles within the required Rust implementation:
 
 - unit tests for core orchestration
 - fixture-driven adapter tests for RPC responses

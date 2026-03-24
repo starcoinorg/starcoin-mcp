@@ -15,14 +15,23 @@ The first release must cover:
 5. security behavior
 6. configuration safety
 
-## Rust Test Layers
+These acceptance criteria assume the conforming implementation is written in Rust.
 
-Recommended Rust test layout:
+## Required Rust Test Layers
+
+Required Rust test layout:
 
 1. unit tests in `starcoin-node-mcp-core` for chain pinning, sequence derivation, and reconciliation policy
 2. fixture-driven adapter tests for RPC capability classification and response normalization
 3. integration tests for MCP tool outputs and shared-schema compatibility
 4. end-to-end tests against one local or test RPC endpoint for preparation, simulation, submission, and watch flows
+
+Rust-specific expectations:
+
+1. async behavior such as watch polling and reconciliation timeout should be tested with Tokio-aware tests
+2. host-facing JSON results should be snapshot-tested from Rust `serde` DTOs
+3. error mapping should be tested from typed Rust errors to shared string error codes
+4. config normalization should be tested from raw deserialized input into validated runtime structs
 
 ## Startup and Capability Acceptance
 

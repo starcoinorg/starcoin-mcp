@@ -10,6 +10,7 @@ The design assumptions are:
 - `starcoin-node-mcp` may connect to a local node or a remote node
 - `starcoin-node-mcp` does not hold private keys
 - signing is delegated to a separate wallet-facing system such as `starmask-mcp`
+- the first conforming implementation is written in Rust
 
 The main goal is to give MCP hosts a stable task-oriented interface for:
 
@@ -38,6 +39,7 @@ Companion documents for this interface include:
 4. VM2-first semantics should be preferred in user-facing tools.
 5. Unsafe node-management operations should not be enabled in the initial release.
 6. Structured outputs must be optimized for MCP host orchestration.
+7. The first implementation should preserve explicit Rust boundaries among MCP transport, RPC adaptation, and core transaction logic.
 
 ## 3. Runtime Topology
 
@@ -538,13 +540,23 @@ If `sender_public_key` is unavailable during preparation:
 - omit or null the `simulation` field
 - set `next_action = get_public_key_then_simulate_or_sign`
 
-### 7.2 Query Results
+### 7.2 Rust Boundary DTOs
+
+Because the first conforming implementation is Rust, public MCP inputs and outputs should be defined as explicit `serde` DTOs rather than assembled from untyped maps.
+
+Required Rust-oriented rules:
+
+- `simulation_status`, `next_action`, and `submission_state` should map to Rust enums serialized in stable snake_case values
+- large payloads such as raw transactions, simulation details, and decoded summaries should be carried by dedicated Rust structs rather than `serde_json::Value` blobs where avoidable
+- DTOs used at the MCP boundary should remain separate from core orchestration types so domain logic is not coupled to transport serialization
+
+### 7.3 Query Results
 
 Query tools should prefer concise summaries plus raw structured objects, rather than only raw RPC payloads.
 
 Health and transaction-adjacent query results should also make chain context explicit enough for the host to reason about endpoint identity, lag, and retry behavior.
 
-### 7.3 Submission Results
+### 7.4 Submission Results
 
 Submission tools should compute and return `txn_hash` even before the endpoint confirms acceptance.
 
@@ -563,7 +575,7 @@ Recommended interpretation:
   - `submitted = false`
   - `transaction_expired` and `sequence_number_stale` require fresh preparation and fresh signing
 
-### 7.4 Errors
+### 7.5 Errors
 
 Errors should reuse shared repository-level error codes where applicable.
 
@@ -601,6 +613,8 @@ Recommended internal modules:
   - maps RPC responses to MCP-friendly outputs
 
 The compatibility and normalization rules for this layer are defined in `starcoin-node-mcp/docs/rpc-adapter-design.md`.
+
+In the Rust implementation, these modules should be separate crates or crate-local modules with `TryFrom` or mapper boundaries rather than direct tool-handler access to RPC response structs.
 
 ## 9. Signing Boundary
 

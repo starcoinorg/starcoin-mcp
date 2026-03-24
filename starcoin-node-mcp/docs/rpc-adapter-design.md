@@ -44,6 +44,26 @@ Recommended internal modules:
 - `mapper`
   - converts RPC-native views into MCP result shapes
 
+## Rust Trait Boundaries
+
+In the Rust implementation, this adapter layer should be expressed through explicit trait and conversion boundaries instead of direct JSON-RPC calls from tool handlers.
+
+Recommended Rust ownership model:
+
+- the MCP server crate should depend on typed adapter traits, not raw RPC method names
+- the adapter crate should own endpoint probing, RPC client setup, and VM-specific branching
+- domain services should depend on typed adapter traits exposed as `Send + Sync` Rust interfaces
+- RPC-native views should be converted into stable domain structs through `TryFrom` or dedicated mapper functions before host-facing serialization
+
+The goal is to keep Rust ownership aligned with the design boundary:
+
+- `starcoin-node-mcp-server`
+  - MCP transport and DTO binding
+- `starcoin-node-mcp-core`
+  - policy and orchestration
+- `starcoin-node-mcp-rpc`
+  - RPC transport, probing, and view mapping
+
 ## Capability Discovery
 
 Startup probing should classify endpoint support into three buckets:
@@ -86,6 +106,8 @@ Rules:
 5. transaction tools must fail closed when the endpoint cannot support the configured VM profile
 
 The first release should treat VM2 as the preferred semantic baseline for transaction preparation and simulation.
+
+In Rust, VM compatibility should be represented by typed enums such as a backend or capability variant, not by scattered boolean flags.
 
 ## Tool-to-RPC Mapping
 
@@ -214,6 +236,8 @@ Query results should prefer:
 - optional raw payloads when necessary
 
 The adapter should avoid returning large raw RPC blobs by default when a narrower structured view is sufficient.
+
+In Rust terms, host-facing outputs should come from dedicated `serde` DTOs rather than serializing RPC client structs directly.
 
 ## Error Mapping Rules
 

@@ -98,6 +98,20 @@ This is a future profile and is out of scope for the first release.
 - accepts signed transaction submission
 - remains outside the wallet trust boundary
 
+## Rust Runtime Realization
+
+The first implementation is a single Rust process and should realize this deployment model with one Tokio runtime.
+
+Recommended Rust runtime shape:
+
+- `starcoin-node-mcp-server` owns one Tokio runtime for stdio MCP transport, RPC IO, cache access, and watch polling
+- one process-global `Arc<AppContext>` should hold normalized config, endpoint capabilities, shared RPC clients, and in-memory caches
+- startup probes should complete before the `rmcp` server begins serving tools
+- `watch_transaction` should use `tokio::time::interval` and `tokio::time::timeout` rather than ad hoc sleep loops
+- tool cancellation should follow the Rust async task boundary so abandoned host requests do not leave orphaned watch loops running indefinitely
+
+The first release should not require a separate Rust daemon or any cross-process coordinator for chain-side state.
+
 ## Startup Model
 
 The normal startup sequence is:
@@ -124,6 +138,8 @@ In steady state:
 - no durable request state is required in the first release
 - endpoint metadata and ABI results may be cached in memory for short periods
 - transaction-adjacent tools must use a fresh chain-context check before returning or submitting payloads
+
+In the Rust implementation, these steady-state invariants should be represented as typed in-memory state rather than mutable free-form maps keyed by raw strings.
 
 The first release assumes one endpoint per process. A single `starcoin-node-mcp` instance should not switch among multiple endpoints mid-session.
 

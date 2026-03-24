@@ -147,6 +147,18 @@ Rules:
 4. include chain id, network, endpoint profile, and tool name in diagnostic logs
 5. log chain mismatch and capability mismatch as first-class structured events
 
+## Rust Security Implementation Notes
+
+The first conforming implementation is Rust, so these safety rules should also be reflected in Rust-native constructs.
+
+Required Rust-oriented guidance:
+
+1. the workspace should default to `#![forbid(unsafe_code)]`
+2. endpoint credentials and auth headers should use redaction-aware secret wrappers rather than plain `String`
+3. chain identity, endpoint identity, and transaction hash values should use typed newtypes or domain structs rather than free-form strings
+4. MCP boundary DTOs, domain models, and logging views should remain separate so secrets and large payloads are not accidentally serialized or logged
+5. structured logs should be emitted through `tracing` with redacted fields for endpoint configuration and submission payload metadata
+
 ## Safety Relationship to Wallet Approval
 
 `starcoin-node-mcp` may produce:

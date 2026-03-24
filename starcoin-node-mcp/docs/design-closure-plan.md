@@ -22,6 +22,8 @@ The goal is to prevent the chain-facing MCP server from hard-coding assumptions 
 5. RPC compatibility and VM-version differences are isolated behind an adapter contract.
 6. Result shapes and error mapping are stable enough for MCP hosts to orchestrate reliably.
 7. The initial implementation scope is frozen.
+8. The required implementation language is explicit and consistent across the subproject documents.
+9. Rust type boundaries, async-runtime ownership, and crate responsibilities are explicit enough to implement without reopening architecture questions.
 
 ## Required Document Set
 
@@ -96,6 +98,7 @@ The first-release chain-side design is now closed on the following decisions:
 10. Transaction mode should validate `genesis_hash` in addition to `chain_id` and network whenever the deployment can supply it.
 11. `submit_signed_transaction` returns a deterministic `txn_hash` even when the endpoint outcome is uncertain, and retry logic must reconcile by hash before re-submission.
 12. `transaction_expired` and `sequence_number_stale` require fresh preparation and fresh wallet approval rather than blind re-use of old signed bytes.
+13. The first conforming implementation of `starcoin-node-mcp` must be written in Rust.
 
 ## First Implementation Scope Freeze
 
@@ -109,6 +112,7 @@ In scope:
 - query, ABI resolution, view execution, unsigned transaction preparation, simulation, submission, and watch flows
 - local caching of endpoint metadata and ABI results
 - VM2-first behavior with compatibility fallback in the adapter layer
+- one Rust Cargo workspace implementing the chain-side server
 
 Out of scope for the first implementation:
 
@@ -132,6 +136,7 @@ Before implementation begins, review the design with the following checklist:
 - Are error codes mapped to shared repository vocabulary where possible?
 - Are host-visible summaries clearly separated from wallet security decisions?
 - Is uncertain submission reconciled by transaction hash before any retry?
+- Is the Rust implementation requirement reflected consistently across interface, configuration, testing, and implementation docs?
 - Are unsupported admin or signing behaviors explicitly blocked?
 
 ## Closure Status
