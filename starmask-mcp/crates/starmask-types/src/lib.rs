@@ -5,6 +5,7 @@ pub mod errors;
 pub mod ids;
 pub mod jsonrpc;
 pub mod lifecycle;
+pub mod native_bridge;
 pub mod payload;
 pub mod records;
 pub mod time;
@@ -21,6 +22,10 @@ pub use jsonrpc::{
 pub use lifecycle::{
     Channel, Curve, LockState, MessageFormat, RejectReasonCode, RequestKind, RequestStatus,
     ResultKind,
+};
+pub use native_bridge::{
+    NATIVE_BRIDGE_MAX_INBOUND_BYTES, NATIVE_BRIDGE_MAX_OUTBOUND_BYTES,
+    NATIVE_BRIDGE_PROTOCOL_VERSION, NativeBridgeAccount, NativeBridgeRequest, NativeBridgeResponse,
 };
 pub use payload::{MessagePayload, RequestPayload, RequestResult, TransactionPayload};
 pub use records::{

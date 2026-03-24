@@ -1,5 +1,5 @@
 use starmask_types::{
-    ClientRequestId, DeliveryLeaseId, DurationSeconds, PresentationId, RequestId, RequestResult,
+    ClientRequestId, DurationSeconds, PresentationId, RequestId, RequestResult,
     WalletAccountRecord, WalletInstanceId,
 };
 
@@ -41,12 +41,13 @@ pub struct RegisterExtensionCommand {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeartbeatExtensionCommand {
     pub wallet_instance_id: WalletInstanceId,
-    pub lock_state: starmask_types::LockState,
+    pub presented_request_ids: Vec<RequestId>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct UpdateExtensionAccountsCommand {
     pub wallet_instance_id: WalletInstanceId,
+    pub lock_state: starmask_types::LockState,
     pub accounts: Vec<WalletAccountRecord>,
 }
 
@@ -54,6 +55,7 @@ pub struct UpdateExtensionAccountsCommand {
 pub struct MarkRequestPresentedCommand {
     pub request_id: RequestId,
     pub wallet_instance_id: WalletInstanceId,
+    pub delivery_lease_id: starmask_types::DeliveryLeaseId,
     pub presentation_id: PresentationId,
 }
 
@@ -61,6 +63,7 @@ pub struct MarkRequestPresentedCommand {
 pub struct ResolveRequestCommand {
     pub request_id: RequestId,
     pub wallet_instance_id: WalletInstanceId,
+    pub presentation_id: PresentationId,
     pub result: RequestResult,
 }
 
@@ -68,6 +71,7 @@ pub struct ResolveRequestCommand {
 pub struct RejectRequestCommand {
     pub request_id: RequestId,
     pub wallet_instance_id: WalletInstanceId,
+    pub presentation_id: Option<PresentationId>,
     pub reason_code: starmask_types::RejectReasonCode,
     pub message: Option<String>,
 }
@@ -93,6 +97,9 @@ pub enum CoordinatorCommand {
     GetRequestStatus {
         request_id: RequestId,
     },
+    RequestHasAvailable {
+        wallet_instance_id: WalletInstanceId,
+    },
     CancelRequest {
         request_id: RequestId,
     },
@@ -101,7 +108,6 @@ pub enum CoordinatorCommand {
     UpdateExtensionAccounts(UpdateExtensionAccountsCommand),
     PullNextRequest {
         wallet_instance_id: WalletInstanceId,
-        delivery_lease_id: DeliveryLeaseId,
     },
     MarkRequestPresented(MarkRequestPresentedCommand),
     ResolveRequest(ResolveRequestCommand),

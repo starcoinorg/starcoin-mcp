@@ -3,7 +3,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     errors::SharedErrorCode,
     ids::{ClientRequestId, RequestId, WalletInstanceId},
-    lifecycle::{Curve, LockState, MessageFormat, RequestKind, RequestStatus, ResultKind},
+    lifecycle::{
+        Curve, LockState, MessageFormat, RejectReasonCode, RequestKind, RequestStatus, ResultKind,
+    },
+    native_bridge::NativeBridgeAccount,
     payload::RequestResult,
     records::{WalletAccountRecord, WalletInstanceRecord},
     time::{DurationSeconds, TimestampMs},
@@ -168,6 +171,18 @@ pub struct GetRequestStatusResult {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct RequestHasAvailableParams {
+    pub protocol_version: u32,
+    pub wallet_instance_id: WalletInstanceId,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct RequestHasAvailableResult {
+    pub wallet_instance_id: WalletInstanceId,
+    pub available: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct CancelRequestParams {
     pub protocol_version: u32,
     pub request_id: RequestId,
@@ -179,6 +194,119 @@ pub struct CancelRequestResult {
     pub status: RequestStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error_code: Option<SharedErrorCode>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct ExtensionRegisterParams {
+    pub protocol_version: u32,
+    pub wallet_instance_id: WalletInstanceId,
+    pub extension_id: String,
+    pub extension_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub profile_hint: Option<String>,
+    pub lock_state: LockState,
+    pub accounts_summary: Vec<NativeBridgeAccount>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct ExtensionRegisteredResult {
+    pub wallet_instance_id: WalletInstanceId,
+    pub daemon_protocol_version: u32,
+    pub accepted: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct ExtensionHeartbeatParams {
+    pub protocol_version: u32,
+    pub wallet_instance_id: WalletInstanceId,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub presented_request_ids: Vec<RequestId>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct ExtensionUpdateAccountsParams {
+    pub protocol_version: u32,
+    pub wallet_instance_id: WalletInstanceId,
+    pub lock_state: LockState,
+    pub accounts: Vec<NativeBridgeAccount>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct AckResult {
+    pub ok: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct RequestPullNextParams {
+    pub protocol_version: u32,
+    pub wallet_instance_id: WalletInstanceId,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct PulledRequest {
+    pub request_id: RequestId,
+    pub client_request_id: ClientRequestId,
+    pub kind: RequestKind,
+    pub account_address: String,
+    pub payload_hash: crate::PayloadHash,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_context: Option<String>,
+    pub resume_required: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivery_lease_id: Option<crate::DeliveryLeaseId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lease_expires_at: Option<TimestampMs>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presentation_id: Option<crate::PresentationId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presentation_expires_at: Option<TimestampMs>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub raw_txn_bcs_hex: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub message: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct RequestPullNextResult {
+    pub wallet_instance_id: WalletInstanceId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request: Option<PulledRequest>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct RequestPresentedParams {
+    pub protocol_version: u32,
+    pub wallet_instance_id: WalletInstanceId,
+    pub request_id: RequestId,
+    pub delivery_lease_id: crate::DeliveryLeaseId,
+    pub presentation_id: crate::PresentationId,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct RequestResolveParams {
+    pub protocol_version: u32,
+    pub wallet_instance_id: WalletInstanceId,
+    pub request_id: RequestId,
+    pub presentation_id: crate::PresentationId,
+    pub result_kind: ResultKind,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signed_txn_bcs_hex: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub signature: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct RequestRejectParams {
+    pub protocol_version: u32,
+    pub wallet_instance_id: WalletInstanceId,
+    pub request_id: RequestId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub presentation_id: Option<crate::PresentationId>,
+    pub reason_code: RejectReasonCode,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reason_message: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]

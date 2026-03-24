@@ -77,12 +77,12 @@ pub enum Channel {
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum RejectReasonCode {
-    UserRejected,
-    InvalidPayload,
-    UnsupportedChain,
+    RequestRejected,
     WalletLocked,
+    RequestExpired,
+    UnsupportedOperation,
+    InvalidTransactionPayload,
     InternalError,
-    RequestCancelled,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq, Hash)]

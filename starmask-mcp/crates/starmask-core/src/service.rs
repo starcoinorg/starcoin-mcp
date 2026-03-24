@@ -5,10 +5,12 @@ use tracing::debug;
 use starmask_types::{
     CancelRequestResult, ClientRequestId, CreateRequestResult, Curve, DAEMON_PROTOCOL_VERSION,
     DeliveryLease, DurationSeconds, GetRequestStatusResult, LockState, PayloadHash,
-    PresentationLease, RequestId, RequestKind, RequestPayload, RequestRecord, RequestResult,
-    RequestStatus, ResultKind, SharedErrorCode, SystemGetInfoResult, SystemPingResult, TimestampMs,
-    TransactionPayload, WalletAccountGroup, WalletGetPublicKeyResult, WalletInstanceId,
-    WalletInstanceRecord, WalletListAccountsResult, WalletListInstancesResult, WalletStatusResult,
+    PresentationLease, PulledRequest, RejectReasonCode, RequestHasAvailableResult, RequestId,
+    RequestKind, RequestPayload, RequestPullNextResult as DaemonPullNextRequestResult,
+    RequestRecord, RequestResult, RequestStatus, ResultKind, SharedErrorCode, SystemGetInfoResult,
+    SystemPingResult, TimestampMs, TransactionPayload, WalletAccountGroup,
+    WalletGetPublicKeyResult, WalletInstanceId, WalletInstanceRecord, WalletListAccountsResult,
+    WalletListInstancesResult, WalletStatusResult,
 };
 
 use crate::{
@@ -60,11 +62,7 @@ pub trait IdGenerator {
     fn new_delivery_lease_id(&mut self) -> CoreResult<starmask_types::DeliveryLeaseId>;
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct PullNextRequestResult {
-    pub wallet_instance_id: WalletInstanceId,
-    pub request: Option<CreateRequestResult>,
-}
+pub type PullNextRequestResult = DaemonPullNextRequestResult;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RequestPresentedResult {
@@ -104,6 +102,7 @@ pub enum CoordinatorResponse {
     WalletPublicKey(WalletGetPublicKeyResult),
     RequestCreated(CreateRequestResult),
     RequestStatus(GetRequestStatusResult),
+    RequestHasAvailable(RequestHasAvailableResult),
     RequestCancelled(CancelRequestResult),
     PullNextRequest(PullNextRequestResult),
     RequestPresented(RequestPresentedResult),
@@ -173,6 +172,11 @@ where
             CoordinatorCommand::GetRequestStatus { request_id } => Ok(
                 CoordinatorResponse::RequestStatus(self.get_request_status(&request_id)?),
             ),
+            CoordinatorCommand::RequestHasAvailable { wallet_instance_id } => {
+                Ok(CoordinatorResponse::RequestHasAvailable(
+                    self.request_has_available(&wallet_instance_id)?,
+                ))
+            }
             CoordinatorCommand::CancelRequest { request_id } => Ok(
                 CoordinatorResponse::RequestCancelled(self.cancel_request(&request_id)?),
             ),
@@ -188,12 +192,9 @@ where
                 self.update_extension_accounts(command)?;
                 Ok(CoordinatorResponse::Ack)
             }
-            CoordinatorCommand::PullNextRequest {
-                wallet_instance_id,
-                delivery_lease_id,
-            } => Ok(CoordinatorResponse::PullNextRequest(
-                self.pull_next_request(&wallet_instance_id, delivery_lease_id)?,
-            )),
+            CoordinatorCommand::PullNextRequest { wallet_instance_id } => Ok(
+                CoordinatorResponse::PullNextRequest(self.pull_next_request(&wallet_instance_id)?),
+            ),
             CoordinatorCommand::MarkRequestPresented(command) => Ok(
                 CoordinatorResponse::RequestPresented(self.mark_request_presented(command)?),
             ),
@@ -458,6 +459,27 @@ where
         Ok(project_request_status(&request))
     }
 
+    fn request_has_available(
+        &mut self,
+        wallet_instance_id: &WalletInstanceId,
+    ) -> CoreResult<RequestHasAvailableResult> {
+        let available = self
+            .store
+            .list_non_terminal_requests()?
+            .into_iter()
+            .any(|request| {
+                request.wallet_instance_id == *wallet_instance_id
+                    && matches!(
+                        request.status,
+                        RequestStatus::Created | RequestStatus::PendingUserApproval
+                    )
+            });
+        Ok(RequestHasAvailableResult {
+            wallet_instance_id: wallet_instance_id.clone(),
+            available,
+        })
+    }
+
     fn cancel_request(&mut self, request_id: &RequestId) -> CoreResult<CancelRequestResult> {
         let mut request = self.store.get_request(request_id)?.ok_or_else(|| {
             CoreError::shared(SharedErrorCode::RequestNotFound, "Request not found")
@@ -497,10 +519,37 @@ where
 
     fn heartbeat_extension(&mut self, command: HeartbeatExtensionCommand) -> CoreResult<()> {
         let mut instance = self.require_wallet_instance(&command.wallet_instance_id)?;
-        instance.lock_state = command.lock_state;
         instance.connected = true;
-        instance.last_seen_at = self.clock.now();
+        let now = self.clock.now();
+        instance.last_seen_at = now;
         self.store.upsert_wallet_instance(instance)?;
+
+        if command.presented_request_ids.is_empty() {
+            return Ok(());
+        }
+
+        let presentation_expires_at = now
+            .checked_add_seconds(self.config.presentation_lease_ttl)
+            .ok_or_else(|| {
+                CoreError::Invariant("presentation lease timestamp overflow".to_owned())
+            })?;
+        for request_id in command.presented_request_ids {
+            let Some(mut request) = self.store.get_request(&request_id)? else {
+                continue;
+            };
+            if request.wallet_instance_id != command.wallet_instance_id
+                || request.status != RequestStatus::PendingUserApproval
+            {
+                continue;
+            }
+            let Some(mut presentation) = request.presentation.clone() else {
+                continue;
+            };
+            presentation.presentation_expires_at = presentation_expires_at;
+            request.presentation = Some(presentation);
+            request.updated_at = now;
+            self.store.update_request(request)?;
+        }
         Ok(())
     }
 
@@ -511,6 +560,7 @@ where
         let now = self.clock.now();
         let mut instance = self.require_wallet_instance(&command.wallet_instance_id)?;
         instance.connected = true;
+        instance.lock_state = command.lock_state;
         instance.last_seen_at = now;
         self.store.upsert_wallet_instance(instance)?;
 
@@ -530,8 +580,27 @@ where
     fn pull_next_request(
         &mut self,
         wallet_instance_id: &WalletInstanceId,
-        delivery_lease_id: starmask_types::DeliveryLeaseId,
     ) -> CoreResult<PullNextRequestResult> {
+        self.require_wallet_instance(wallet_instance_id)?;
+        let now = self.clock.now();
+
+        if let Some(mut request) = self.find_resumable_request(wallet_instance_id)? {
+            if let Some(presentation) = request.presentation.as_mut() {
+                presentation.presentation_expires_at = now
+                    .checked_add_seconds(self.config.presentation_lease_ttl)
+                    .ok_or_else(|| {
+                        CoreError::Invariant("presentation lease timestamp overflow".to_owned())
+                    })?;
+            }
+            request.updated_at = now;
+            let request = self.store.update_request(request)?;
+            return Ok(PullNextRequestResult {
+                wallet_instance_id: wallet_instance_id.clone(),
+                request: Some(project_pulled_request(&request, true)),
+            });
+        }
+
+        let delivery_lease_id = self.id_generator.new_delivery_lease_id()?;
         let lease = DeliveryLease {
             delivery_lease_id,
             delivery_lease_expires_at: self
@@ -542,14 +611,14 @@ where
                     CoreError::Invariant("delivery lease timestamp overflow".to_owned())
                 })?,
         };
-        let request = self.store.claim_next_request_for_wallet(
-            wallet_instance_id,
-            lease,
-            self.clock.now(),
-        )?;
+        let request = self
+            .store
+            .claim_next_request_for_wallet(wallet_instance_id, lease, now)?;
         Ok(PullNextRequestResult {
             wallet_instance_id: wallet_instance_id.clone(),
-            request: request.as_ref().map(project_request_summary),
+            request: request
+                .as_ref()
+                .map(|request| project_pulled_request(request, false)),
         })
     }
 
@@ -557,18 +626,20 @@ where
         &mut self,
         command: MarkRequestPresentedCommand,
     ) -> CoreResult<RequestPresentedResult> {
+        let now = self.clock.now();
         let mut request =
             self.require_owned_request(&command.request_id, &command.wallet_instance_id)?;
-        transition_request(
-            &mut request,
-            RequestStatus::PendingUserApproval,
-            self.clock.now(),
-        )?;
+        if request.status != RequestStatus::Dispatched {
+            return Err(CoreError::InvalidStateTransition {
+                from: request.status,
+                to: RequestStatus::PendingUserApproval,
+            });
+        }
+        validate_delivery_lease(&request, &command.delivery_lease_id, now)?;
+        transition_request(&mut request, RequestStatus::PendingUserApproval, now)?;
         request.presentation = Some(PresentationLease {
             presentation_id: command.presentation_id,
-            presentation_expires_at: self
-                .clock
-                .now()
+            presentation_expires_at: now
                 .checked_add_seconds(self.config.presentation_lease_ttl)
                 .ok_or_else(|| {
                     CoreError::Invariant("presentation lease timestamp overflow".to_owned())
@@ -586,17 +657,19 @@ where
         &mut self,
         command: ResolveRequestCommand,
     ) -> CoreResult<RequestResolvedResult> {
+        let now = self.clock.now();
         let mut request =
             self.require_owned_request(&command.request_id, &command.wallet_instance_id)?;
-        transition_request(&mut request, RequestStatus::Approved, self.clock.now())?;
-        request.approved_at = Some(self.clock.now());
-        request.result_expires_at = self
-            .clock
-            .now()
-            .checked_add_seconds(self.config.result_retention);
+        validate_request_result(&request, &command.result)?;
+        validate_presentation(&request, &command.presentation_id)?;
+        transition_request(&mut request, RequestStatus::Approved, now)?;
+        request.approved_at = Some(now);
+        request.result_expires_at = now.checked_add_seconds(self.config.result_retention);
         request.result = Some(command.result.clone());
         request.last_error_code = None;
         request.last_error_message = None;
+        request.reject_reason_code = None;
+        request.delivery_lease = None;
         request.presentation = None;
         request = self.store.update_request(request)?;
         Ok(RequestResolvedResult {
@@ -611,23 +684,55 @@ where
         &mut self,
         command: RejectRequestCommand,
     ) -> CoreResult<RequestRejectedResult> {
+        let now = self.clock.now();
         let mut request =
             self.require_owned_request(&command.request_id, &command.wallet_instance_id)?;
-        transition_request(&mut request, RequestStatus::Rejected, self.clock.now())?;
-        request.rejected_at = Some(self.clock.now());
+
+        match request.status {
+            RequestStatus::PendingUserApproval => {
+                let presentation_id = command.presentation_id.as_ref().ok_or_else(|| {
+                    CoreError::shared(
+                        SharedErrorCode::PermissionDenied,
+                        "presentation_id is required after request presentation",
+                    )
+                })?;
+                validate_presentation(&request, presentation_id)?;
+            }
+            RequestStatus::Dispatched => {
+                if command.presentation_id.is_some() {
+                    return Err(CoreError::shared(
+                        SharedErrorCode::PermissionDenied,
+                        "presentation_id is not valid before request presentation",
+                    ));
+                }
+            }
+            other => {
+                return Err(CoreError::InvalidStateTransition {
+                    from: other,
+                    to: map_reject_reason(command.reason_code).0,
+                });
+            }
+        }
+
+        let (status, error_code, default_message) = map_reject_reason(command.reason_code);
+        transition_request(&mut request, status, now)?;
+        request.approved_at = None;
+        request.rejected_at = (status == RequestStatus::Rejected).then_some(now);
+        request.failed_at = (status == RequestStatus::Failed).then_some(now);
         request.reject_reason_code = Some(command.reason_code);
-        request.last_error_code = Some(SharedErrorCode::RequestRejected);
+        request.last_error_code = Some(error_code);
         request.last_error_message = Some(
             command
                 .message
-                .unwrap_or_else(|| "Request rejected by user".to_owned()),
+                .unwrap_or_else(|| default_message.to_owned()),
         );
+        request.delivery_lease = None;
         request.presentation = None;
         request = self.store.update_request(request)?;
         Ok(RequestRejectedResult {
             request_id: request.request_id,
             status: request.status,
-            error_code: SharedErrorCode::RequestRejected,
+            error_code,
         })
     }
 
@@ -688,6 +793,23 @@ where
                 .max(self.config.min_request_ttl.as_secs())
                 .min(self.config.max_request_ttl.as_secs()),
         )
+    }
+
+    fn find_resumable_request(
+        &mut self,
+        wallet_instance_id: &WalletInstanceId,
+    ) -> CoreResult<Option<RequestRecord>> {
+        let request = self
+            .store
+            .list_non_terminal_requests()?
+            .into_iter()
+            .filter(|request| {
+                request.wallet_instance_id == *wallet_instance_id
+                    && request.status == RequestStatus::PendingUserApproval
+                    && request.presentation.is_some()
+            })
+            .min_by_key(|request| request.created_at);
+        Ok(request)
     }
 
     fn require_owned_request(
@@ -829,6 +951,165 @@ fn project_request_status(request: &RequestRecord) -> GetRequestStatusResult {
     }
 }
 
+fn project_pulled_request(request: &RequestRecord, resume_required: bool) -> PulledRequest {
+    let (display_hint, client_context, raw_txn_bcs_hex, message) = match &request.payload {
+        RequestPayload::SignTransaction(payload) => (
+            payload.display_hint.clone(),
+            payload.client_context.clone(),
+            Some(payload.raw_txn_bcs_hex.clone()),
+            None,
+        ),
+        RequestPayload::SignMessage(payload) => (
+            payload.display_hint.clone(),
+            payload.client_context.clone(),
+            None,
+            Some(payload.message.clone()),
+        ),
+    };
+
+    PulledRequest {
+        request_id: request.request_id.clone(),
+        client_request_id: request.client_request_id.clone(),
+        kind: request.kind,
+        account_address: request.account_address.clone(),
+        payload_hash: request.payload_hash.clone(),
+        display_hint,
+        client_context,
+        resume_required,
+        delivery_lease_id: (!resume_required)
+            .then(|| {
+                request
+                    .delivery_lease
+                    .as_ref()
+                    .map(|lease| lease.delivery_lease_id.clone())
+            })
+            .flatten(),
+        lease_expires_at: (!resume_required)
+            .then(|| {
+                request
+                    .delivery_lease
+                    .as_ref()
+                    .map(|lease| lease.delivery_lease_expires_at)
+            })
+            .flatten(),
+        presentation_id: resume_required
+            .then(|| {
+                request
+                    .presentation
+                    .as_ref()
+                    .map(|presentation| presentation.presentation_id.clone())
+            })
+            .flatten(),
+        presentation_expires_at: resume_required
+            .then(|| {
+                request
+                    .presentation
+                    .as_ref()
+                    .map(|presentation| presentation.presentation_expires_at)
+            })
+            .flatten(),
+        raw_txn_bcs_hex,
+        message,
+    }
+}
+
+fn validate_delivery_lease(
+    request: &RequestRecord,
+    delivery_lease_id: &starmask_types::DeliveryLeaseId,
+    now: TimestampMs,
+) -> CoreResult<()> {
+    let Some(lease) = request.delivery_lease.as_ref() else {
+        return Err(CoreError::shared(
+            SharedErrorCode::PermissionDenied,
+            "request does not have an active delivery lease",
+        ));
+    };
+    if lease.delivery_lease_id != *delivery_lease_id {
+        return Err(CoreError::shared(
+            SharedErrorCode::PermissionDenied,
+            "delivery lease does not match the active claim",
+        ));
+    }
+    if lease.delivery_lease_expires_at <= now {
+        return Err(CoreError::shared(
+            SharedErrorCode::PermissionDenied,
+            "delivery lease already expired",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_presentation(
+    request: &RequestRecord,
+    presentation_id: &starmask_types::PresentationId,
+) -> CoreResult<()> {
+    if request.status != RequestStatus::PendingUserApproval {
+        return Err(CoreError::InvalidStateTransition {
+            from: request.status,
+            to: RequestStatus::Approved,
+        });
+    }
+    let Some(presentation) = request.presentation.as_ref() else {
+        return Err(CoreError::shared(
+            SharedErrorCode::PermissionDenied,
+            "request does not have an active presentation lease",
+        ));
+    };
+    if presentation.presentation_id != *presentation_id {
+        return Err(CoreError::shared(
+            SharedErrorCode::PermissionDenied,
+            "presentation id does not match the active request presentation",
+        ));
+    }
+    Ok(())
+}
+
+fn validate_request_result(request: &RequestRecord, result: &RequestResult) -> CoreResult<()> {
+    let expected = request.kind.expected_result_kind();
+    let actual = result.result_kind();
+    if expected != actual {
+        return Err(CoreError::Validation(format!(
+            "request expects result kind {expected:?} but received {actual:?}"
+        )));
+    }
+    Ok(())
+}
+
+fn map_reject_reason(reason: RejectReasonCode) -> (RequestStatus, SharedErrorCode, &'static str) {
+    match reason {
+        RejectReasonCode::RequestRejected => (
+            RequestStatus::Rejected,
+            SharedErrorCode::RequestRejected,
+            "Request rejected by user",
+        ),
+        RejectReasonCode::RequestExpired => (
+            RequestStatus::Expired,
+            SharedErrorCode::RequestExpired,
+            "Request expired before approval completed",
+        ),
+        RejectReasonCode::WalletLocked => (
+            RequestStatus::Failed,
+            SharedErrorCode::WalletLocked,
+            "Wallet became locked before signing completed",
+        ),
+        RejectReasonCode::UnsupportedOperation => (
+            RequestStatus::Failed,
+            SharedErrorCode::UnsupportedOperation,
+            "Wallet cannot safely approve this operation",
+        ),
+        RejectReasonCode::InvalidTransactionPayload => (
+            RequestStatus::Failed,
+            SharedErrorCode::InvalidTransactionPayload,
+            "Wallet rejected an invalid transaction payload",
+        ),
+        RejectReasonCode::InternalError => (
+            RequestStatus::Failed,
+            SharedErrorCode::InternalBridgeError,
+            "Wallet failed to complete the request",
+        ),
+    }
+}
+
 fn transition_request(
     request: &mut RequestRecord,
     next: RequestStatus,
@@ -861,7 +1142,8 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use starmask_types::{
-        ClientRequestId, DeliveryLease, LockState, RequestPayload, RequestRecord, RequestStatus,
+        ClientRequestId, DeliveryLease, DeliveryLeaseId, LockState, PresentationId,
+        RejectReasonCode, RequestPayload, RequestRecord, RequestStatus, SharedErrorCode,
         TimestampMs, TransactionPayload, WalletAccountRecord, WalletInstanceId,
         WalletInstanceRecord,
     };
@@ -869,7 +1151,8 @@ mod tests {
     use crate::{
         commands::{
             CoordinatorCommand, CreateSignTransactionCommand, MarkRequestPresentedCommand,
-            RegisterExtensionCommand, ResolveRequestCommand, UpdateExtensionAccountsCommand,
+            RegisterExtensionCommand, RejectRequestCommand, ResolveRequestCommand,
+            UpdateExtensionAccountsCommand,
         },
         policy::AllowAllPolicy,
         repo::{RepositoryError, RequestRepository, WalletRepository},
@@ -1121,6 +1404,7 @@ mod tests {
             .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
                 UpdateExtensionAccountsCommand {
                     wallet_instance_id: wallet_instance_id.clone(),
+                    lock_state: LockState::Unlocked,
                     accounts: vec![WalletAccountRecord {
                         wallet_instance_id: wallet_instance_id.clone(),
                         address: "0x1".to_owned(),
@@ -1184,6 +1468,7 @@ mod tests {
             .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
                 UpdateExtensionAccountsCommand {
                     wallet_instance_id: wallet_instance_id.clone(),
+                    lock_state: LockState::Unlocked,
                     accounts: vec![WalletAccountRecord {
                         wallet_instance_id: wallet_instance_id.clone(),
                         address: "0x1".to_owned(),
@@ -1221,16 +1506,18 @@ mod tests {
         coordinator
             .dispatch(CoordinatorCommand::PullNextRequest {
                 wallet_instance_id: wallet_instance_id.clone(),
-                delivery_lease_id: starmask_types::DeliveryLeaseId::new("lease-1").unwrap(),
             })
             .unwrap();
+
+        let presentation_id = starmask_types::PresentationId::new("presentation-1").unwrap();
 
         coordinator
             .dispatch(CoordinatorCommand::MarkRequestPresented(
                 MarkRequestPresentedCommand {
                     request_id: request_id.clone(),
                     wallet_instance_id: wallet_instance_id.clone(),
-                    presentation_id: starmask_types::PresentationId::new("presentation-1").unwrap(),
+                    delivery_lease_id: starmask_types::DeliveryLeaseId::new("lease-2").unwrap(),
+                    presentation_id: presentation_id.clone(),
                 },
             ))
             .unwrap();
@@ -1239,6 +1526,7 @@ mod tests {
             .dispatch(CoordinatorCommand::ResolveRequest(ResolveRequestCommand {
                 request_id: request_id.clone(),
                 wallet_instance_id,
+                presentation_id,
                 result: starmask_types::RequestResult::SignedTransaction {
                     signed_txn_bcs_hex: "0xsigned".to_owned(),
                 },
@@ -1284,6 +1572,7 @@ mod tests {
                 .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
                     UpdateExtensionAccountsCommand {
                         wallet_instance_id: wallet_instance_id.clone(),
+                        lock_state: LockState::Unlocked,
                         accounts: vec![WalletAccountRecord {
                             wallet_instance_id,
                             address: "0x1".to_owned(),
@@ -1342,5 +1631,192 @@ mod tests {
             .unwrap();
 
         assert_eq!(first, second);
+    }
+
+    #[test]
+    fn pull_next_resumes_presented_request_for_same_wallet_instance() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-1").unwrap();
+        let delivery_lease_id = DeliveryLeaseId::new("lease-2").unwrap();
+        let presentation_id = PresentationId::new("presentation-1").unwrap();
+
+        coordinator
+            .dispatch(CoordinatorCommand::RegisterExtension(
+                RegisterExtensionCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    extension_id: "ext".to_owned(),
+                    extension_version: "1.0.0".to_owned(),
+                    protocol_version: 1,
+                    profile_hint: None,
+                    lock_state: LockState::Unlocked,
+                },
+            ))
+            .unwrap();
+        coordinator
+            .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
+                UpdateExtensionAccountsCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    lock_state: LockState::Unlocked,
+                    accounts: vec![WalletAccountRecord {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        address: "0x1".to_owned(),
+                        label: None,
+                        public_key: None,
+                        is_default: true,
+                        is_locked: false,
+                        last_seen_at: TimestampMs::from_millis(0),
+                    }],
+                },
+            ))
+            .unwrap();
+
+        let created = coordinator
+            .dispatch(CoordinatorCommand::CreateSignTransaction(
+                CreateSignTransactionCommand {
+                    client_request_id: ClientRequestId::new("client-resume").unwrap(),
+                    account_address: "0x1".to_owned(),
+                    wallet_instance_id: Some(wallet_instance_id.clone()),
+                    chain_id: 251,
+                    raw_txn_bcs_hex: "0xabc".to_owned(),
+                    tx_kind: "transfer".to_owned(),
+                    display_hint: Some("Transfer".to_owned()),
+                    client_context: Some("codex".to_owned()),
+                    ttl_seconds: None,
+                },
+            ))
+            .unwrap();
+        let request_id = match created {
+            CoordinatorResponse::RequestCreated(result) => result.request_id,
+            other => panic!("unexpected response: {other:?}"),
+        };
+
+        coordinator
+            .dispatch(CoordinatorCommand::PullNextRequest {
+                wallet_instance_id: wallet_instance_id.clone(),
+            })
+            .unwrap();
+        coordinator
+            .dispatch(CoordinatorCommand::MarkRequestPresented(
+                MarkRequestPresentedCommand {
+                    request_id: request_id.clone(),
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    delivery_lease_id: delivery_lease_id.clone(),
+                    presentation_id: presentation_id.clone(),
+                },
+            ))
+            .unwrap();
+
+        let resumed = coordinator
+            .dispatch(CoordinatorCommand::PullNextRequest {
+                wallet_instance_id: wallet_instance_id.clone(),
+            })
+            .unwrap();
+
+        let CoordinatorResponse::PullNextRequest(resumed) = resumed else {
+            panic!("unexpected response");
+        };
+        let resumed_request = resumed.request.expect("resumed request");
+        assert_eq!(resumed_request.request_id, request_id);
+        assert_eq!(resumed_request.resume_required, true);
+        assert_eq!(resumed_request.delivery_lease_id, None);
+        assert_eq!(resumed_request.presentation_id, Some(presentation_id));
+    }
+
+    #[test]
+    fn reject_wallet_locked_moves_request_to_failed() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-1").unwrap();
+        let delivery_lease_id = DeliveryLeaseId::new("lease-2").unwrap();
+        let presentation_id = PresentationId::new("presentation-1").unwrap();
+
+        coordinator
+            .dispatch(CoordinatorCommand::RegisterExtension(
+                RegisterExtensionCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    extension_id: "ext".to_owned(),
+                    extension_version: "1.0.0".to_owned(),
+                    protocol_version: 1,
+                    profile_hint: None,
+                    lock_state: LockState::Unlocked,
+                },
+            ))
+            .unwrap();
+        coordinator
+            .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
+                UpdateExtensionAccountsCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    lock_state: LockState::Unlocked,
+                    accounts: vec![WalletAccountRecord {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        address: "0x1".to_owned(),
+                        label: None,
+                        public_key: None,
+                        is_default: true,
+                        is_locked: false,
+                        last_seen_at: TimestampMs::from_millis(0),
+                    }],
+                },
+            ))
+            .unwrap();
+
+        let created = coordinator
+            .dispatch(CoordinatorCommand::CreateSignTransaction(
+                CreateSignTransactionCommand {
+                    client_request_id: ClientRequestId::new("client-reject").unwrap(),
+                    account_address: "0x1".to_owned(),
+                    wallet_instance_id: Some(wallet_instance_id.clone()),
+                    chain_id: 251,
+                    raw_txn_bcs_hex: "0xabc".to_owned(),
+                    tx_kind: "transfer".to_owned(),
+                    display_hint: None,
+                    client_context: None,
+                    ttl_seconds: None,
+                },
+            ))
+            .unwrap();
+        let request_id = match created {
+            CoordinatorResponse::RequestCreated(result) => result.request_id,
+            other => panic!("unexpected response: {other:?}"),
+        };
+
+        coordinator
+            .dispatch(CoordinatorCommand::PullNextRequest {
+                wallet_instance_id: wallet_instance_id.clone(),
+            })
+            .unwrap();
+        coordinator
+            .dispatch(CoordinatorCommand::MarkRequestPresented(
+                MarkRequestPresentedCommand {
+                    request_id: request_id.clone(),
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    delivery_lease_id,
+                    presentation_id: presentation_id.clone(),
+                },
+            ))
+            .unwrap();
+
+        let rejected = coordinator
+            .dispatch(CoordinatorCommand::RejectRequest(RejectRequestCommand {
+                request_id: request_id.clone(),
+                wallet_instance_id: wallet_instance_id.clone(),
+                presentation_id: Some(presentation_id),
+                reason_code: RejectReasonCode::WalletLocked,
+                message: None,
+            }))
+            .unwrap();
+        let CoordinatorResponse::RequestRejected(rejected) = rejected else {
+            panic!("unexpected response");
+        };
+        assert_eq!(rejected.status, RequestStatus::Failed);
+        assert_eq!(rejected.error_code, SharedErrorCode::WalletLocked);
+
+        let status = coordinator
+            .dispatch(CoordinatorCommand::GetRequestStatus { request_id })
+            .unwrap();
+        let CoordinatorResponse::RequestStatus(status) = status else {
+            panic!("unexpected response");
+        };
+        assert_eq!(status.status, RequestStatus::Failed);
+        assert_eq!(status.error_code, Some(SharedErrorCode::WalletLocked));
     }
 }

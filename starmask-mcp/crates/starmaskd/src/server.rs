@@ -11,13 +11,21 @@ use tracing::{debug, warn};
 
 use starmask_core::{
     CoordinatorCommand, CoordinatorResponse,
-    commands::{CreateSignMessageCommand, CreateSignTransactionCommand},
+    commands::{
+        CreateSignMessageCommand, CreateSignTransactionCommand, HeartbeatExtensionCommand,
+        MarkRequestPresentedCommand, RegisterExtensionCommand, RejectRequestCommand,
+        ResolveRequestCommand, UpdateExtensionAccountsCommand,
+    },
 };
 use starmask_types::{
-    CancelRequestParams, CreateSignMessageParams, CreateSignTransactionParams,
-    GetRequestStatusParams, JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse, JsonRpcSuccess,
-    SharedError, SharedErrorCode, SystemGetInfoParams, SystemPingParams, WalletGetPublicKeyParams,
-    WalletListAccountsParams, WalletListInstancesParams, WalletStatusParams,
+    AckResult, CancelRequestParams, CreateSignMessageParams, CreateSignTransactionParams,
+    ExtensionHeartbeatParams, ExtensionRegisterParams, ExtensionRegisteredResult,
+    ExtensionUpdateAccountsParams, GetRequestStatusParams, JsonRpcErrorResponse, JsonRpcRequest,
+    JsonRpcResponse, JsonRpcSuccess, NativeBridgeAccount, RequestHasAvailableParams,
+    RequestPresentedParams, RequestPullNextParams, RequestRejectParams, RequestResolveParams,
+    RequestResult, ResultKind, SharedError, SharedErrorCode, SystemGetInfoParams, SystemPingParams,
+    TimestampMs, WalletAccountRecord, WalletGetPublicKeyParams, WalletListAccountsParams,
+    WalletListInstancesParams, WalletStatusParams,
 };
 
 use crate::coordinator_runtime::CoordinatorHandle;
@@ -214,6 +222,21 @@ async fn dispatch_request(
             )?)
             .map_err(|error| error_response(None, error))?
         }
+        "request.hasAvailable" => {
+            let params = decode_protocol::<RequestHasAvailableParams>(&request.params)?;
+            serde_json::to_value(expect_response(
+                handle
+                    .dispatch(CoordinatorCommand::RequestHasAvailable {
+                        wallet_instance_id: params.wallet_instance_id,
+                    })
+                    .await,
+                |response| match response {
+                    CoordinatorResponse::RequestHasAvailable(result) => Ok(result),
+                    other => Err(unexpected_response(other)),
+                },
+            )?)
+            .map_err(|error| error_response(None, error))?
+        }
         "request.cancel" => {
             let params = decode_protocol::<CancelRequestParams>(&request.params)?;
             serde_json::to_value(expect_response(
@@ -224,6 +247,181 @@ async fn dispatch_request(
                     .await,
                 |response| match response {
                     CoordinatorResponse::RequestCancelled(result) => Ok(result),
+                    other => Err(unexpected_response(other)),
+                },
+            )?)
+            .map_err(|error| error_response(None, error))?
+        }
+        "extension.register" => {
+            let params = decode_protocol::<ExtensionRegisterParams>(&request.params)?;
+            let wallet_instance_id = params.wallet_instance_id.clone();
+            let lock_state = params.lock_state;
+            expect_response(
+                handle
+                    .dispatch(CoordinatorCommand::RegisterExtension(
+                        RegisterExtensionCommand {
+                            wallet_instance_id: wallet_instance_id.clone(),
+                            extension_id: params.extension_id,
+                            extension_version: params.extension_version,
+                            protocol_version: params.protocol_version,
+                            profile_hint: params.profile_hint,
+                            lock_state,
+                        },
+                    ))
+                    .await,
+                |response| match response {
+                    CoordinatorResponse::Ack => Ok(()),
+                    other => Err(unexpected_response(other)),
+                },
+            )?;
+            expect_response(
+                handle
+                    .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
+                        UpdateExtensionAccountsCommand {
+                            wallet_instance_id: wallet_instance_id.clone(),
+                            lock_state,
+                            accounts: params
+                                .accounts_summary
+                                .into_iter()
+                                .map(|account| {
+                                    bridge_account_to_wallet_account(
+                                        &wallet_instance_id,
+                                        account,
+                                        lock_state,
+                                    )
+                                })
+                                .collect(),
+                        },
+                    ))
+                    .await,
+                |response| match response {
+                    CoordinatorResponse::Ack => Ok(()),
+                    other => Err(unexpected_response(other)),
+                },
+            )?;
+            serde_json::to_value(ExtensionRegisteredResult {
+                wallet_instance_id,
+                daemon_protocol_version: starmask_types::DAEMON_PROTOCOL_VERSION,
+                accepted: true,
+            })
+            .map_err(|error| error_response(None, error))?
+        }
+        "extension.heartbeat" => {
+            let params = decode_protocol::<ExtensionHeartbeatParams>(&request.params)?;
+            serde_json::to_value(expect_response(
+                handle
+                    .dispatch(CoordinatorCommand::HeartbeatExtension(
+                        HeartbeatExtensionCommand {
+                            wallet_instance_id: params.wallet_instance_id,
+                            presented_request_ids: params.presented_request_ids,
+                        },
+                    ))
+                    .await,
+                |response| match response {
+                    CoordinatorResponse::Ack => Ok(AckResult { ok: true }),
+                    other => Err(unexpected_response(other)),
+                },
+            )?)
+            .map_err(|error| error_response(None, error))?
+        }
+        "extension.updateAccounts" => {
+            let params = decode_protocol::<ExtensionUpdateAccountsParams>(&request.params)?;
+            serde_json::to_value(expect_response(
+                handle
+                    .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
+                        UpdateExtensionAccountsCommand {
+                            wallet_instance_id: params.wallet_instance_id.clone(),
+                            lock_state: params.lock_state,
+                            accounts: params
+                                .accounts
+                                .into_iter()
+                                .map(|account| {
+                                    bridge_account_to_wallet_account(
+                                        &params.wallet_instance_id,
+                                        account,
+                                        params.lock_state,
+                                    )
+                                })
+                                .collect(),
+                        },
+                    ))
+                    .await,
+                |response| match response {
+                    CoordinatorResponse::Ack => Ok(AckResult { ok: true }),
+                    other => Err(unexpected_response(other)),
+                },
+            )?)
+            .map_err(|error| error_response(None, error))?
+        }
+        "request.pullNext" => {
+            let params = decode_protocol::<RequestPullNextParams>(&request.params)?;
+            serde_json::to_value(expect_response(
+                handle
+                    .dispatch(CoordinatorCommand::PullNextRequest {
+                        wallet_instance_id: params.wallet_instance_id,
+                    })
+                    .await,
+                |response| match response {
+                    CoordinatorResponse::PullNextRequest(result) => Ok(result),
+                    other => Err(unexpected_response(other)),
+                },
+            )?)
+            .map_err(|error| error_response(None, error))?
+        }
+        "request.presented" => {
+            let params = decode_protocol::<RequestPresentedParams>(&request.params)?;
+            serde_json::to_value(expect_response(
+                handle
+                    .dispatch(CoordinatorCommand::MarkRequestPresented(
+                        MarkRequestPresentedCommand {
+                            request_id: params.request_id,
+                            wallet_instance_id: params.wallet_instance_id,
+                            delivery_lease_id: params.delivery_lease_id,
+                            presentation_id: params.presentation_id,
+                        },
+                    ))
+                    .await,
+                |response| match response {
+                    CoordinatorResponse::RequestPresented(_) => Ok(AckResult { ok: true }),
+                    other => Err(unexpected_response(other)),
+                },
+            )?)
+            .map_err(|error| error_response(None, error))?
+        }
+        "request.resolve" => {
+            let params = decode_protocol::<RequestResolveParams>(&request.params)?;
+            let result = request_result_from_params(&params)
+                .map_err(|error| error_response(Some(&id), error))?;
+            serde_json::to_value(expect_response(
+                handle
+                    .dispatch(CoordinatorCommand::ResolveRequest(ResolveRequestCommand {
+                        request_id: params.request_id,
+                        wallet_instance_id: params.wallet_instance_id,
+                        presentation_id: params.presentation_id,
+                        result,
+                    }))
+                    .await,
+                |response| match response {
+                    CoordinatorResponse::RequestResolved(_) => Ok(AckResult { ok: true }),
+                    other => Err(unexpected_response(other)),
+                },
+            )?)
+            .map_err(|error| error_response(None, error))?
+        }
+        "request.reject" => {
+            let params = decode_protocol::<RequestRejectParams>(&request.params)?;
+            serde_json::to_value(expect_response(
+                handle
+                    .dispatch(CoordinatorCommand::RejectRequest(RejectRequestCommand {
+                        request_id: params.request_id,
+                        wallet_instance_id: params.wallet_instance_id,
+                        presentation_id: params.presentation_id,
+                        reason_code: params.reason_code,
+                        message: params.reason_message,
+                    }))
+                    .await,
+                |response| match response {
+                    CoordinatorResponse::RequestRejected(_) => Ok(AckResult { ok: true }),
                     other => Err(unexpected_response(other)),
                 },
             )?)
@@ -283,7 +481,15 @@ impl_has_protocol_version!(
     CancelRequestParams,
     CreateSignMessageParams,
     CreateSignTransactionParams,
+    ExtensionHeartbeatParams,
+    ExtensionRegisterParams,
+    ExtensionUpdateAccountsParams,
     GetRequestStatusParams,
+    RequestHasAvailableParams,
+    RequestPresentedParams,
+    RequestPullNextParams,
+    RequestRejectParams,
+    RequestResolveParams,
     SystemGetInfoParams,
     SystemPingParams,
     WalletGetPublicKeyParams,
@@ -325,4 +531,40 @@ fn error_response(id: Option<&str>, error: impl std::fmt::Display) -> JsonRpcErr
         id.unwrap_or(""),
         SharedError::new(SharedErrorCode::InternalBridgeError, error.to_string()),
     )
+}
+
+fn request_result_from_params(params: &RequestResolveParams) -> Result<RequestResult> {
+    match params.result_kind {
+        ResultKind::SignedTransaction => {
+            let signed_txn_bcs_hex = params
+                .signed_txn_bcs_hex
+                .clone()
+                .context("signed_txn_bcs_hex is required for signed_transaction")?;
+            Ok(RequestResult::SignedTransaction { signed_txn_bcs_hex })
+        }
+        ResultKind::SignedMessage => {
+            let signature = params
+                .signature
+                .clone()
+                .context("signature is required for signed_message")?;
+            Ok(RequestResult::SignedMessage { signature })
+        }
+        ResultKind::None => anyhow::bail!("result_kind none is not valid for request.resolve"),
+    }
+}
+
+fn bridge_account_to_wallet_account(
+    wallet_instance_id: &starmask_types::WalletInstanceId,
+    account: NativeBridgeAccount,
+    lock_state: starmask_types::LockState,
+) -> WalletAccountRecord {
+    WalletAccountRecord {
+        wallet_instance_id: wallet_instance_id.clone(),
+        address: account.address,
+        label: account.label,
+        public_key: account.public_key,
+        is_default: account.is_default,
+        is_locked: lock_state != starmask_types::LockState::Unlocked,
+        last_seen_at: TimestampMs::from_millis(0),
+    }
 }
