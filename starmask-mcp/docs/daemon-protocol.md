@@ -28,6 +28,20 @@ The daemon protocol uses JSON-RPC 2.0 over:
 
 The daemon must reject non-local access.
 
+The first implementation may use one request per local connection:
+
+1. the client opens a local socket or pipe connection
+2. the client writes one JSON-RPC request
+3. the daemon writes one JSON-RPC response
+4. the connection closes
+
+Framing rule for this mode:
+
+- request body is complete when the client closes its write side (EOF)
+- daemon returns exactly one JSON-RPC response, then closes the connection
+
+Persistent local connections may be added later without changing the request and response envelope.
+
 ## Protocol Version
 
 Initial daemon protocol version:

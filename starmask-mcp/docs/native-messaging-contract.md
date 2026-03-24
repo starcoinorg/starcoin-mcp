@@ -400,7 +400,9 @@ If the extension disconnects after `request.presented`:
 - the request remains `pending_user_approval`
 - the request remains pinned to the same `wallet_instance_id`
 - the daemon waits for the presentation lease to expire
-- if the same instance reconnects before request expiry, it may reclaim the request with `resume_required = true`
+- if the same instance reconnects before the presentation lease expires, it may reclaim the request with `resume_required = true`
+- once the presentation lease expires, the daemon returns the request to `created`
+- the request may then be claimed again only by the same `wallet_instance_id`
 - if the same instance never reconnects, the request eventually expires
 
 ## Unsupported Payload Rule

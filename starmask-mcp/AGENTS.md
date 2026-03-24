@@ -75,6 +75,12 @@ This is a project-wide layering rule, not a special exception for this subprojec
   - raw signed transaction payloads
   - full message signatures at normal log levels
 
+## Commit and Push Discipline
+
+- After a `starmask-mcp` change reaches a verified milestone, commit it promptly.
+- Push promptly when the user asks, when the branch has reached a reviewable checkpoint, or when the remote branch should preserve current progress.
+- Do not push partially integrated protocol, lifecycle, or persistence changes before they have passed the relevant tests and smoke checks.
+
 ## Required Doc Sync
 
 Any change to behavior covered by these docs must update the docs in the same change:
