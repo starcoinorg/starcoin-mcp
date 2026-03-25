@@ -1,0 +1,230 @@
+use super::NodeRpcClient;
+use httpmock::prelude::*;
+use serde_json::{Value, json};
+use starcoin_node_mcp_test_support::{
+    mock_json_rpc_result, mock_method_not_found, mock_probe_metadata,
+    mock_submit_probe_invalid_params, mock_transaction_event_methods_not_found,
+    mock_transaction_info_methods_not_found, mock_txpool_sequence_probe, runtime_config,
+    sample_chain_info,
+};
+use starcoin_node_mcp_types::{Mode, SharedErrorCode, VmProfile};
+
+#[tokio::test]
+async fn probe_classifies_optional_capabilities_and_legacy_fallbacks() {
+    let server = MockServer::start();
+    mock_probe_metadata(&server);
+    mock_json_rpc_result(&server, "chain.get_block_by_number", Value::Null);
+    mock_method_not_found(&server, "chain.get_blocks_by_number");
+    mock_method_not_found(&server, "chain.get_transaction2");
+    mock_json_rpc_result(&server, "chain.get_transaction", Value::Null);
+    mock_transaction_info_methods_not_found(&server);
+    mock_transaction_event_methods_not_found(&server);
+    mock_method_not_found(&server, "state.get_account_state");
+    mock_method_not_found(&server, "chain.get_events");
+    mock_json_rpc_result(&server, "state.list_resource", json!({ "resources": {} }));
+    mock_method_not_found(&server, "state.list_code");
+    mock_method_not_found(&server, "contract2.resolve_function");
+    mock_json_rpc_result(
+        &server,
+        "contract.resolve_function",
+        json!({ "name": "balance" }),
+    );
+    mock_method_not_found(&server, "contract2.resolve_module");
+    mock_json_rpc_result(
+        &server,
+        "contract.resolve_module",
+        json!({ "name": "Account" }),
+    );
+    mock_method_not_found(&server, "contract2.resolve_struct");
+    mock_json_rpc_result(
+        &server,
+        "contract.resolve_struct",
+        json!({ "name": "Account" }),
+    );
+    mock_json_rpc_result(&server, "contract.call_v2", json!([]));
+
+    let client = NodeRpcClient::new(&runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::LegacyCompatible,
+        true,
+    ))
+    .expect("rpc client should build");
+    let probe = client.probe(false).await.expect("probe should succeed");
+
+    assert!(probe.supports_block_lookup);
+    assert!(!probe.supports_block_listing);
+    assert!(probe.supports_transaction_lookup);
+    assert!(!probe.supports_transaction_info_lookup);
+    assert!(!probe.supports_transaction_events_by_hash);
+    assert!(!probe.supports_account_state_lookup);
+    assert!(!probe.supports_events_query);
+    assert!(probe.supports_resource_listing);
+    assert!(!probe.supports_module_listing);
+    assert!(probe.supports_abi_resolution);
+    assert!(probe.supports_view_call);
+    assert!(!probe.supports_transaction_submission);
+    assert!(!probe.supports_raw_dry_run);
+}
+
+#[tokio::test]
+async fn chain_info_cache_reuses_value_but_uncached_bypasses_it() {
+    let server = MockServer::start();
+    let chain_info = mock_json_rpc_result(&server, "chain.info", sample_chain_info());
+    let client = NodeRpcClient::new(&runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::Auto,
+        true,
+    ))
+    .expect("rpc client should build");
+
+    client
+        .chain_info()
+        .await
+        .expect("first cached read should succeed");
+    client
+        .chain_info()
+        .await
+        .expect("second cached read should reuse cache");
+    assert_eq!(chain_info.hits(), 1);
+
+    client
+        .chain_info_uncached()
+        .await
+        .expect("uncached read should bypass cache");
+    assert_eq!(chain_info.hits(), 2);
+}
+
+#[tokio::test]
+async fn transaction_probe_detects_submission_and_dry_run_capabilities() {
+    let server = MockServer::start();
+    mock_probe_metadata(&server);
+    mock_json_rpc_result(&server, "chain.get_block_by_number", Value::Null);
+    mock_json_rpc_result(&server, "chain.get_blocks_by_number", json!([]));
+    mock_json_rpc_result(&server, "chain.get_transaction2", Value::Null);
+    mock_json_rpc_result(&server, "chain.get_transaction_info2", Value::Null);
+    mock_transaction_event_methods_not_found(&server);
+    mock_method_not_found(&server, "state.get_account_state");
+    mock_json_rpc_result(&server, "chain.get_events", json!([]));
+    mock_json_rpc_result(&server, "state.list_resource", json!({ "resources": {} }));
+    mock_json_rpc_result(&server, "state.list_code", json!({ "codes": {} }));
+    mock_json_rpc_result(
+        &server,
+        "contract2.resolve_function",
+        json!({ "name": "balance" }),
+    );
+    mock_json_rpc_result(
+        &server,
+        "contract2.resolve_module",
+        json!({ "name": "Account" }),
+    );
+    mock_json_rpc_result(
+        &server,
+        "contract2.resolve_struct",
+        json!({ "name": "Account" }),
+    );
+    mock_json_rpc_result(&server, "contract2.call_v2", json!([]));
+    mock_json_rpc_result(&server, "txpool.gas_price", json!("1"));
+    mock_txpool_sequence_probe(&server, "txpool.next_sequence_number2", json!("0"));
+    let submit_probe = mock_submit_probe_invalid_params(&server, "txpool.submit_hex_transaction2");
+    mock_json_rpc_result(
+        &server,
+        "contract2.dry_run_raw",
+        json!({ "status": "Executed" }),
+    );
+
+    let client = NodeRpcClient::new(&runtime_config(
+        &server,
+        Mode::Transaction,
+        VmProfile::Vm2Only,
+        true,
+    ))
+    .expect("rpc client should build");
+    let probe = client
+        .probe(true)
+        .await
+        .expect("transaction probe should succeed");
+
+    assert!(probe.supports_block_listing);
+    assert!(probe.supports_transaction_info_lookup);
+    assert!(!probe.supports_transaction_events_by_hash);
+    assert!(!probe.supports_account_state_lookup);
+    assert!(probe.supports_transaction_submission);
+    assert!(probe.supports_raw_dry_run);
+    assert_eq!(submit_probe.hits(), 1);
+}
+
+#[tokio::test]
+async fn method_exists_propagates_transport_errors() {
+    let server = MockServer::start();
+    server.mock(|when, then| {
+        when.method(POST)
+            .path("/")
+            .body_contains("\"method\":\"chain.info\"");
+        then.status(500).body("boom");
+    });
+
+    let client = NodeRpcClient::new(&runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::Auto,
+        true,
+    ))
+    .expect("rpc client should build");
+    let error = client
+        .method_exists("chain.info", json!([]))
+        .await
+        .expect_err("HTTP transport failures should propagate");
+
+    assert_eq!(error.code, SharedErrorCode::RpcUnavailable);
+    assert!(error.retryable);
+}
+
+#[tokio::test]
+async fn submit_rejects_non_string_hash_payloads() {
+    let server = MockServer::start();
+    mock_json_rpc_result(
+        &server,
+        "txpool.submit_hex_transaction2",
+        json!({ "hash": "0xabc" }),
+    );
+
+    let client = NodeRpcClient::new(&runtime_config(
+        &server,
+        Mode::Transaction,
+        VmProfile::Vm2Only,
+        true,
+    ))
+    .expect("rpc client should build");
+    let error = client
+        .submit_signed_transaction("0x01")
+        .await
+        .expect_err("non-string submit results should be rejected");
+
+    assert_eq!(error.code, SharedErrorCode::RpcUnavailable);
+}
+
+#[tokio::test]
+async fn abi_cache_respects_zero_capacity() {
+    let server = MockServer::start();
+    let abi = mock_json_rpc_result(
+        &server,
+        "contract2.resolve_function",
+        json!({ "name": "balance" }),
+    );
+    let mut config = runtime_config(&server, Mode::ReadOnly, VmProfile::Vm2Only, true);
+    config.module_cache_max_entries = 0;
+
+    let client = NodeRpcClient::new(&config).expect("rpc client should build");
+    client
+        .resolve_function_abi("0x1::Account::balance")
+        .await
+        .expect("first ABI lookup should succeed");
+    client
+        .resolve_function_abi("0x1::Account::balance")
+        .await
+        .expect("second ABI lookup should also succeed");
+
+    assert_eq!(abi.hits(), 2);
+}

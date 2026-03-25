@@ -75,6 +75,21 @@ These instructions apply to the whole repository unless a subproject adds strict
 - Push promptly when the user asks, when the branch has reached a shareable checkpoint, or when remote backup materially reduces risk.
 - Do not push half-finished or unverified changes just to satisfy a cadence rule.
 
+## Review Workflow
+
+- Fix review findings by issue class, not only by the commented line.
+- When a review comment identifies a bug pattern, audit the surrounding module for the same pattern before pushing.
+- For RPC and protocol code, explicitly re-check adjacent logic for:
+  - malformed payload handling
+  - fail-closed versus silent fallback behavior
+  - degradable versus hard-fail dependency boundaries
+  - error-code semantics and retryability
+  - secret exposure in logs, debug helpers, or config accessors
+  - exhaustive handling when enums or shared contracts grow
+- Do not push a review-fix round until the touched area has been re-reviewed locally with the above checklist and the relevant tests pass.
+- After each push, re-read the latest review summary instead of assuming resolved threads mean the PR is review-clean.
+- If an automated reviewer keeps surfacing adjacent issues, stop the line-by-line patching pattern and do a module-level sweep before the next push.
+
 ## Starmask-MCP Specific Rules
 
 - `Starmask` extension is the only signing authority.

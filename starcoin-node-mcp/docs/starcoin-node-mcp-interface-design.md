@@ -390,8 +390,8 @@ Execute a contract call without changing chain state.
 
 ##### Output
 
-- `return_values`
-- `decoded_return_values`
+- `return_values`: optional raw return values when the underlying RPC exposes a stable raw representation
+- `decoded_return_values`: decoded JSON return values; this is the canonical output in the first Rust implementation
 
 ### 6.6 Transaction Preparation
 
@@ -522,8 +522,11 @@ Submit an already signed transaction.
 ##### Input
 
 - `signed_txn_bcs_hex`
+- `prepared_chain_context`: the `chain_context` returned by the preparation result that produced the signed transaction
 - `blocking`: boolean, default `false`
 - `timeout_seconds`: optional when `blocking = true`
+
+When `allow_submit_without_prior_simulation = false`, the implementation should require a local chain-side preparation or simulation record for the raw transaction and fail closed otherwise.
 
 ##### Output
 
@@ -533,6 +536,7 @@ Submit an already signed transaction.
   - `unknown`
   - `rejected`
 - `submitted`
+- `prepared_simulation_status`: optional, echoed from the node-side local preparation or simulation record when present
 - `error_code`: optional
 - `effective_timeout_seconds`: optional
 - `next_action`
@@ -690,6 +694,7 @@ Summary:
 4. The returned transaction summary should be descriptive but not treated as the security source of truth by the wallet.
 5. `submit_signed_transaction` should derive `txn_hash` locally and must not allow blind re-submission when the prior submission outcome is uncertain.
 6. List-style queries, watch loops, and package-publish payloads should be bounded by local policy and fail fast when that policy is exceeded.
+7. When prior simulation is required by policy, `submit_signed_transaction` should rely on a local preparation or simulation attestation rather than host-asserted metadata.
 
 ## 12. Relationship to Repository Structure
 

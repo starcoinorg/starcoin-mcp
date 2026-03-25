@@ -101,8 +101,10 @@ The host may require successful simulation before requesting wallet approval.
 
 If the wallet request is approved:
 
-1. read `signed_txn_bcs_hex`
+1. read `signed_txn_bcs_hex` and retain the `chain_context` from the earlier preparation result
 2. call `starcoin-node-mcp.submit_signed_transaction`
+   Pass both `signed_txn_bcs_hex` and the previously prepared `chain_context` so the node-side server can reject chain drift before txpool contact.
+   If node-side policy requires prior simulation, make sure the exact raw transaction had already been prepared or simulated through the same node-side server instance before submission.
 3. if the chain-side call is rejected locally with `rate_limited`, back off and retry the same submission step without changing the signed bytes
 4. if `submission_state = accepted`, optionally call `starcoin-node-mcp.watch_transaction`
 5. if `submission_state = unknown`, reconcile by `txn_hash` through `get_transaction` or `watch_transaction` before any retry
