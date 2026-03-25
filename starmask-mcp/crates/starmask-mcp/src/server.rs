@@ -1,13 +1,15 @@
 use std::borrow::Cow;
 
+use anyhow::Result;
 use rmcp::{
-    ErrorData, ServerHandler,
+    ErrorData, ServerHandler, ServiceExt,
     handler::server::tool::{parse_json_object, schema_for_type},
     model::{
         CallToolRequestParams, CallToolResult, Implementation, ListToolsResult, ServerCapabilities,
         ServerInfo, Tool,
     },
     service::RequestContext,
+    transport::stdio,
 };
 
 use starmask_types::{
@@ -31,6 +33,17 @@ pub struct StarmaskMcpServer<C> {
 impl<C> StarmaskMcpServer<C> {
     pub fn new(daemon_client: C) -> Self {
         Self { daemon_client }
+    }
+}
+
+impl<C> StarmaskMcpServer<C>
+where
+    C: DaemonClient,
+{
+    pub async fn serve_stdio(self) -> Result<()> {
+        let running_service = self.serve(stdio()).await?;
+        let _ = running_service.waiting().await?;
+        Ok(())
     }
 }
 

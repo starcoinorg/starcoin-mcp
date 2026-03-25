@@ -2,27 +2,16 @@
 
 use std::{env, path::PathBuf};
 
-use anyhow::Result;
-use rmcp::{ServiceExt, transport::stdio};
-
 mod daemon_client;
 mod dto;
 mod error_mapping;
+mod runtime;
 mod server;
 
 pub use daemon_client::{DaemonClient, LocalDaemonClient};
 pub use error_mapping::AdapterError;
+pub use runtime::serve_stdio;
 pub use server::StarmaskMcpServer;
-
-pub async fn serve_stdio<C>(daemon_client: C) -> Result<()>
-where
-    C: DaemonClient,
-{
-    let service = StarmaskMcpServer::new(daemon_client);
-    let running_service = service.serve(stdio()).await?;
-    let _ = running_service.waiting().await?;
-    Ok(())
-}
 
 pub fn default_socket_path() -> PathBuf {
     let home = env::var_os("HOME")

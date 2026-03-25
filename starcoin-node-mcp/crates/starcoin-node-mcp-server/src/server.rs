@@ -1,13 +1,15 @@
 use std::borrow::Cow;
 
+use anyhow::Result;
 use rmcp::{
-    ErrorData, ServerHandler,
+    ErrorData, ServerHandler, ServiceExt,
     handler::server::tool::{parse_json_object, schema_for_type},
     model::{
         CallToolRequestParams, CallToolResult, Implementation, ListToolsResult, ServerCapabilities,
         ServerInfo, Tool,
     },
     service::RequestContext,
+    transport::stdio,
 };
 use serde_json::Value;
 use starcoin_node_mcp_core::AppContext;
@@ -15,7 +17,7 @@ use starcoin_node_mcp_types::{
     CallViewFunctionInput, EmptyParams, GetAccountOverviewInput, GetBlockInput, GetEventsInput,
     GetTransactionInput, ListBlocksInput, ListModulesInput, ListResourcesInput, Mode,
     PrepareContractCallInput, PreparePublishPackageInput, PrepareTransferInput,
-    ResolveFunctionAbiInput, ResolveModuleAbiInput, ResolveStructAbiInput,
+    ResolveFunctionAbiInput, ResolveModuleAbiInput, ResolveStructAbiInput, RuntimeConfig,
     SimulateRawTransactionInput, SubmitSignedTransactionInput, WatchTransactionInput,
 };
 
@@ -28,6 +30,17 @@ pub struct StarcoinNodeMcpServer {
 impl StarcoinNodeMcpServer {
     pub fn new(app: AppContext) -> Self {
         Self { app }
+    }
+
+    pub async fn bootstrap(config: RuntimeConfig) -> Result<Self> {
+        let app = AppContext::bootstrap(config).await?;
+        Ok(Self::new(app))
+    }
+
+    pub async fn serve_stdio(self) -> Result<()> {
+        let running_service = self.serve(stdio()).await?;
+        let _ = running_service.waiting().await?;
+        Ok(())
     }
 
     pub fn advertised_tools(&self) -> Vec<Tool> {
