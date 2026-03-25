@@ -390,8 +390,8 @@ Execute a contract call without changing chain state.
 
 ##### Output
 
-- `return_values`
-- `decoded_return_values`
+- `return_values`: optional raw return values when the underlying RPC exposes a stable raw representation
+- `decoded_return_values`: decoded JSON return values; this is the canonical output in the first Rust implementation
 
 ### 6.6 Transaction Preparation
 

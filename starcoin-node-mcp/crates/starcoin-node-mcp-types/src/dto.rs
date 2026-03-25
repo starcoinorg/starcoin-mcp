@@ -336,7 +336,8 @@ pub struct ResolveAbiOutput {
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 pub struct CallViewFunctionOutput {
-    pub return_values: Vec<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub return_values: Option<Vec<Value>>,
     pub decoded_return_values: Vec<Value>,
 }
 

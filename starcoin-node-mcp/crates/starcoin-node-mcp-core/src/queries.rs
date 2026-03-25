@@ -389,7 +389,7 @@ impl AppContext {
             .call_view_function(&input.function_id, &input.type_args, &input.args)
             .await?;
         Ok(CallViewFunctionOutput {
-            return_values: decoded_return_values.clone(),
+            return_values: None,
             decoded_return_values,
         })
     }

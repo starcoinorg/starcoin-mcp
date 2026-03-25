@@ -206,6 +206,129 @@ async fn call_tool_json_serializes_pending_transaction_without_events() {
     assert_eq!(result["events"], json!([]));
 }
 
+#[tokio::test]
+async fn call_view_function_omits_raw_return_values_when_endpoint_only_returns_decoded_values() {
+    let server = MockServer::start();
+    mock_json_rpc_result(&server, "node.status", json!(true));
+    mock_json_rpc_result(&server, "chain.info", sample_chain_info());
+    mock_json_rpc_result(&server, "node.info", sample_node_info());
+    mock_json_rpc_result(&server, "chain.get_block_by_number", Value::Null);
+    mock_json_rpc_error(
+        &server,
+        "chain.get_blocks_by_number",
+        -32601,
+        "method not found",
+    );
+    mock_json_rpc_result(&server, "chain.get_transaction2", Value::Null);
+    mock_json_rpc_error(
+        &server,
+        "chain.get_transaction_info2",
+        -32601,
+        "method not found",
+    );
+    mock_json_rpc_error(
+        &server,
+        "chain.get_transaction_info",
+        -32601,
+        "method not found",
+    );
+    mock_json_rpc_error(
+        &server,
+        "chain.get_events_by_txn_hash2",
+        -32601,
+        "method not found",
+    );
+    mock_json_rpc_error(
+        &server,
+        "chain.get_events_by_txn_hash",
+        -32601,
+        "method not found",
+    );
+    mock_json_rpc_error(&server, "chain.get_events", -32601, "method not found");
+    mock_json_rpc_error(
+        &server,
+        "state.get_account_state",
+        -32601,
+        "method not found",
+    );
+    mock_json_rpc_error(&server, "state.list_resource", -32601, "method not found");
+    mock_json_rpc_error(&server, "state.list_code", -32601, "method not found");
+    mock_json_rpc_error(
+        &server,
+        "contract2.resolve_function",
+        -32601,
+        "method not found",
+    );
+    mock_json_rpc_error(
+        &server,
+        "contract.resolve_function",
+        -32601,
+        "method not found",
+    );
+    mock_json_rpc_error(
+        &server,
+        "contract2.resolve_module",
+        -32601,
+        "method not found",
+    );
+    mock_json_rpc_error(
+        &server,
+        "contract.resolve_module",
+        -32601,
+        "method not found",
+    );
+    mock_json_rpc_error(
+        &server,
+        "contract2.resolve_struct",
+        -32601,
+        "method not found",
+    );
+    mock_json_rpc_error(
+        &server,
+        "contract.resolve_struct",
+        -32601,
+        "method not found",
+    );
+    mock_json_rpc_result(
+        &server,
+        "contract2.call_v2",
+        json!([{
+            "type": "u64",
+            "value": "7",
+        }]),
+    );
+
+    let app = AppContext::bootstrap(runtime_config(&server))
+        .await
+        .expect("app should bootstrap");
+    let mcp = StarcoinNodeMcpServer::new(app);
+    let result = mcp
+        .call_tool_json(
+            "call_view_function",
+            Some(
+                json!({
+                    "function_id": "0x1::Account::balance",
+                    "type_args": [],
+                    "args": [],
+                })
+                .as_object()
+                .expect("tool args should be object")
+                .clone(),
+            ),
+        )
+        .await
+        .expect("tool call should succeed");
+
+    assert!(result.get("return_values").is_none());
+    assert_eq!(
+        result["decoded_return_values"],
+        json!([{
+            "type": "u64",
+            "value": "7",
+        }])
+    );
+}
+
 fn runtime_config(server: &MockServer) -> RuntimeConfig {
     RuntimeConfig {
         rpc_endpoint_url: Url::parse(&server.url("/")).expect("mock url should parse"),
