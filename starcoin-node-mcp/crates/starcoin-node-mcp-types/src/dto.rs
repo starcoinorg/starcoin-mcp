@@ -382,6 +382,8 @@ pub struct SubmitSignedTransactionOutput {
     pub submission_state: SubmissionState,
     pub submitted: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub prepared_simulation_status: Option<SimulationStatus>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub error_code: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub effective_timeout_seconds: Option<u64>,

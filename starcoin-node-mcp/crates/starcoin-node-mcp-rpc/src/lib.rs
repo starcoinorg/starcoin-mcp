@@ -2,22 +2,39 @@
 
 use std::{
     collections::HashMap,
-    sync::atomic::{AtomicU64, Ordering},
+    net::{SocketAddr, ToSocketAddrs},
+    sync::{
+        Arc,
+        atomic::{AtomicU64, Ordering},
+    },
     time::{Duration, Instant},
 };
 
-use anyhow::Context;
+use anyhow::{Context, anyhow};
+use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64_STANDARD};
 use reqwest::{
     Client,
     header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue},
 };
+use rustls::{
+    ClientConfig, DEFAULT_VERSIONS, DigitallySignedStruct, Error as TlsError, RootCertStore,
+    SignatureScheme,
+    client::{
+        WebPkiServerVerifier,
+        danger::{HandshakeSignatureValid, ServerCertVerified, ServerCertVerifier},
+    },
+    crypto::WebPkiSupportedAlgorithms,
+    pki_types::{CertificateDer, ServerName, UnixTime},
+};
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use serde_json::{Value, json};
+use sha2::{Digest, Sha256};
 use starcoin_node_mcp_types::{
     EffectiveProbe, RuntimeConfig, SharedError, SharedErrorCode, VmProfile,
 };
 use tokio::sync::RwLock;
 use url::Url;
+use x509_parser::{certificate::X509Certificate, prelude::FromDer};
 
 #[derive(Debug)]
 pub struct NodeRpcClient {
@@ -44,15 +61,10 @@ impl NodeRpcClient {
                 .with_context(|| format!("invalid rpc header value for {name}"))?;
             default_headers.insert(name, value);
         }
-        let http = Client::builder()
-            .connect_timeout(config.connect_timeout)
-            .timeout(config.request_timeout)
-            .default_headers(default_headers)
-            .build()
-            .context("failed to build rpc http client")?;
+        let (http, endpoint) = build_http_client(config, default_headers)?;
 
         Ok(Self {
-            endpoint: config.rpc_endpoint_url.clone(),
+            endpoint,
             http,
             next_id: AtomicU64::new(1),
             vm_profile: config.vm_profile,
@@ -70,9 +82,14 @@ impl NodeRpcClient {
         let _node_info = self.node_info().await?;
 
         let supports_block_lookup = self
-            .method_exists("chain.get_block_by_number", json!([0u64, Value::Null]))
+            .probe_method_supported("chain.get_block_by_number", json!([0u64, Value::Null]))
             .await?;
+        let supports_block_listing = self.supports_block_listing().await?;
         let supports_transaction_lookup = self.supports_transaction_lookup().await?;
+        let supports_transaction_info_lookup = self.supports_transaction_info_lookup().await?;
+        let supports_transaction_events_by_hash =
+            self.supports_transaction_events_by_hash().await?;
+        let supports_account_state_lookup = self.supports_account_state_lookup().await?;
         let supports_events_query = self.supports_events_query().await?;
         let supports_resource_listing = self.supports_resource_listing().await?;
         let supports_module_listing = self.supports_module_listing().await?;
@@ -93,7 +110,11 @@ impl NodeRpcClient {
             supports_node_info: true,
             supports_chain_info: true,
             supports_block_lookup,
+            supports_block_listing,
             supports_transaction_lookup,
+            supports_transaction_info_lookup,
+            supports_transaction_events_by_hash,
+            supports_account_state_lookup,
             supports_events_query,
             supports_resource_listing,
             supports_module_listing,
@@ -389,33 +410,88 @@ impl NodeRpcClient {
                 json!([signed_txn_bcs_hex]),
             )
             .await?;
-        stringify_json(&hash_value).ok_or_else(|| {
-            SharedError::new(
-                SharedErrorCode::RpcUnavailable,
-                "submission RPC returned an invalid transaction hash",
-            )
-        })
+        extract_submission_hash(&hash_value)
     }
 
     pub async fn method_exists(&self, method: &str, params: Value) -> Result<bool, SharedError> {
         match self.call_value(method, params).await {
             Ok(_) => Ok(true),
             Err(error) if error.code == SharedErrorCode::UnsupportedOperation => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn probe_method_supported(
+        &self,
+        method: &str,
+        params: Value,
+    ) -> Result<bool, SharedError> {
+        match self.call_value(method, params).await {
+            Ok(_) => Ok(true),
+            Err(error) if error.code == SharedErrorCode::UnsupportedOperation => Ok(false),
+            Err(error) if error.retryable => Err(error),
             Err(_) => Ok(true),
         }
     }
 
+    async fn supports_block_listing(&self) -> Result<bool, SharedError> {
+        self.probe_method_supported(
+            "chain.get_blocks_by_number",
+            json!([Value::Null, 1u64, {
+                "reverse": false,
+                "decode": true,
+                "raw": false,
+            }]),
+        )
+        .await
+    }
+
     async fn supports_transaction_lookup(&self) -> Result<bool, SharedError> {
         for method in self.transaction_methods("chain.get_transaction2", "chain.get_transaction") {
-            if self.method_exists(method, json!(["0x0000000000000000000000000000000000000000000000000000000000000000", { "decode": true }])).await? {
+            if self
+                .probe_method_supported(
+                    method,
+                    json!(["0x0000000000000000000000000000000000000000000000000000000000000000", { "decode": true }]),
+                )
+                .await?
+            {
                 return Ok(true);
             }
         }
         Ok(false)
     }
 
+    async fn supports_transaction_info_lookup(&self) -> Result<bool, SharedError> {
+        self.supports_any_method(
+            &self.transaction_methods("chain.get_transaction_info2", "chain.get_transaction_info"),
+            json!(["0x0000000000000000000000000000000000000000000000000000000000000000"]),
+        )
+        .await
+    }
+
+    async fn supports_transaction_events_by_hash(&self) -> Result<bool, SharedError> {
+        self.supports_any_method(
+            &self.transaction_methods(
+                "chain.get_events_by_txn_hash2",
+                "chain.get_events_by_txn_hash",
+            ),
+            json!(["0x0000000000000000000000000000000000000000000000000000000000000000", {
+                "decode": true,
+            }]),
+        )
+        .await
+    }
+
+    async fn supports_account_state_lookup(&self) -> Result<bool, SharedError> {
+        self.probe_method_supported(
+            "state.get_account_state",
+            json!(["0x00000000000000000000000000000000"]),
+        )
+        .await
+    }
+
     async fn supports_events_query(&self) -> Result<bool, SharedError> {
-        self.method_exists(
+        self.probe_method_supported(
             "chain.get_events",
             json!([{}, { "limit": 1u64, "decode": true }]),
         )
@@ -423,7 +499,7 @@ impl NodeRpcClient {
     }
 
     async fn supports_resource_listing(&self) -> Result<bool, SharedError> {
-        self.method_exists(
+        self.probe_method_supported(
             "state.list_resource",
             json!(["0x00000000000000000000000000000000", {
                 "decode": true,
@@ -435,7 +511,7 @@ impl NodeRpcClient {
     }
 
     async fn supports_module_listing(&self) -> Result<bool, SharedError> {
-        self.method_exists(
+        self.probe_method_supported(
             "state.list_code",
             json!(["0x00000000000000000000000000000000", {
                 "resolve": true
@@ -480,31 +556,36 @@ impl NodeRpcClient {
     }
 
     async fn supports_submission(&self) -> Result<bool, SharedError> {
-        let gas_price = self.method_exists("txpool.gas_price", json!([])).await?;
+        let gas_price = self
+            .probe_method_supported("txpool.gas_price", json!([]))
+            .await?;
         let sequence = self
-            .method_exists(
+            .probe_method_supported(
                 "txpool.next_sequence_number2",
                 json!(["0x00000000000000000000000000000000"]),
             )
             .await?
             || self
-                .method_exists(
+                .probe_method_supported(
                     "txpool.next_sequence_number",
                     json!(["0x00000000000000000000000000000000"]),
                 )
                 .await?;
         let submit = self
-            .method_exists("txpool.submit_hex_transaction2", json!(["0x00"]))
+            .probe_method_supported("txpool.submit_hex_transaction2", json!([]))
             .await?
             || self
-                .method_exists("txpool.submit_hex_transaction", json!(["0x00"]))
+                .probe_method_supported("txpool.submit_hex_transaction", json!([]))
                 .await?;
         Ok(gas_price && sequence && submit)
     }
 
     async fn supports_raw_dry_run(&self) -> Result<bool, SharedError> {
         for method in self.transaction_methods("contract2.dry_run_raw", "contract.dry_run_raw") {
-            if self.method_exists(method, json!(["0x00", "0x00"])).await? {
+            if self
+                .probe_method_supported(method, json!(["0x00", "0x00"]))
+                .await?
+            {
                 return Ok(true);
             }
         }
@@ -543,7 +624,7 @@ impl NodeRpcClient {
         params: Value,
     ) -> Result<bool, SharedError> {
         for method in methods {
-            if self.method_exists(method, params.clone()).await? {
+            if self.probe_method_supported(method, params.clone()).await? {
                 return Ok(true);
             }
         }
@@ -667,7 +748,7 @@ impl NodeRpcClient {
             .with_details(json!({ "body": body })));
         }
 
-        let envelope: RpcEnvelope<T> = serde_json::from_str(&body).map_err(|error| {
+        let envelope: RpcEnvelope = serde_json::from_str(&body).map_err(|error| {
             SharedError::new(
                 SharedErrorCode::RpcUnavailable,
                 format!("invalid rpc response envelope: {error}"),
@@ -675,9 +756,15 @@ impl NodeRpcClient {
             .with_details(json!({ "body": body }))
         })?;
 
-        match (envelope.result, envelope.error) {
-            (Some(result), None) => Ok(result),
-            (None, Some(error)) => {
+        match envelope.error {
+            None => serde_json::from_value(envelope.result).map_err(|error| {
+                SharedError::new(
+                    SharedErrorCode::RpcUnavailable,
+                    format!("invalid rpc result payload: {error}"),
+                )
+                .with_details(json!({ "body": body, "method": method }))
+            }),
+            Some(error) => {
                 if error.code == -32601 {
                     return Err(SharedError::new(
                         SharedErrorCode::UnsupportedOperation,
@@ -702,12 +789,214 @@ impl NodeRpcClient {
                     "method": method,
                 })))
             }
-            _ => Err(SharedError::new(
-                SharedErrorCode::RpcUnavailable,
-                format!("rpc method {method} returned neither result nor error"),
-            )),
         }
     }
+}
+
+fn build_http_client(
+    config: &RuntimeConfig,
+    default_headers: HeaderMap,
+) -> anyhow::Result<(Client, Url)> {
+    let mut endpoint = config.rpc_endpoint_url.clone();
+    let mut builder = Client::builder()
+        .connect_timeout(config.connect_timeout)
+        .timeout(config.request_timeout)
+        .default_headers(default_headers);
+
+    let tls_server_name = config
+        .tls_server_name
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+
+    if (tls_server_name.is_some() || !config.tls_pinned_spki_sha256.is_empty())
+        && endpoint.scheme() != "https"
+    {
+        return Err(anyhow!(
+            "tls_server_name and tls_pinned_spki_sha256 require an https rpc endpoint"
+        ));
+    }
+
+    if endpoint.scheme() == "https" {
+        if let Some(server_name) = tls_server_name {
+            let original_host = endpoint
+                .host_str()
+                .context("rpc endpoint is missing host")?;
+            if !original_host.eq_ignore_ascii_case(server_name) {
+                let addrs = resolve_endpoint_addrs(&endpoint)?;
+                endpoint
+                    .set_host(Some(server_name))
+                    .map_err(|_| anyhow!("invalid tls_server_name {server_name}"))?;
+                builder = builder.resolve_to_addrs(server_name, &addrs);
+            }
+        }
+
+        if tls_server_name.is_some()
+            || !config.tls_pinned_spki_sha256.is_empty()
+            || config.allow_insecure_remote_transport
+        {
+            builder = builder.use_preconfigured_tls(build_rustls_client_config(config)?);
+        }
+    }
+
+    let http = builder.build().context("failed to build rpc http client")?;
+    Ok((http, endpoint))
+}
+
+fn build_rustls_client_config(config: &RuntimeConfig) -> anyhow::Result<ClientConfig> {
+    let provider = Arc::new(rustls::crypto::aws_lc_rs::default_provider());
+    let supported_algorithms = provider.signature_verification_algorithms;
+    let pins = parse_spki_pins(&config.tls_pinned_spki_sha256)?;
+    let base_verifier = if config.allow_insecure_remote_transport {
+        None
+    } else {
+        let roots = RootCertStore {
+            roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+        };
+        let verifier: Arc<dyn ServerCertVerifier> =
+            WebPkiServerVerifier::builder_with_provider(Arc::new(roots), provider.clone())
+                .build()
+                .context("failed to build TLS verifier")?;
+        Some(verifier)
+    };
+    let verifier = Arc::new(ConfiguredServerCertVerifier {
+        base_verifier,
+        pins,
+        supported_algorithms,
+    });
+    let tls = ClientConfig::builder_with_provider(provider)
+        .with_protocol_versions(DEFAULT_VERSIONS)
+        .context("invalid TLS protocol version configuration")?
+        .dangerous()
+        .with_custom_certificate_verifier(verifier)
+        .with_no_client_auth();
+    Ok(tls)
+}
+
+fn parse_spki_pins(pins: &[String]) -> anyhow::Result<Vec<[u8; 32]>> {
+    pins.iter().map(|pin| parse_spki_pin(pin)).collect()
+}
+
+fn parse_spki_pin(pin: &str) -> anyhow::Result<[u8; 32]> {
+    let normalized = pin
+        .trim()
+        .strip_prefix("sha256/")
+        .unwrap_or(pin.trim())
+        .trim_start_matches("0x");
+
+    if let Ok(bytes) = hex::decode(normalized) {
+        if bytes.len() == 32 {
+            return Ok(bytes
+                .try_into()
+                .expect("32-byte hex-encoded SPKI hash should fit"));
+        }
+    }
+
+    let bytes = BASE64_STANDARD
+        .decode(normalized)
+        .with_context(|| format!("invalid tls_pinned_spki_sha256 value: {pin}"))?;
+    bytes
+        .try_into()
+        .map_err(|_| anyhow!("tls_pinned_spki_sha256 entries must decode to 32 bytes"))
+}
+
+fn resolve_endpoint_addrs(endpoint: &Url) -> anyhow::Result<Vec<SocketAddr>> {
+    let host = endpoint
+        .host_str()
+        .context("rpc endpoint is missing host")?;
+    let port = endpoint
+        .port_or_known_default()
+        .context("rpc endpoint is missing a usable port")?;
+    let addrs = (host, port)
+        .to_socket_addrs()
+        .with_context(|| format!("failed to resolve rpc endpoint host {host}"))?
+        .collect::<Vec<_>>();
+    if addrs.is_empty() {
+        return Err(anyhow!(
+            "resolved no socket addresses for rpc endpoint host {host}"
+        ));
+    }
+    Ok(addrs)
+}
+
+fn extract_submission_hash(hash_value: &Value) -> Result<String, SharedError> {
+    hash_value.as_str().map(str::to_owned).ok_or_else(|| {
+        SharedError::new(
+            SharedErrorCode::RpcUnavailable,
+            "submission RPC returned an invalid transaction hash",
+        )
+    })
+}
+
+#[derive(Debug)]
+struct ConfiguredServerCertVerifier {
+    base_verifier: Option<Arc<dyn ServerCertVerifier>>,
+    pins: Vec<[u8; 32]>,
+    supported_algorithms: WebPkiSupportedAlgorithms,
+}
+
+impl ServerCertVerifier for ConfiguredServerCertVerifier {
+    fn verify_server_cert(
+        &self,
+        end_entity: &CertificateDer<'_>,
+        intermediates: &[CertificateDer<'_>],
+        server_name: &ServerName<'_>,
+        ocsp_response: &[u8],
+        now: UnixTime,
+    ) -> Result<ServerCertVerified, TlsError> {
+        if let Some(base_verifier) = &self.base_verifier {
+            base_verifier.verify_server_cert(
+                end_entity,
+                intermediates,
+                server_name,
+                ocsp_response,
+                now,
+            )?;
+        }
+
+        if !self.pins.is_empty() {
+            let actual_pin = extract_spki_pin_from_certificate(end_entity)?;
+            if !self.pins.iter().any(|expected| *expected == actual_pin) {
+                return Err(TlsError::General(
+                    "server certificate SPKI pin mismatch".to_owned(),
+                ));
+            }
+        }
+
+        Ok(ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, TlsError> {
+        rustls::crypto::verify_tls12_signature(message, cert, dss, &self.supported_algorithms)
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<HandshakeSignatureValid, TlsError> {
+        rustls::crypto::verify_tls13_signature(message, cert, dss, &self.supported_algorithms)
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
+        self.supported_algorithms.supported_schemes()
+    }
+}
+
+fn extract_spki_pin_from_certificate(cert: &CertificateDer<'_>) -> Result<[u8; 32], TlsError> {
+    let (_, certificate) = X509Certificate::from_der(cert.as_ref()).map_err(|_| {
+        TlsError::General("failed to parse server certificate for SPKI pinning".to_owned())
+    })?;
+    let digest = Sha256::digest(certificate.public_key().raw);
+    let mut fingerprint = [0u8; 32];
+    fingerprint.copy_from_slice(&digest);
+    Ok(fingerprint)
 }
 
 #[derive(Debug)]
@@ -744,6 +1033,9 @@ impl TimedValueCache {
     }
 
     async fn insert(&self, key: String, value: Value) {
+        if self.capacity == 0 {
+            return;
+        }
         let mut entries = self.entries.write().await;
         if entries.len() >= self.capacity {
             if let Some(first_key) = entries.keys().next().cloned() {
@@ -769,12 +1061,13 @@ struct RpcRequest<'a> {
 }
 
 #[derive(Debug, Deserialize)]
-struct RpcEnvelope<T> {
+struct RpcEnvelope {
     #[allow(dead_code)]
     jsonrpc: Option<String>,
     #[allow(dead_code)]
     id: Option<u64>,
-    result: Option<T>,
+    #[serde(default)]
+    result: Value,
     error: Option<RpcFailure>,
 }
 
@@ -811,20 +1104,12 @@ fn parse_u64(value: &Value) -> Option<u64> {
     }
 }
 
-fn stringify_json(value: &Value) -> Option<String> {
-    match value {
-        Value::String(string) => Some(string.clone()),
-        Value::Object(_) | Value::Array(_) => Some(value.to_string()),
-        _ => None,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::NodeRpcClient;
     use httpmock::{Mock, prelude::*};
     use serde_json::{Value, json};
-    use starcoin_node_mcp_types::{Mode, RuntimeConfig, VmProfile};
+    use starcoin_node_mcp_types::{Mode, RuntimeConfig, SharedErrorCode, VmProfile};
     use std::{path::PathBuf, time::Duration};
     use url::Url;
 
@@ -837,11 +1122,47 @@ mod tests {
         mock_json_rpc_result(&server, "chain.get_block_by_number", Value::Null);
         mock_json_rpc_error(
             &server,
+            "chain.get_blocks_by_number",
+            -32601,
+            "method not found",
+        );
+        mock_json_rpc_error(
+            &server,
             "chain.get_transaction2",
             -32601,
             "method not found",
         );
         mock_json_rpc_result(&server, "chain.get_transaction", Value::Null);
+        mock_json_rpc_error(
+            &server,
+            "chain.get_transaction_info2",
+            -32601,
+            "method not found",
+        );
+        mock_json_rpc_error(
+            &server,
+            "chain.get_transaction_info",
+            -32601,
+            "method not found",
+        );
+        mock_json_rpc_error(
+            &server,
+            "chain.get_events_by_txn_hash2",
+            -32601,
+            "method not found",
+        );
+        mock_json_rpc_error(
+            &server,
+            "chain.get_events_by_txn_hash",
+            -32601,
+            "method not found",
+        );
+        mock_json_rpc_error(
+            &server,
+            "state.get_account_state",
+            -32601,
+            "method not found",
+        );
         mock_json_rpc_error(&server, "chain.get_events", -32601, "method not found");
         mock_json_rpc_result(&server, "state.list_resource", json!({ "resources": {} }));
         mock_json_rpc_error(&server, "state.list_code", -32601, "method not found");
@@ -878,7 +1199,7 @@ mod tests {
             "contract.resolve_struct",
             json!({ "name": "Account" }),
         );
-        mock_json_rpc_result(&server, "contract2.call_v2", json!([]));
+        mock_json_rpc_result(&server, "contract.call_v2", json!([]));
 
         let client = NodeRpcClient::new(&sample_runtime_config(
             &server,
@@ -889,7 +1210,11 @@ mod tests {
         let probe = client.probe(false).await.expect("probe should succeed");
 
         assert!(probe.supports_block_lookup);
+        assert!(!probe.supports_block_listing);
         assert!(probe.supports_transaction_lookup);
+        assert!(!probe.supports_transaction_info_lookup);
+        assert!(!probe.supports_transaction_events_by_hash);
+        assert!(!probe.supports_account_state_lookup);
         assert!(!probe.supports_events_query);
         assert!(probe.supports_resource_listing);
         assert!(!probe.supports_module_listing);
@@ -934,7 +1259,27 @@ mod tests {
         mock_json_rpc_result(&server, "chain.info", sample_chain_info());
         mock_json_rpc_result(&server, "node.info", sample_node_info());
         mock_json_rpc_result(&server, "chain.get_block_by_number", Value::Null);
+        mock_json_rpc_result(&server, "chain.get_blocks_by_number", json!([]));
         mock_json_rpc_result(&server, "chain.get_transaction2", Value::Null);
+        mock_json_rpc_result(&server, "chain.get_transaction_info2", Value::Null);
+        mock_json_rpc_error(
+            &server,
+            "chain.get_events_by_txn_hash2",
+            -32601,
+            "method not found",
+        );
+        mock_json_rpc_error(
+            &server,
+            "chain.get_events_by_txn_hash",
+            -32601,
+            "method not found",
+        );
+        mock_json_rpc_error(
+            &server,
+            "state.get_account_state",
+            -32601,
+            "method not found",
+        );
         mock_json_rpc_result(&server, "chain.get_events", json!([]));
         mock_json_rpc_result(&server, "state.list_resource", json!({ "resources": {} }));
         mock_json_rpc_result(&server, "state.list_code", json!({ "codes": {} }));
@@ -956,11 +1301,25 @@ mod tests {
         mock_json_rpc_result(&server, "contract2.call_v2", json!([]));
         mock_json_rpc_result(&server, "txpool.gas_price", json!("1"));
         mock_json_rpc_result(&server, "txpool.next_sequence_number2", json!("0"));
-        mock_json_rpc_result(
-            &server,
-            "txpool.submit_hex_transaction2",
-            json!("0xdeadbeef"),
-        );
+        let submit_probe = server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("\"method\":\"txpool.submit_hex_transaction2\"")
+                .body_contains("\"params\":[]");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "error": {
+                            "code": -32602,
+                            "message": "invalid params",
+                        }
+                    })
+                    .to_string(),
+                );
+        });
         mock_json_rpc_result(
             &server,
             "contract2.dry_run_raw",
@@ -978,8 +1337,85 @@ mod tests {
             .await
             .expect("transaction probe should succeed");
 
+        assert!(probe.supports_block_listing);
+        assert!(probe.supports_transaction_info_lookup);
+        assert!(!probe.supports_transaction_events_by_hash);
+        assert!(!probe.supports_account_state_lookup);
         assert!(probe.supports_transaction_submission);
         assert!(probe.supports_raw_dry_run);
+        assert_eq!(submit_probe.hits(), 1);
+    }
+
+    #[tokio::test]
+    async fn method_exists_propagates_transport_errors() {
+        let server = MockServer::start();
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("\"method\":\"chain.info\"");
+            then.status(500).body("boom");
+        });
+
+        let client = NodeRpcClient::new(&sample_runtime_config(
+            &server,
+            Mode::ReadOnly,
+            VmProfile::Auto,
+        ))
+        .expect("rpc client should build");
+        let error = client
+            .method_exists("chain.info", json!([]))
+            .await
+            .expect_err("HTTP transport failures should propagate");
+
+        assert_eq!(error.code, SharedErrorCode::RpcUnavailable);
+        assert!(error.retryable);
+    }
+
+    #[tokio::test]
+    async fn submit_rejects_non_string_hash_payloads() {
+        let server = MockServer::start();
+        mock_json_rpc_result(
+            &server,
+            "txpool.submit_hex_transaction2",
+            json!({ "hash": "0xabc" }),
+        );
+
+        let client = NodeRpcClient::new(&sample_runtime_config(
+            &server,
+            Mode::Transaction,
+            VmProfile::Vm2Only,
+        ))
+        .expect("rpc client should build");
+        let error = client
+            .submit_signed_transaction("0x01")
+            .await
+            .expect_err("non-string submit results should be rejected");
+
+        assert_eq!(error.code, SharedErrorCode::RpcUnavailable);
+    }
+
+    #[tokio::test]
+    async fn abi_cache_respects_zero_capacity() {
+        let server = MockServer::start();
+        let abi = mock_json_rpc_result(
+            &server,
+            "contract2.resolve_function",
+            json!({ "name": "balance" }),
+        );
+        let mut config = sample_runtime_config(&server, Mode::ReadOnly, VmProfile::Vm2Only);
+        config.module_cache_max_entries = 0;
+
+        let client = NodeRpcClient::new(&config).expect("rpc client should build");
+        client
+            .resolve_function_abi("0x1::Account::balance")
+            .await
+            .expect("first ABI lookup should succeed");
+        client
+            .resolve_function_abi("0x1::Account::balance")
+            .await
+            .expect("second ABI lookup should also succeed");
+
+        assert_eq!(abi.hits(), 2);
     }
 
     fn mock_json_rpc_result<'a>(server: &'a MockServer, method: &str, result: Value) -> Mock<'a> {

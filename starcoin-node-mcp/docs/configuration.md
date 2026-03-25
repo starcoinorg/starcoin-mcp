@@ -163,7 +163,11 @@ Recommended defaults:
 - `max_head_lag_seconds = 60`
 - `allow_submit_without_prior_simulation = true`
 
-The first release allows submission without prior simulation because a signed transaction may arrive from an external wallet flow, but the result should make it clear whether simulation had been performed earlier.
+The first release allows submission without prior simulation because a signed transaction may arrive from an external wallet flow.
+
+If `allow_submit_without_prior_simulation = false`, the Rust implementation should fail closed unless the same node-side process already recorded a local preparation or `simulate_raw_transaction` attestation for the raw transaction with `simulation_status = performed`.
+
+`submit_signed_transaction` should surface `prepared_simulation_status` when such a local record exists so the host can tell whether the chain-side server observed a prior simulation.
 
 ## Caching Settings
 

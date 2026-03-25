@@ -405,13 +405,6 @@ impl RuntimeConfig {
             max_expiration_ttl,
             watch_poll_interval,
         )?;
-        if !tls_server_name.as_deref().unwrap_or_default().is_empty() {
-            bail!("tls_server_name is not yet supported by the HTTP client implementation");
-        }
-        if !tls_pinned_spki_sha256.is_empty() {
-            bail!("tls_pinned_spki_sha256 is not yet supported by the HTTP client implementation");
-        }
-
         Ok(Self {
             rpc_endpoint_url,
             mode,

@@ -53,6 +53,7 @@ pub struct AppContext {
     expensive_permits: Arc<Semaphore>,
     startup_probe: EffectiveProbe,
     transaction_probe: Arc<RwLock<Option<CachedProbe>>>,
+    prepared_transactions: Arc<RwLock<HashMap<String, PreparedTransactionRecord>>>,
     unresolved_submissions: Arc<RwLock<HashMap<String, UnresolvedSubmission>>>,
 }
 
@@ -60,6 +61,13 @@ pub struct AppContext {
 struct CachedProbe {
     probe: EffectiveProbe,
     observed_at: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct PreparedTransactionRecord {
+    simulation_status: SimulationStatus,
+    chain_context: ChainContext,
+    recorded_at: Instant,
 }
 
 #[derive(Debug, Clone)]
@@ -121,6 +129,7 @@ impl AppContext {
                     observed_at: Instant::now(),
                 },
             ))),
+            prepared_transactions: Arc::new(RwLock::new(HashMap::new())),
             unresolved_submissions: Arc::new(RwLock::new(HashMap::new())),
             config,
             rpc,
@@ -287,12 +296,23 @@ impl AppContext {
         &self,
         input: GetTransactionInput,
     ) -> Result<GetTransactionOutput, SharedError> {
+        ensure_capability(
+            self.startup_probe.supports_transaction_lookup,
+            "transaction lookup is unavailable for this endpoint profile",
+        )?;
         let transaction = self
             .rpc
             .get_transaction(&input.txn_hash, input.decode)
             .await?;
-        let transaction_info = self.rpc.get_transaction_info(&input.txn_hash).await?;
-        let events = if input.include_events {
+        let transaction_info = if self.startup_probe.supports_transaction_info_lookup {
+            self.rpc.get_transaction_info(&input.txn_hash).await?
+        } else {
+            None
+        };
+        let events = if input.include_events
+            && self.startup_probe.supports_transaction_events_by_hash
+            && transaction_info.is_some()
+        {
             self.rpc
                 .get_events_by_txn_hash(&input.txn_hash, input.decode)
                 .await?
@@ -313,6 +333,11 @@ impl AppContext {
         &self,
         input: WatchTransactionInput,
     ) -> Result<WatchTransactionOutput, SharedError> {
+        ensure_capability(
+            self.startup_probe.supports_transaction_lookup
+                && self.startup_probe.supports_transaction_info_lookup,
+            "watch_transaction is unavailable for this endpoint profile",
+        )?;
         let _permit = self.try_watch_permit()?;
         let effective_timeout_seconds = input
             .timeout_seconds
@@ -408,12 +433,18 @@ impl AppContext {
         &self,
         input: GetAccountOverviewInput,
     ) -> Result<GetAccountOverviewOutput, SharedError> {
+        ensure_capability(
+            self.startup_probe.supports_account_state_lookup,
+            "account overview is unavailable for this endpoint profile",
+        )?;
         let state = self.rpc.get_account_state(&input.address).await?;
         let onchain_exists = state.is_some();
         let sequence_number = state
             .as_ref()
             .and_then(|value| extract_optional_u64(value, &["sequence_number"]));
-        let next_sequence_number_hint = self.rpc.next_sequence_number(&input.address).await?;
+        let next_sequence_number_hint = self
+            .load_optional_next_sequence_number_hint(&input.address)
+            .await?;
         let mut resources = None;
         let mut modules = None;
         let mut balances = Vec::new();
@@ -701,10 +732,11 @@ impl AppContext {
         input: SimulateRawTransactionInput,
     ) -> Result<SimulateRawTransactionOutput, SharedError> {
         self.ensure_transaction_capabilities_current().await?;
-        let _snapshot = self.load_transaction_endpoint_snapshot().await?;
+        let snapshot = self.load_transaction_endpoint_snapshot().await?;
+        let raw_txn_bcs_hex = canonical_hex_payload(&input.raw_txn_bcs_hex)?;
         let simulation = self
             .rpc
-            .dry_run_raw(&input.raw_txn_bcs_hex, &input.sender_public_key)
+            .dry_run_raw(&raw_txn_bcs_hex, &input.sender_public_key)
             .await?;
         let normalized = normalize_simulation(&simulation)?;
         if !normalized.executed {
@@ -714,6 +746,12 @@ impl AppContext {
             )
             .with_details(json!({ "simulation": simulation })));
         }
+        self.record_prepared_transaction(
+            raw_txn_bcs_hex,
+            snapshot.chain_context,
+            SimulationStatus::Performed,
+        )
+        .await;
         Ok(SimulateRawTransactionOutput {
             simulation,
             executed: normalized.executed,
@@ -744,14 +782,31 @@ impl AppContext {
             self.config.watch_timeout,
             self.config.max_submit_blocking_timeout,
         );
+        let raw_txn_bcs_hex = encode_hex_bcs(signed_txn.raw_txn())?;
+        let prepared_record = self
+            .load_prepared_transaction_record(&raw_txn_bcs_hex)
+            .await;
+        let prepared_simulation_status = prepared_record
+            .as_ref()
+            .map(|record| record.simulation_status);
         if self.has_unresolved_submission(&txn_hash).await {
             return Ok(submission_unknown_output(
                 txn_hash,
+                prepared_simulation_status,
                 effective_timeout_seconds,
             ));
         }
         self.ensure_transaction_capabilities_current().await?;
         let snapshot = self.load_transaction_endpoint_snapshot().await?;
+        validate_prepared_transaction_record(
+            prepared_record.as_ref(),
+            &input.prepared_chain_context,
+            &snapshot.chain_context,
+        )?;
+        enforce_submit_simulation_policy(
+            self.config.allow_submit_without_prior_simulation,
+            prepared_record.as_ref(),
+        )?;
         validate_signed_transaction_submission(
             &signed_txn,
             &input.prepared_chain_context,
@@ -760,6 +815,7 @@ impl AppContext {
         if signed_txn.expiration_timestamp_secs() <= snapshot.now_seconds {
             return Ok(rejected_submission_output(
                 txn_hash,
+                prepared_simulation_status,
                 "transaction_expired",
                 effective_timeout_seconds,
             ));
@@ -770,6 +826,7 @@ impl AppContext {
         {
             return Ok(rejected_submission_output(
                 txn_hash,
+                prepared_simulation_status,
                 "sequence_number_stale",
                 effective_timeout_seconds,
             ));
@@ -796,6 +853,7 @@ impl AppContext {
                 Ok(accepted_submission_output(
                     txn_hash,
                     true,
+                    prepared_simulation_status,
                     effective_timeout_seconds,
                     watch_result,
                 ))
@@ -809,6 +867,7 @@ impl AppContext {
                 self.record_unresolved_submission(&txn_hash).await;
                 Ok(submission_unknown_output(
                     txn_hash,
+                    prepared_simulation_status,
                     effective_timeout_seconds,
                 ))
             }
@@ -820,6 +879,7 @@ impl AppContext {
             {
                 Ok(rejected_submission_output(
                     txn_hash,
+                    prepared_simulation_status,
                     shared_error_code_name(error.code),
                     effective_timeout_seconds,
                 ))
@@ -894,6 +954,12 @@ impl AppContext {
                 NextAction::GetPublicKeyThenSimulateOrSign,
             ),
         };
+        self.record_prepared_transaction(
+            raw_txn_bcs_hex.clone(),
+            snapshot.chain_context.clone(),
+            simulation_status,
+        )
+        .await;
 
         Ok(PreparationResult {
             transaction_kind,
@@ -1037,6 +1103,61 @@ impl AppContext {
         Ok(signed_txn.sequence_number() < current_sequence)
     }
 
+    async fn load_optional_next_sequence_number_hint(
+        &self,
+        address: &str,
+    ) -> Result<Option<u64>, SharedError> {
+        match self.rpc.next_sequence_number(address).await {
+            Ok(sequence_number) => Ok(sequence_number),
+            Err(error)
+                if matches!(
+                    error.code,
+                    SharedErrorCode::UnsupportedOperation
+                        | SharedErrorCode::NodeUnavailable
+                        | SharedErrorCode::RpcUnavailable
+                ) =>
+            {
+                Ok(None)
+            }
+            Err(error) => Err(error),
+        }
+    }
+
+    async fn load_prepared_transaction_record(
+        &self,
+        raw_txn_bcs_hex: &str,
+    ) -> Option<PreparedTransactionRecord> {
+        self.prune_prepared_transactions().await;
+        self.prepared_transactions
+            .read()
+            .await
+            .get(raw_txn_bcs_hex)
+            .cloned()
+    }
+
+    async fn record_prepared_transaction(
+        &self,
+        raw_txn_bcs_hex: String,
+        chain_context: ChainContext,
+        simulation_status: SimulationStatus,
+    ) {
+        self.prune_prepared_transactions().await;
+        self.prepared_transactions.write().await.insert(
+            raw_txn_bcs_hex,
+            PreparedTransactionRecord {
+                simulation_status,
+                chain_context,
+                recorded_at: Instant::now(),
+            },
+        );
+    }
+
+    async fn prune_prepared_transactions(&self) {
+        let retention = self.config.max_expiration_ttl + self.config.max_watch_timeout;
+        let mut prepared = self.prepared_transactions.write().await;
+        prepared.retain(|_, record| record.recorded_at.elapsed() <= retention);
+    }
+
     async fn has_unresolved_submission(&self, txn_hash: &str) -> bool {
         self.prune_unresolved_submissions().await;
         self.unresolved_submissions
@@ -1124,6 +1245,7 @@ fn effective_submit_timeout_seconds(
 fn accepted_submission_output(
     txn_hash: String,
     submitted: bool,
+    prepared_simulation_status: Option<SimulationStatus>,
     effective_timeout_seconds: Option<u64>,
     watch_result: Option<WatchTransactionOutput>,
 ) -> SubmitSignedTransactionOutput {
@@ -1131,6 +1253,7 @@ fn accepted_submission_output(
         txn_hash,
         submission_state: SubmissionState::Accepted,
         submitted,
+        prepared_simulation_status,
         error_code: None,
         effective_timeout_seconds,
         next_action: SubmissionNextAction::WatchTransaction,
@@ -1140,12 +1263,14 @@ fn accepted_submission_output(
 
 fn submission_unknown_output(
     txn_hash: String,
+    prepared_simulation_status: Option<SimulationStatus>,
     effective_timeout_seconds: Option<u64>,
 ) -> SubmitSignedTransactionOutput {
     SubmitSignedTransactionOutput {
         txn_hash,
         submission_state: SubmissionState::Unknown,
         submitted: false,
+        prepared_simulation_status,
         error_code: Some("submission_unknown".to_owned()),
         effective_timeout_seconds,
         next_action: SubmissionNextAction::ReconcileByTxnHash,
@@ -1155,6 +1280,7 @@ fn submission_unknown_output(
 
 fn rejected_submission_output(
     txn_hash: String,
+    prepared_simulation_status: Option<SimulationStatus>,
     error_code: &'static str,
     effective_timeout_seconds: Option<u64>,
 ) -> SubmitSignedTransactionOutput {
@@ -1162,6 +1288,7 @@ fn rejected_submission_output(
         txn_hash,
         submission_state: SubmissionState::Rejected,
         submitted: false,
+        prepared_simulation_status,
         error_code: Some(error_code.to_owned()),
         effective_timeout_seconds,
         next_action: SubmissionNextAction::ReprepareThenResign,
@@ -1232,6 +1359,62 @@ fn validate_signed_transaction_submission(
         ));
     }
     Ok(())
+}
+
+fn validate_prepared_transaction_record(
+    record: Option<&PreparedTransactionRecord>,
+    prepared_chain_context: &ChainContext,
+    current_chain_context: &ChainContext,
+) -> Result<(), SharedError> {
+    let Some(record) = record else {
+        return Ok(());
+    };
+    if record.chain_context.chain_id != prepared_chain_context.chain_id
+        || canonicalize_network_name(&record.chain_context.network)
+            != canonicalize_network_name(&prepared_chain_context.network)
+        || record.chain_context.genesis_hash != prepared_chain_context.genesis_hash
+    {
+        return Err(SharedError::new(
+            SharedErrorCode::InvalidChainContext,
+            "prepared transaction attestation does not match the supplied chain_context",
+        ));
+    }
+    if record.chain_context.chain_id != current_chain_context.chain_id
+        || canonicalize_network_name(&record.chain_context.network)
+            != canonicalize_network_name(&current_chain_context.network)
+        || record.chain_context.genesis_hash != current_chain_context.genesis_hash
+    {
+        return Err(SharedError::new(
+            SharedErrorCode::InvalidChainContext,
+            "prepared transaction attestation does not match the current endpoint chain identity",
+        ));
+    }
+    Ok(())
+}
+
+fn enforce_submit_simulation_policy(
+    allow_submit_without_prior_simulation: bool,
+    record: Option<&PreparedTransactionRecord>,
+) -> Result<(), SharedError> {
+    if allow_submit_without_prior_simulation {
+        return Ok(());
+    }
+    match record {
+        Some(record) if record.simulation_status == SimulationStatus::Performed => Ok(()),
+        Some(record) => Err(SharedError::new(
+            SharedErrorCode::PermissionDenied,
+            format!(
+                "submit blocked by policy: local preparation record has simulation_status = {}",
+                serde_json::to_string(&record.simulation_status)
+                    .unwrap_or_else(|_| "\"unknown\"".to_owned())
+                    .trim_matches('"')
+            ),
+        )),
+        None => Err(SharedError::new(
+            SharedErrorCode::PermissionDenied,
+            "submit blocked by policy: no local preparation or simulation record exists for this raw transaction",
+        )),
+    }
 }
 
 fn validate_chain_identity(
@@ -1631,6 +1814,10 @@ fn decode_hex_bytes(input: &str) -> Result<Vec<u8>, SharedError> {
     })
 }
 
+fn canonical_hex_payload(input: &str) -> Result<String, SharedError> {
+    decode_hex_bytes(input).map(hex::encode)
+}
+
 fn encode_hex_bcs<T: serde::Serialize>(value: &T) -> Result<String, SharedError> {
     let bytes = bcs_ext::to_bytes(value).map_err(|error| {
         SharedError::new(
@@ -1663,7 +1850,7 @@ mod tests {
     use serde_json::{Value, json};
     use starcoin_node_mcp_rpc::NodeRpcClient;
     use starcoin_node_mcp_types::{
-        ChainContext, EffectiveProbe, Mode, RuntimeConfig, SubmissionState,
+        ChainContext, EffectiveProbe, Mode, RuntimeConfig, SimulationStatus, SubmissionState,
         SubmitSignedTransactionInput, VmProfile,
     };
     use starcoin_vm2_crypto::ed25519::genesis_key_pair;
@@ -1824,14 +2011,28 @@ mod tests {
 
     #[test]
     fn submit_result_helpers_preserve_policy_shape() {
-        let accepted = accepted_submission_output("0x1".to_owned(), true, Some(5), None);
+        let accepted = accepted_submission_output(
+            "0x1".to_owned(),
+            true,
+            Some(SimulationStatus::Performed),
+            Some(5),
+            None,
+        );
         assert_eq!(
             accepted.submission_state,
             starcoin_node_mcp_types::SubmissionState::Accepted
         );
         assert!(accepted.submitted);
+        assert_eq!(
+            accepted.prepared_simulation_status,
+            Some(SimulationStatus::Performed)
+        );
 
-        let unknown = submission_unknown_output("0x2".to_owned(), Some(9));
+        let unknown = submission_unknown_output(
+            "0x2".to_owned(),
+            Some(SimulationStatus::SkippedMissingPublicKey),
+            Some(9),
+        );
         assert_eq!(unknown.error_code.as_deref(), Some("submission_unknown"));
         assert_eq!(
             unknown.next_action,
@@ -1864,11 +2065,41 @@ mod tests {
     #[tokio::test]
     async fn submit_unknown_blocks_blind_resubmission_before_second_txpool_call() {
         let server = MockServer::start();
+        let signed_txn = sample_signed_transaction(254, 0);
+        let signed_txn_bcs_hex = format!(
+            "0x{}",
+            hex::encode(bcs_ext::to_bytes(&signed_txn).expect("sample tx should serialize"))
+        );
         mock_json_rpc_result(&server, "node.status", json!(true));
         mock_json_rpc_result(&server, "chain.info", sample_chain_info_value());
         mock_json_rpc_result(&server, "node.info", sample_node_info_value());
         mock_json_rpc_result(&server, "chain.get_block_by_number", Value::Null);
+        mock_json_rpc_result(&server, "chain.get_blocks_by_number", json!([]));
         mock_json_rpc_result(&server, "chain.get_transaction2", Value::Null);
+        mock_json_rpc_error(
+            &server,
+            "chain.get_transaction_info2",
+            -32601,
+            "method not found",
+        );
+        mock_json_rpc_error(
+            &server,
+            "chain.get_transaction_info",
+            -32601,
+            "method not found",
+        );
+        mock_json_rpc_error(
+            &server,
+            "chain.get_events_by_txn_hash2",
+            -32601,
+            "method not found",
+        );
+        mock_json_rpc_error(
+            &server,
+            "chain.get_events_by_txn_hash",
+            -32601,
+            "method not found",
+        );
         mock_json_rpc_error(&server, "chain.get_events", -32601, "method not found");
         mock_json_rpc_error(&server, "state.list_resource", -32601, "method not found");
         mock_json_rpc_error(&server, "state.list_code", -32601, "method not found");
@@ -1912,6 +2143,25 @@ mod tests {
         mock_json_rpc_error(&server, "contract.call_v2", -32601, "method not found");
         mock_json_rpc_result(&server, "txpool.gas_price", json!("1"));
         mock_json_rpc_result(&server, "txpool.next_sequence_number2", json!("0"));
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("\"method\":\"txpool.submit_hex_transaction2\"")
+                .body_contains("\"params\":[]");
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "error": {
+                            "code": -32602,
+                            "message": "invalid params",
+                        }
+                    })
+                    .to_string(),
+                );
+        });
         mock_json_rpc_result(
             &server,
             "contract2.dry_run_raw",
@@ -1925,7 +2175,8 @@ mod tests {
         let submit = server.mock(|when, then| {
             when.method(POST)
                 .path("/")
-                .body_contains("\"method\":\"txpool.submit_hex_transaction2\"");
+                .body_contains("\"method\":\"txpool.submit_hex_transaction2\"")
+                .body_contains(&signed_txn_bcs_hex);
             then.status(503).body("submit unavailable");
         });
 
@@ -1933,11 +2184,6 @@ mod tests {
             .await
             .expect("bootstrap should succeed");
         let hits_after_bootstrap = submit.hits();
-        let signed_txn = sample_signed_transaction(254, 0);
-        let signed_txn_bcs_hex = format!(
-            "0x{}",
-            hex::encode(bcs_ext::to_bytes(&signed_txn).expect("sample tx should serialize"))
-        );
         let input = SubmitSignedTransactionInput {
             signed_txn_bcs_hex,
             prepared_chain_context: sample_chain_context(254, "main", "0x1"),
@@ -2018,7 +2264,11 @@ mod tests {
             supports_node_info: true,
             supports_chain_info: true,
             supports_block_lookup: true,
+            supports_block_listing: true,
             supports_transaction_lookup: true,
+            supports_transaction_info_lookup: true,
+            supports_transaction_events_by_hash: true,
+            supports_account_state_lookup: true,
             supports_events_query: true,
             supports_resource_listing: true,
             supports_module_listing: true,
@@ -2071,6 +2321,7 @@ mod tests {
                 probe: sample_probe(),
                 observed_at: Instant::now(),
             }))),
+            prepared_transactions: Arc::new(RwLock::new(HashMap::new())),
             unresolved_submissions: Arc::new(RwLock::new(HashMap::new())),
             config,
         }

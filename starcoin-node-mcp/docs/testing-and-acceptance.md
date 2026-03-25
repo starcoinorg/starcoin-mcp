@@ -81,6 +81,7 @@ The implementation must demonstrate:
 6. explicit stale-sequence rejection maps to `sequence_number_stale`
 7. `transaction_expired` and `sequence_number_stale` require fresh preparation and fresh signing instead of blind re-submit
 8. unresolved reconciliation after timeout preserves `submission_unknown` state and blocks automatic blind re-submission
+9. when `allow_submit_without_prior_simulation = false`, submission without a local preparation or simulation record fails closed before any txpool side effect
 
 ## Security Acceptance
 

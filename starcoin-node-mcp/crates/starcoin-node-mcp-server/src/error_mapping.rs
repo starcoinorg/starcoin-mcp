@@ -7,6 +7,8 @@ use thiserror::Error;
 pub enum AdapterError {
     #[error(transparent)]
     Shared(#[from] SharedError),
+    #[error("invalid request: {0}")]
+    InvalidRequest(String),
     #[error("serialization error: {0}")]
     Serialization(String),
 }
@@ -40,6 +42,7 @@ impl From<AdapterError> for ErrorData {
                     _ => ErrorData::new(ErrorCode::INTERNAL_ERROR, error.message, data),
                 }
             }
+            AdapterError::InvalidRequest(message) => ErrorData::invalid_params(message, None),
             AdapterError::Serialization(message) => ErrorData::internal_error(message, None),
         }
     }

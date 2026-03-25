@@ -6,13 +6,9 @@ use anyhow::Result;
 use clap::Parser;
 use rmcp::{ServiceExt, transport::stdio};
 use starcoin_node_mcp_core::AppContext;
+use starcoin_node_mcp_server::StarcoinNodeMcpServer;
 use starcoin_node_mcp_types::{CliArgs, RuntimeConfig};
 use tracing_subscriber::EnvFilter;
-
-use crate::server::StarcoinNodeMcpServer;
-
-mod error_mapping;
-mod server;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() -> Result<()> {
