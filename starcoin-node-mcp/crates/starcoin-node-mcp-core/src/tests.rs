@@ -5,9 +5,15 @@ use super::{
     submission_unknown_output, validate_chain_identity, validate_signed_transaction_submission,
     validate_transaction_probe,
 };
-use httpmock::{Mock, prelude::*};
+use httpmock::prelude::*;
 use serde_json::{Value, json};
 use starcoin_node_mcp_rpc::NodeRpcClient;
+use starcoin_node_mcp_test_support::{
+    mock_abi_methods_not_found, mock_json_rpc_error, mock_json_rpc_result, mock_method_not_found,
+    mock_probe_metadata, mock_submit_probe_invalid_params,
+    mock_transaction_event_methods_not_found, mock_transaction_info_methods_not_found,
+    mock_view_methods_not_found, runtime_config_with_endpoint,
+};
 use starcoin_node_mcp_types::{
     ChainContext, EffectiveProbe, Mode, RuntimeConfig, SimulationStatus, SubmissionState,
     SubmitSignedTransactionInput, VmProfile,
@@ -20,13 +26,11 @@ use starcoin_vm2_vm_types::{
 };
 use std::{
     collections::HashMap,
-    path::PathBuf,
     str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
 };
 use tokio::sync::{RwLock, Semaphore};
-use url::Url;
 
 #[test]
 fn status_summary_marks_confirmation_when_info_exists() {
@@ -260,98 +264,20 @@ async fn submit_unknown_blocks_blind_resubmission_before_second_txpool_call() {
         "0x{}",
         hex::encode(bcs_ext::to_bytes(&signed_txn).expect("sample tx should serialize"))
     );
-    mock_json_rpc_result(&server, "node.status", json!(true));
-    mock_json_rpc_result(&server, "chain.info", sample_chain_info_value());
-    mock_json_rpc_result(&server, "node.info", sample_node_info_value());
+    mock_probe_metadata(&server);
     mock_json_rpc_result(&server, "chain.get_block_by_number", Value::Null);
     mock_json_rpc_result(&server, "chain.get_blocks_by_number", json!([]));
     mock_json_rpc_result(&server, "chain.get_transaction2", Value::Null);
-    mock_json_rpc_error(
-        &server,
-        "chain.get_transaction_info2",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "chain.get_transaction_info",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "chain.get_events_by_txn_hash2",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "chain.get_events_by_txn_hash",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(&server, "chain.get_events", -32601, "method not found");
-    mock_json_rpc_error(&server, "state.list_resource", -32601, "method not found");
-    mock_json_rpc_error(&server, "state.list_code", -32601, "method not found");
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_function",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_function",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_module",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_module",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_struct",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_struct",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(&server, "contract2.call_v2", -32601, "method not found");
-    mock_json_rpc_error(&server, "contract.call_v2", -32601, "method not found");
+    mock_transaction_info_methods_not_found(&server);
+    mock_transaction_event_methods_not_found(&server);
+    mock_method_not_found(&server, "chain.get_events");
+    mock_method_not_found(&server, "state.list_resource");
+    mock_method_not_found(&server, "state.list_code");
+    mock_abi_methods_not_found(&server);
+    mock_view_methods_not_found(&server);
     mock_json_rpc_result(&server, "txpool.gas_price", json!("1"));
     mock_json_rpc_result(&server, "txpool.next_sequence_number2", json!("0"));
-    server.mock(|when, then| {
-        when.method(POST)
-            .path("/")
-            .body_contains("\"method\":\"txpool.submit_hex_transaction2\"")
-            .body_contains("\"params\":[]");
-        then.status(200)
-            .header("content-type", "application/json")
-            .body(
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "error": {
-                        "code": -32602,
-                        "message": "invalid params",
-                    }
-                })
-                .to_string(),
-            );
-    });
+    mock_submit_probe_invalid_params(&server, "txpool.submit_hex_transaction2");
     mock_json_rpc_result(
         &server,
         "contract2.dry_run_raw",
@@ -449,50 +375,14 @@ fn sample_runtime_config() -> RuntimeConfig {
 }
 
 fn sample_runtime_config_with_endpoint(endpoint: &str) -> RuntimeConfig {
-    RuntimeConfig {
-        rpc_endpoint_url: Url::parse(endpoint).expect("valid url"),
-        mode: Mode::Transaction,
-        vm_profile: VmProfile::Auto,
-        expected_chain_id: Some(254),
-        expected_network: Some("main".to_owned()),
-        expected_genesis_hash: Some("0x1".to_owned()),
-        require_genesis_hash_match: true,
-        connect_timeout: Duration::from_secs(3),
-        request_timeout: Duration::from_secs(10),
-        startup_probe_timeout: Duration::from_secs(10),
-        rpc_auth_token: None,
-        rpc_headers: Vec::new(),
-        tls_server_name: None,
-        allowed_rpc_hosts: Vec::new(),
-        tls_pinned_spki_sha256: Vec::new(),
-        allow_insecure_remote_transport: false,
-        allow_read_only_chain_autodetect: false,
-        default_expiration_ttl: Duration::from_secs(600),
-        max_expiration_ttl: Duration::from_secs(3_600),
-        watch_poll_interval: Duration::from_secs(3),
-        watch_timeout: Duration::from_secs(120),
-        max_head_lag: Duration::from_secs(60),
-        warn_head_lag: Duration::from_secs(15),
-        allow_submit_without_prior_simulation: true,
-        chain_status_cache_ttl: Duration::from_secs(3),
-        abi_cache_ttl: Duration::from_secs(300),
-        module_cache_max_entries: 1_024,
-        disable_disk_cache: true,
-        max_submit_blocking_timeout: Duration::from_secs(60),
-        max_watch_timeout: Duration::from_secs(300),
-        min_watch_poll_interval: Duration::from_secs(2),
-        max_list_blocks_count: 100,
-        max_events_limit: 200,
-        max_account_resource_limit: 100,
-        max_account_module_limit: 50,
-        max_list_resources_size: 100,
-        max_list_modules_size: 100,
-        max_publish_package_bytes: 524_288,
-        max_concurrent_watch_requests: 8,
-        max_inflight_expensive_requests: 16,
-        config_path: Some(PathBuf::from("/tmp/node-mcp.toml")),
-        log_level: "info".to_owned(),
-    }
+    let mut config =
+        runtime_config_with_endpoint(endpoint, Mode::Transaction, VmProfile::Auto, true);
+    config.connect_timeout = Duration::from_secs(3);
+    config.request_timeout = Duration::from_secs(10);
+    config.startup_probe_timeout = Duration::from_secs(10);
+    config.chain_status_cache_ttl = Duration::from_secs(3);
+    config.module_cache_max_entries = 1_024;
+    config
 }
 
 fn sample_probe() -> EffectiveProbe {
@@ -561,68 +451,4 @@ fn sample_app_context() -> AppContext {
         unresolved_submissions: Arc::new(RwLock::new(HashMap::new())),
         config,
     }
-}
-
-fn mock_json_rpc_result<'a>(server: &'a MockServer, method: &str, result: Value) -> Mock<'a> {
-    server.mock(|when, then| {
-        when.method(POST)
-            .path("/")
-            .body_contains(&format!("\"method\":\"{method}\""));
-        then.status(200)
-            .header("content-type", "application/json")
-            .body(
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "result": result,
-                })
-                .to_string(),
-            );
-    })
-}
-
-fn mock_json_rpc_error<'a>(
-    server: &'a MockServer,
-    method: &str,
-    code: i64,
-    message: &str,
-) -> Mock<'a> {
-    server.mock(|when, then| {
-        when.method(POST)
-            .path("/")
-            .body_contains(&format!("\"method\":\"{method}\""));
-        then.status(200)
-            .header("content-type", "application/json")
-            .body(
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "error": {
-                        "code": code,
-                        "message": message,
-                    }
-                })
-                .to_string(),
-            );
-    })
-}
-
-fn sample_node_info_value() -> Value {
-    json!({
-        "net": { "Builtin": "Main" },
-        "now_seconds": 120,
-    })
-}
-
-fn sample_chain_info_value() -> Value {
-    json!({
-        "chain_id": 254,
-        "genesis_hash": "0x1",
-        "head": {
-            "number": 42,
-            "block_hash": "0x2",
-            "state_root": "0x3",
-            "timestamp": 100,
-        }
-    })
 }

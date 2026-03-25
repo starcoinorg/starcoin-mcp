@@ -1,76 +1,34 @@
-use std::{path::PathBuf, time::Duration};
-
-use httpmock::{Mock, MockServer, prelude::*};
+use httpmock::{MockServer, prelude::*};
 use serde_json::{Value, json};
 use starcoin_node_mcp_core::AppContext;
+use starcoin_node_mcp_test_support::{
+    mock_abi_methods_not_found, mock_block_lookup_probe, mock_json_rpc_result,
+    mock_method_not_found, mock_probe_metadata, mock_submit_probe_invalid_params,
+    mock_transaction_event_methods_not_found, mock_transaction_info_methods_not_found,
+    mock_transaction_lookup_probe, mock_txpool_sequence_probe, mock_view_methods_not_found,
+    runtime_config,
+};
 use starcoin_node_mcp_types::{
     GetAccountOverviewInput, GetTransactionInput, ListResourcesInput, Mode, PrepareTransferInput,
-    RuntimeConfig, SharedErrorCode, SimulateRawTransactionInput, SimulationStatus, SubmissionState,
+    SharedErrorCode, SimulateRawTransactionInput, SimulationStatus, SubmissionState,
     SubmitSignedTransactionInput, VmProfile,
 };
 use starcoin_vm2_crypto::ed25519::genesis_key_pair;
 use starcoin_vm2_vm_types::transaction::RawUserTransaction;
-use url::Url;
 
 #[tokio::test]
 async fn submit_policy_requires_local_simulation_attestation() {
     let server = MockServer::start();
-    mock_json_rpc_result(&server, "node.status", json!(true));
-    mock_json_rpc_result(&server, "chain.info", sample_chain_info());
-    mock_json_rpc_result(&server, "node.info", sample_node_info());
-    mock_json_rpc_result(&server, "chain.get_block_by_number", Value::Null);
-    mock_json_rpc_result(&server, "chain.get_blocks_by_number", json!([]));
-    mock_json_rpc_result(&server, "chain.get_transaction2", Value::Null);
-    mock_json_rpc_result(&server, "chain.get_transaction_info2", Value::Null);
-    mock_json_rpc_result(&server, "chain.get_events_by_txn_hash2", json!([]));
-    mock_json_rpc_error(&server, "chain.get_events", -32601, "method not found");
+    mock_transaction_bootstrap(&server);
     mock_json_rpc_result(
         &server,
         "state.get_account_state",
         json!({ "sequence_number": "0" }),
     );
-    mock_json_rpc_error(&server, "state.list_resource", -32601, "method not found");
-    mock_json_rpc_error(&server, "state.list_code", -32601, "method not found");
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_function",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_function",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_module",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_module",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_struct",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_struct",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(&server, "contract2.call_v2", -32601, "method not found");
-    mock_json_rpc_error(&server, "contract.call_v2", -32601, "method not found");
+    mock_method_not_found(&server, "state.list_resource");
+    mock_method_not_found(&server, "state.list_code");
     mock_json_rpc_result(&server, "txpool.gas_price", json!("1"));
-    mock_json_rpc_result(&server, "txpool.next_sequence_number2", json!("0"));
+    mock_txpool_sequence_probe(&server, "txpool.next_sequence_number2", json!("0"));
     mock_json_rpc_result(
         &server,
         "contract2.dry_run_raw",
@@ -78,9 +36,14 @@ async fn submit_policy_requires_local_simulation_attestation() {
     );
     let submit = mock_json_rpc_result(&server, "txpool.submit_hex_transaction2", json!("0xabc"));
 
-    let app = AppContext::bootstrap(runtime_config(&server, Mode::Transaction, false))
-        .await
-        .expect("transaction app should bootstrap");
+    let app = AppContext::bootstrap(runtime_config(
+        &server,
+        Mode::Transaction,
+        VmProfile::Auto,
+        false,
+    ))
+    .await
+    .expect("transaction app should bootstrap");
 
     let prepared = app
         .prepare_transfer(PrepareTransferInput {
@@ -166,103 +129,25 @@ async fn submit_policy_requires_local_simulation_attestation() {
 #[tokio::test]
 async fn account_overview_degrades_when_sequence_hint_is_unavailable() {
     let server = MockServer::start();
-    mock_json_rpc_result(&server, "node.status", json!(true));
-    mock_json_rpc_result(&server, "chain.info", sample_chain_info());
-    mock_json_rpc_result(&server, "node.info", sample_node_info());
-    mock_json_rpc_result(&server, "chain.get_block_by_number", Value::Null);
-    mock_json_rpc_error(
-        &server,
-        "chain.get_blocks_by_number",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_result(&server, "chain.get_transaction2", Value::Null);
-    mock_json_rpc_error(
-        &server,
-        "chain.get_transaction_info2",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "chain.get_transaction_info",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "chain.get_events_by_txn_hash2",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "chain.get_events_by_txn_hash",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(&server, "chain.get_events", -32601, "method not found");
+    mock_read_only_bootstrap(&server);
     mock_json_rpc_result(
         &server,
         "state.get_account_state",
         json!({ "sequence_number": "7" }),
     );
-    mock_json_rpc_error(&server, "state.list_resource", -32601, "method not found");
-    mock_json_rpc_error(&server, "state.list_code", -32601, "method not found");
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_function",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_function",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_module",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_module",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_struct",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_struct",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(&server, "contract2.call_v2", -32601, "method not found");
-    mock_json_rpc_error(&server, "contract.call_v2", -32601, "method not found");
-    mock_json_rpc_error(
-        &server,
-        "txpool.next_sequence_number2",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "txpool.next_sequence_number",
-        -32601,
-        "method not found",
-    );
+    mock_method_not_found(&server, "state.list_resource");
+    mock_method_not_found(&server, "state.list_code");
+    mock_method_not_found(&server, "txpool.next_sequence_number2");
+    mock_method_not_found(&server, "txpool.next_sequence_number");
 
-    let app = AppContext::bootstrap(runtime_config(&server, Mode::ReadOnly, true))
-        .await
-        .expect("read_only app should bootstrap");
+    let app = AppContext::bootstrap(runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::Auto,
+        true,
+    ))
+    .await
+    .expect("read_only app should bootstrap");
 
     let overview = app
         .get_account_overview(GetAccountOverviewInput {
@@ -282,16 +167,7 @@ async fn account_overview_degrades_when_sequence_hint_is_unavailable() {
 #[tokio::test]
 async fn get_transaction_skips_event_fetch_until_confirmation() {
     let server = MockServer::start();
-    mock_json_rpc_result(&server, "node.status", json!(true));
-    mock_json_rpc_result(&server, "chain.info", sample_chain_info());
-    mock_json_rpc_result(&server, "node.info", sample_node_info());
-    mock_json_rpc_result(&server, "chain.get_block_by_number", Value::Null);
-    mock_json_rpc_error(
-        &server,
-        "chain.get_blocks_by_number",
-        -32601,
-        "method not found",
-    );
+    mock_read_only_bootstrap(&server);
     mock_json_rpc_result(
         &server,
         "chain.get_transaction2",
@@ -299,57 +175,18 @@ async fn get_transaction_skips_event_fetch_until_confirmation() {
     );
     mock_json_rpc_result(&server, "chain.get_transaction_info2", Value::Null);
     let txn_events = mock_json_rpc_result(&server, "chain.get_events_by_txn_hash2", json!([]));
-    mock_json_rpc_error(&server, "chain.get_events", -32601, "method not found");
-    mock_json_rpc_error(
-        &server,
-        "state.get_account_state",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(&server, "state.list_resource", -32601, "method not found");
-    mock_json_rpc_error(&server, "state.list_code", -32601, "method not found");
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_function",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_function",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_module",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_module",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_struct",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_struct",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(&server, "contract2.call_v2", -32601, "method not found");
-    mock_json_rpc_error(&server, "contract.call_v2", -32601, "method not found");
+    mock_method_not_found(&server, "state.get_account_state");
+    mock_method_not_found(&server, "state.list_resource");
+    mock_method_not_found(&server, "state.list_code");
 
-    let app = AppContext::bootstrap(runtime_config(&server, Mode::ReadOnly, true))
-        .await
-        .expect("read_only app should bootstrap");
+    let app = AppContext::bootstrap(runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::Auto,
+        true,
+    ))
+    .await
+    .expect("read_only app should bootstrap");
     let hits_after_bootstrap = txn_events.hits();
 
     let transaction = app
@@ -373,8 +210,7 @@ async fn get_transaction_skips_event_fetch_until_confirmation() {
 #[tokio::test]
 async fn node_health_skips_zero_peer_warning_when_peer_rpc_is_unavailable() {
     let server = MockServer::start();
-    mock_json_rpc_result(&server, "node.info", sample_node_info());
-    mock_json_rpc_result(&server, "chain.info", sample_chain_info());
+    mock_probe_metadata(&server);
     server.mock(|when, then| {
         when.method(POST)
             .path("/")
@@ -383,90 +219,19 @@ async fn node_health_skips_zero_peer_warning_when_peer_rpc_is_unavailable() {
     });
     mock_json_rpc_result(&server, "sync.status", json!({ "state": "idle" }));
     mock_json_rpc_result(&server, "txpool.state", json!({ "txn_count": 0 }));
-    mock_json_rpc_result(&server, "node.status", json!(true));
-    mock_json_rpc_result(&server, "chain.get_block_by_number", Value::Null);
-    mock_json_rpc_error(
-        &server,
-        "chain.get_blocks_by_number",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_result(&server, "chain.get_transaction2", Value::Null);
-    mock_json_rpc_error(
-        &server,
-        "chain.get_transaction_info2",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "chain.get_transaction_info",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "chain.get_events_by_txn_hash2",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "chain.get_events_by_txn_hash",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(&server, "chain.get_events", -32601, "method not found");
-    mock_json_rpc_error(
-        &server,
-        "state.get_account_state",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(&server, "state.list_resource", -32601, "method not found");
-    mock_json_rpc_error(&server, "state.list_code", -32601, "method not found");
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_function",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_function",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_module",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_module",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_struct",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_struct",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(&server, "contract2.call_v2", -32601, "method not found");
-    mock_json_rpc_error(&server, "contract.call_v2", -32601, "method not found");
+    mock_read_only_query_surface(&server);
+    mock_method_not_found(&server, "state.get_account_state");
+    mock_method_not_found(&server, "state.list_resource");
+    mock_method_not_found(&server, "state.list_code");
 
-    let app = AppContext::bootstrap(runtime_config(&server, Mode::ReadOnly, true))
-        .await
-        .expect("read_only app should bootstrap");
+    let app = AppContext::bootstrap(runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::Auto,
+        true,
+    ))
+    .await
+    .expect("read_only app should bootstrap");
     let health = app.node_health().await.expect("node health should degrade");
 
     assert!(
@@ -486,9 +251,7 @@ async fn node_health_skips_zero_peer_warning_when_peer_rpc_is_unavailable() {
 #[tokio::test]
 async fn historical_resource_queries_fail_when_block_state_root_is_missing() {
     let server = MockServer::start();
-    mock_json_rpc_result(&server, "node.status", json!(true));
-    mock_json_rpc_result(&server, "chain.info", sample_chain_info());
-    mock_json_rpc_result(&server, "node.info", sample_node_info());
+    mock_probe_metadata(&server);
     server.mock(|when, then| {
         when.method(POST)
             .path("/")
@@ -526,88 +289,25 @@ async fn historical_resource_queries_fail_when_block_state_root_is_missing() {
                 .to_string(),
             );
     });
-    mock_json_rpc_error(
-        &server,
-        "chain.get_blocks_by_number",
-        -32601,
-        "method not found",
-    );
+    mock_method_not_found(&server, "chain.get_blocks_by_number");
     mock_json_rpc_result(&server, "chain.get_transaction2", Value::Null);
-    mock_json_rpc_error(
-        &server,
-        "chain.get_transaction_info2",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "chain.get_transaction_info",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "chain.get_events_by_txn_hash2",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "chain.get_events_by_txn_hash",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(&server, "chain.get_events", -32601, "method not found");
-    mock_json_rpc_error(
-        &server,
-        "state.get_account_state",
-        -32601,
-        "method not found",
-    );
+    mock_transaction_info_methods_not_found(&server);
+    mock_transaction_event_methods_not_found(&server);
+    mock_method_not_found(&server, "chain.get_events");
+    mock_method_not_found(&server, "state.get_account_state");
     mock_json_rpc_result(&server, "state.list_resource", json!({ "resources": {} }));
-    mock_json_rpc_error(&server, "state.list_code", -32601, "method not found");
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_function",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_function",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_module",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_module",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_struct",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_struct",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(&server, "contract2.call_v2", -32601, "method not found");
-    mock_json_rpc_error(&server, "contract.call_v2", -32601, "method not found");
+    mock_method_not_found(&server, "state.list_code");
+    mock_abi_methods_not_found(&server);
+    mock_view_methods_not_found(&server);
 
-    let app = AppContext::bootstrap(runtime_config(&server, Mode::ReadOnly, true))
-        .await
-        .expect("read_only app should bootstrap");
+    let app = AppContext::bootstrap(runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::Auto,
+        true,
+    ))
+    .await
+    .expect("read_only app should bootstrap");
     let error = app
         .list_resources(ListResourcesInput {
             address: "0x1".to_owned(),
@@ -631,36 +331,13 @@ async fn historical_resource_queries_fail_when_block_state_root_is_missing() {
 #[tokio::test]
 async fn prepare_transfer_rejects_past_expiration_and_normalizes_nested_dry_run_events() {
     let server = MockServer::start();
-    mock_json_rpc_result(&server, "node.status", json!(true));
-    mock_json_rpc_result(&server, "chain.info", sample_chain_info());
-    mock_json_rpc_result(&server, "node.info", sample_node_info());
-    mock_json_rpc_result(&server, "chain.get_block_by_number", Value::Null);
-    mock_json_rpc_result(&server, "chain.get_blocks_by_number", json!([]));
-    mock_json_rpc_result(&server, "chain.get_transaction2", Value::Null);
-    mock_json_rpc_result(&server, "chain.get_transaction_info2", Value::Null);
-    mock_json_rpc_result(&server, "chain.get_events_by_txn_hash2", json!([]));
-    mock_json_rpc_error(&server, "chain.get_events", -32601, "method not found");
+    mock_transaction_bootstrap(&server);
     mock_json_rpc_result(
         &server,
         "state.get_account_state",
         json!({ "sequence_number": "4" }),
     );
-    server.mock(|when, then| {
-        when.method(POST)
-            .path("/")
-            .body_contains("\"method\":\"txpool.next_sequence_number2\"")
-            .body_contains("\"0x00000000000000000000000000000000\"");
-        then.status(200)
-            .header("content-type", "application/json")
-            .body(
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "result": "0",
-                })
-                .to_string(),
-            );
-    });
+    mock_txpool_sequence_probe(&server, "txpool.next_sequence_number2", json!("0"));
     server.mock(|when, then| {
         when.method(POST)
             .path("/")
@@ -668,66 +345,10 @@ async fn prepare_transfer_rejects_past_expiration_and_normalizes_nested_dry_run_
             .body_contains("\"0x1\"");
         then.status(503).body("txpool unavailable");
     });
-    mock_json_rpc_error(&server, "state.list_resource", -32601, "method not found");
-    mock_json_rpc_error(&server, "state.list_code", -32601, "method not found");
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_function",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_function",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_module",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_module",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract2.resolve_struct",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(
-        &server,
-        "contract.resolve_struct",
-        -32601,
-        "method not found",
-    );
-    mock_json_rpc_error(&server, "contract2.call_v2", -32601, "method not found");
-    mock_json_rpc_error(&server, "contract.call_v2", -32601, "method not found");
+    mock_method_not_found(&server, "state.list_resource");
+    mock_method_not_found(&server, "state.list_code");
     mock_json_rpc_result(&server, "txpool.gas_price", json!("1"));
-    server.mock(|when, then| {
-        when.method(POST)
-            .path("/")
-            .body_contains("\"method\":\"txpool.submit_hex_transaction2\"")
-            .body_contains("\"params\":[]");
-        then.status(200)
-            .header("content-type", "application/json")
-            .body(
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "error": {
-                        "code": -32602,
-                        "message": "invalid params",
-                    }
-                })
-                .to_string(),
-            );
-    });
+    mock_submit_probe_invalid_params(&server, "txpool.submit_hex_transaction2");
     let (private_key, public_key) = genesis_key_pair();
     let public_key_hex = format!("0x{}", hex::encode(public_key.to_bytes()));
     mock_json_rpc_result(
@@ -742,9 +363,14 @@ async fn prepare_transfer_rejects_past_expiration_and_normalizes_nested_dry_run_
             }
         }),
     );
-    let app = AppContext::bootstrap(runtime_config(&server, Mode::Transaction, true))
-        .await
-        .expect("transaction app should bootstrap");
+    let app = AppContext::bootstrap(runtime_config(
+        &server,
+        Mode::Transaction,
+        VmProfile::Auto,
+        true,
+    ))
+    .await
+    .expect("transaction app should bootstrap");
 
     let past_expiration_error = app
         .prepare_transfer(PrepareTransferInput {
@@ -793,117 +419,30 @@ async fn prepare_transfer_rejects_past_expiration_and_normalizes_nested_dry_run_
     drop(private_key);
 }
 
-fn runtime_config(
-    server: &MockServer,
-    mode: Mode,
-    allow_submit_without_prior_simulation: bool,
-) -> RuntimeConfig {
-    RuntimeConfig {
-        rpc_endpoint_url: Url::parse(&server.url("/")).expect("mock url should parse"),
-        mode,
-        vm_profile: VmProfile::Auto,
-        expected_chain_id: Some(254),
-        expected_network: Some("main".to_owned()),
-        expected_genesis_hash: Some("0x1".to_owned()),
-        require_genesis_hash_match: true,
-        connect_timeout: Duration::from_secs(1),
-        request_timeout: Duration::from_secs(3),
-        startup_probe_timeout: Duration::from_secs(3),
-        rpc_auth_token: None,
-        rpc_headers: Vec::new(),
-        tls_server_name: None,
-        allowed_rpc_hosts: Vec::new(),
-        tls_pinned_spki_sha256: Vec::new(),
-        allow_insecure_remote_transport: false,
-        allow_read_only_chain_autodetect: false,
-        default_expiration_ttl: Duration::from_secs(600),
-        max_expiration_ttl: Duration::from_secs(3_600),
-        watch_poll_interval: Duration::from_secs(3),
-        watch_timeout: Duration::from_secs(120),
-        max_head_lag: Duration::from_secs(60),
-        warn_head_lag: Duration::from_secs(15),
-        allow_submit_without_prior_simulation,
-        chain_status_cache_ttl: Duration::from_secs(60),
-        abi_cache_ttl: Duration::from_secs(300),
-        module_cache_max_entries: 128,
-        disable_disk_cache: true,
-        max_submit_blocking_timeout: Duration::from_secs(60),
-        max_watch_timeout: Duration::from_secs(300),
-        min_watch_poll_interval: Duration::from_secs(2),
-        max_list_blocks_count: 100,
-        max_events_limit: 200,
-        max_account_resource_limit: 100,
-        max_account_module_limit: 50,
-        max_list_resources_size: 100,
-        max_list_modules_size: 100,
-        max_publish_package_bytes: 524_288,
-        max_concurrent_watch_requests: 8,
-        max_inflight_expensive_requests: 16,
-        config_path: Some(PathBuf::from("/tmp/node-mcp.toml")),
-        log_level: "info".to_owned(),
-    }
+fn mock_read_only_bootstrap(server: &MockServer) {
+    mock_probe_metadata(server);
+    mock_read_only_query_surface(server);
 }
 
-fn mock_json_rpc_result<'a>(server: &'a MockServer, method: &str, result: Value) -> Mock<'a> {
-    server.mock(|when, then| {
-        when.method(POST)
-            .path("/")
-            .body_contains(&format!("\"method\":\"{method}\""));
-        then.status(200)
-            .header("content-type", "application/json")
-            .body(
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "result": result,
-                })
-                .to_string(),
-            );
-    })
+fn mock_read_only_query_surface(server: &MockServer) {
+    mock_block_lookup_probe(server, Value::Null);
+    mock_method_not_found(server, "chain.get_blocks_by_number");
+    mock_transaction_lookup_probe(server, "chain.get_transaction2", Value::Null);
+    mock_transaction_info_methods_not_found(server);
+    mock_transaction_event_methods_not_found(server);
+    mock_method_not_found(server, "chain.get_events");
+    mock_abi_methods_not_found(server);
+    mock_view_methods_not_found(server);
 }
 
-fn mock_json_rpc_error<'a>(
-    server: &'a MockServer,
-    method: &str,
-    code: i64,
-    message: &str,
-) -> Mock<'a> {
-    server.mock(|when, then| {
-        when.method(POST)
-            .path("/")
-            .body_contains(&format!("\"method\":\"{method}\""));
-        then.status(200)
-            .header("content-type", "application/json")
-            .body(
-                json!({
-                    "jsonrpc": "2.0",
-                    "id": 1,
-                    "error": {
-                        "code": code,
-                        "message": message,
-                    }
-                })
-                .to_string(),
-            );
-    })
-}
-
-fn sample_node_info() -> Value {
-    json!({
-        "net": { "Builtin": "Main" },
-        "now_seconds": 120,
-    })
-}
-
-fn sample_chain_info() -> Value {
-    json!({
-        "chain_id": 254,
-        "genesis_hash": "0x1",
-        "head": {
-            "number": 42,
-            "block_hash": "0x2",
-            "state_root": "0x3",
-            "timestamp": 100,
-        }
-    })
+fn mock_transaction_bootstrap(server: &MockServer) {
+    mock_probe_metadata(server);
+    mock_block_lookup_probe(server, Value::Null);
+    mock_json_rpc_result(server, "chain.get_blocks_by_number", json!([]));
+    mock_transaction_lookup_probe(server, "chain.get_transaction2", Value::Null);
+    mock_json_rpc_result(server, "chain.get_transaction_info2", Value::Null);
+    mock_json_rpc_result(server, "chain.get_events_by_txn_hash2", json!([]));
+    mock_method_not_found(server, "chain.get_events");
+    mock_abi_methods_not_found(server);
+    mock_view_methods_not_found(server);
 }

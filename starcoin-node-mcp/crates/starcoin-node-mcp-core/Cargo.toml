@@ -22,4 +22,5 @@ tracing.workspace = true
 
 [dev-dependencies]
 httpmock.workspace = true
+starcoin-node-mcp-test-support = { path = "../starcoin-node-mcp-test-support" }
 url.workspace = true

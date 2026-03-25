@@ -24,3 +24,4 @@ x509-parser.workspace = true
 
 [dev-dependencies]
 httpmock.workspace = true
+starcoin-node-mcp-test-support = { path = "../starcoin-node-mcp-test-support" }
