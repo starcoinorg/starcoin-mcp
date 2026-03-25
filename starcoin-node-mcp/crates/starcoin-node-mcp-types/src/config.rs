@@ -442,6 +442,10 @@ impl RuntimeConfig {
     }
 
     pub fn auth_token_debug(&self) -> Option<&str> {
+        self.rpc_auth_token.as_ref().map(|_| "[redacted]")
+    }
+
+    pub fn auth_token_raw(&self) -> Option<&str> {
         self.rpc_auth_token.as_ref().map(RedactedString::expose)
     }
 
@@ -679,7 +683,7 @@ fn is_remote_endpoint(endpoint: &Url) -> bool {
 mod tests {
     use clap::Parser;
 
-    use super::CliArgs;
+    use super::{CliArgs, RedactedString, RuntimeConfig};
     use crate::domain::{Mode, VmProfile};
 
     #[test]
@@ -745,5 +749,24 @@ mod tests {
         let config = super::RuntimeConfig::load(cli).expect("kebab-case enum aliases should parse");
         assert_eq!(config.mode, Mode::ReadOnly);
         assert_eq!(config.vm_profile, VmProfile::LegacyCompatible);
+    }
+
+    #[test]
+    fn auth_token_debug_stays_redacted_while_raw_accessor_exposes_value() {
+        let config = RuntimeConfig {
+            rpc_auth_token: Some(RedactedString::new("secret-token".to_owned())),
+            ..RuntimeConfig::load(CliArgs::parse_from([
+                "starcoin-node-mcp",
+                "--rpc-endpoint-url",
+                "http://127.0.0.1:9850",
+                "--mode",
+                "read_only",
+                "--allow-read-only-chain-autodetect",
+                "true",
+            ]))
+            .expect("baseline config should load")
+        };
+        assert_eq!(config.auth_token_debug(), Some("[redacted]"));
+        assert_eq!(config.auth_token_raw(), Some("secret-token"));
     }
 }

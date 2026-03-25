@@ -22,6 +22,7 @@ pub enum SharedErrorCode {
     MissingSender,
     MissingPublicKey,
     InvalidPackagePayload,
+    BlockNotFound,
     TransactionNotFound,
 }
 

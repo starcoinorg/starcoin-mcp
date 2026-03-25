@@ -411,7 +411,7 @@ impl AppContext {
                     .await?
                     .ok_or_else(|| {
                         SharedError::new(
-                            SharedErrorCode::TransactionNotFound,
+                            SharedErrorCode::BlockNotFound,
                             format!("block {block_number} was not found"),
                         )
                     })?;

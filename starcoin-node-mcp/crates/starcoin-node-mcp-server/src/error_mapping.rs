@@ -33,6 +33,7 @@ impl From<AdapterError> for ErrorData {
                     | SharedErrorCode::MissingPublicKey
                     | SharedErrorCode::InvalidPackagePayload
                     | SharedErrorCode::PayloadTooLarge
+                    | SharedErrorCode::BlockNotFound
                     | SharedErrorCode::TransactionNotFound => {
                         ErrorData::invalid_params(error.message, data)
                     }

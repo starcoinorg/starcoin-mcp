@@ -184,12 +184,12 @@ impl AppContext {
         let raw_txn_view = serde_json::to_value(TransactionRequest::from(raw_txn.clone()))
             .map_err(|error| {
                 SharedError::new(
-                    SharedErrorCode::RpcUnavailable,
+                    SharedErrorCode::InvalidPackagePayload,
                     format!("failed to serialize raw transaction view: {error}"),
                 )
             })?;
 
-        let prepared_at = rfc3339_now()?;
+        let prepared_at = rfc3339_now();
         let (simulation_status, simulation, next_action) = match sender_public_key {
             Some(public_key) => {
                 let dry_run = self.rpc.dry_run_raw(&raw_txn_bcs_hex, &public_key).await?;
@@ -381,13 +381,13 @@ fn build_transfer_payload(
         vec![
             bcs_ext::to_bytes(&receiver).map_err(|error| {
                 SharedError::new(
-                    SharedErrorCode::RpcUnavailable,
+                    SharedErrorCode::InvalidPackagePayload,
                     format!("failed to encode transfer receiver: {error}"),
                 )
             })?,
             bcs_ext::to_bytes(&amount).map_err(|error| {
                 SharedError::new(
-                    SharedErrorCode::RpcUnavailable,
+                    SharedErrorCode::InvalidPackagePayload,
                     format!("failed to encode transfer amount: {error}"),
                 )
             })?,

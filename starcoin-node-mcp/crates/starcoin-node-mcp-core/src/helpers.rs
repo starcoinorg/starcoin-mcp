@@ -67,7 +67,7 @@ pub(crate) fn extract_chain_context(
         head_block_hash: extract_string(chain_info, &["head", "block_hash"])?,
         head_block_number: extract_u64(chain_info, &["head", "number"])?,
         head_state_root: extract_optional_string(chain_info, &["head", "state_root"]),
-        observed_at: rfc3339_now()?,
+        observed_at: rfc3339_now(),
     })
 }
 
@@ -231,18 +231,15 @@ pub(crate) fn canonical_hex_payload(input: &str) -> Result<String, SharedError> 
 pub(crate) fn encode_hex_bcs<T: serde::Serialize>(value: &T) -> Result<String, SharedError> {
     let bytes = bcs_ext::to_bytes(value).map_err(|error| {
         SharedError::new(
-            SharedErrorCode::RpcUnavailable,
+            SharedErrorCode::InvalidPackagePayload,
             format!("failed to bcs-encode transaction: {error}"),
         )
     })?;
     Ok(hex::encode(bytes))
 }
 
-pub(crate) fn rfc3339_now() -> Result<String, SharedError> {
-    OffsetDateTime::now_utc().format(&Rfc3339).map_err(|error| {
-        SharedError::new(
-            SharedErrorCode::RpcUnavailable,
-            format!("failed to format current timestamp: {error}"),
-        )
-    })
+pub(crate) fn rfc3339_now() -> String {
+    OffsetDateTime::now_utc()
+        .format(&Rfc3339)
+        .expect("RFC3339 formatting for a valid UTC timestamp should be infallible")
 }

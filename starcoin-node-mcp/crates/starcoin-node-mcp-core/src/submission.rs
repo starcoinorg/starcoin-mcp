@@ -494,6 +494,7 @@ fn shared_error_code_name(code: SharedErrorCode) -> &'static str {
         SharedErrorCode::MissingSender => "missing_sender",
         SharedErrorCode::MissingPublicKey => "missing_public_key",
         SharedErrorCode::InvalidPackagePayload => "invalid_package_payload",
+        SharedErrorCode::BlockNotFound => "block_not_found",
         SharedErrorCode::TransactionNotFound => "transaction_not_found",
     }
 }
