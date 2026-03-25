@@ -40,6 +40,11 @@ pub struct EffectiveProbe {
     pub supports_chain_info: bool,
     pub supports_block_lookup: bool,
     pub supports_transaction_lookup: bool,
+    pub supports_events_query: bool,
+    pub supports_resource_listing: bool,
+    pub supports_module_listing: bool,
+    pub supports_abi_resolution: bool,
+    pub supports_view_call: bool,
     pub supports_transaction_submission: bool,
     pub supports_raw_dry_run: bool,
 }

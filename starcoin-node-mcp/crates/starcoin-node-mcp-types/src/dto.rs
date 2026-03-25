@@ -203,6 +203,7 @@ pub struct SimulateRawTransactionInput {
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 pub struct SubmitSignedTransactionInput {
     pub signed_txn_bcs_hex: String,
+    pub prepared_chain_context: ChainContext,
     #[serde(default)]
     pub blocking: bool,
     #[serde(default)]

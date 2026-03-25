@@ -43,6 +43,7 @@ impl ServerHandler for StarcoinNodeMcpServer {
         _request: Option<rmcp::model::PaginatedRequestParams>,
         _context: RequestContext<rmcp::RoleServer>,
     ) -> Result<ListToolsResult, ErrorData> {
+        let probe = self.app.startup_probe();
         let mut tools = vec![
             tool::<EmptyParams>(
                 "chain_status",
@@ -59,30 +60,51 @@ impl ServerHandler for StarcoinNodeMcpServer {
                 "watch_transaction",
                 "Poll a transaction until terminal status or timeout.",
             ),
-            tool::<GetEventsInput>("get_events", "Query events by filter."),
             tool::<GetAccountOverviewInput>(
                 "get_account_overview",
                 "Return a task-oriented summary of an account.",
             ),
-            tool::<ListResourcesInput>("list_resources", "List resources for an account."),
-            tool::<ListModulesInput>("list_modules", "List modules for an account."),
-            tool::<ResolveFunctionAbiInput>(
-                "resolve_function_abi",
-                "Resolve a function ABI from a fully qualified function id.",
-            ),
-            tool::<ResolveStructAbiInput>(
-                "resolve_struct_abi",
-                "Resolve a struct ABI from a fully qualified struct tag.",
-            ),
-            tool::<ResolveModuleAbiInput>(
-                "resolve_module_abi",
-                "Resolve a module ABI from a module id.",
-            ),
-            tool::<CallViewFunctionInput>(
+        ];
+        if probe.supports_events_query {
+            tools.push(tool::<GetEventsInput>(
+                "get_events",
+                "Query events by filter.",
+            ));
+        }
+        if probe.supports_resource_listing {
+            tools.push(tool::<ListResourcesInput>(
+                "list_resources",
+                "List resources for an account.",
+            ));
+        }
+        if probe.supports_module_listing {
+            tools.push(tool::<ListModulesInput>(
+                "list_modules",
+                "List modules for an account.",
+            ));
+        }
+        if probe.supports_abi_resolution {
+            tools.extend([
+                tool::<ResolveFunctionAbiInput>(
+                    "resolve_function_abi",
+                    "Resolve a function ABI from a fully qualified function id.",
+                ),
+                tool::<ResolveStructAbiInput>(
+                    "resolve_struct_abi",
+                    "Resolve a struct ABI from a fully qualified struct tag.",
+                ),
+                tool::<ResolveModuleAbiInput>(
+                    "resolve_module_abi",
+                    "Resolve a module ABI from a module id.",
+                ),
+            ]);
+        }
+        if probe.supports_view_call {
+            tools.push(tool::<CallViewFunctionInput>(
                 "call_view_function",
                 "Execute a contract call without changing chain state.",
-            ),
-        ];
+            ));
+        }
         if self.app.mode() == Mode::Transaction {
             tools.extend([
                 tool::<PrepareTransferInput>(

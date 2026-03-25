@@ -522,6 +522,7 @@ Submit an already signed transaction.
 ##### Input
 
 - `signed_txn_bcs_hex`
+- `prepared_chain_context`: the `chain_context` returned by the preparation result that produced the signed transaction
 - `blocking`: boolean, default `false`
 - `timeout_seconds`: optional when `blocking = true`
 

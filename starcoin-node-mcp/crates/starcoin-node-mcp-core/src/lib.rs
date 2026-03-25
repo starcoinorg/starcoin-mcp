@@ -1,6 +1,11 @@
 #![forbid(unsafe_code)]
 
-use std::{str::FromStr, sync::Arc};
+use std::{
+    collections::HashMap,
+    str::FromStr,
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::Context;
 use serde_json::{Value, json};
@@ -35,7 +40,7 @@ use starcoin_vm2_vm_types::{
 };
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 use tokio::{
-    sync::{OwnedSemaphorePermit, Semaphore},
+    sync::{OwnedSemaphorePermit, RwLock, Semaphore},
     time::{sleep, timeout},
 };
 use tracing::warn;
@@ -47,6 +52,25 @@ pub struct AppContext {
     watch_permits: Arc<Semaphore>,
     expensive_permits: Arc<Semaphore>,
     startup_probe: EffectiveProbe,
+    transaction_probe: Arc<RwLock<Option<CachedProbe>>>,
+    unresolved_submissions: Arc<RwLock<HashMap<String, UnresolvedSubmission>>>,
+}
+
+#[derive(Debug, Clone)]
+struct CachedProbe {
+    probe: EffectiveProbe,
+    observed_at: Instant,
+}
+
+#[derive(Debug, Clone)]
+struct UnresolvedSubmission {
+    recorded_at: Instant,
+}
+
+#[derive(Debug)]
+struct TransactionEndpointSnapshot {
+    chain_context: ChainContext,
+    now_seconds: u64,
 }
 
 impl AppContext {
@@ -91,6 +115,13 @@ impl AppContext {
         Ok(Self {
             watch_permits: Arc::new(Semaphore::new(config.max_concurrent_watch_requests)),
             expensive_permits: Arc::new(Semaphore::new(config.max_inflight_expensive_requests)),
+            transaction_probe: Arc::new(RwLock::new((config.mode == Mode::Transaction).then_some(
+                CachedProbe {
+                    probe: startup_probe.clone(),
+                    observed_at: Instant::now(),
+                },
+            ))),
+            unresolved_submissions: Arc::new(RwLock::new(HashMap::new())),
             config,
             rpc,
             startup_probe,
@@ -310,6 +341,7 @@ impl AppContext {
                 })
                 .await?;
             if current.status_summary.found {
+                self.clear_unresolved_submission(&input.txn_hash).await;
                 last_status_summary = current.status_summary.clone();
                 last_transaction_info = current.transaction_info.clone();
                 last_events = current.events.clone();
@@ -346,6 +378,10 @@ impl AppContext {
     }
 
     pub async fn get_events(&self, input: GetEventsInput) -> Result<GetEventsOutput, SharedError> {
+        ensure_capability(
+            self.startup_probe.supports_events_query,
+            "event query tools are unavailable for this endpoint profile",
+        )?;
         let _permit = self.try_expensive_permit()?;
         let effective_limit = input.limit.min(self.config.max_events_limit);
         let events = self
@@ -386,6 +422,10 @@ impl AppContext {
         let mut applied_module_limit = None;
 
         if input.include_resources {
+            ensure_capability(
+                self.startup_probe.supports_resource_listing,
+                "resource listing is unavailable for this endpoint profile",
+            )?;
             let _permit = self.try_expensive_permit()?;
             let effective_limit = input
                 .resource_limit
@@ -402,6 +442,10 @@ impl AppContext {
         }
 
         if input.include_modules {
+            ensure_capability(
+                self.startup_probe.supports_module_listing,
+                "module listing is unavailable for this endpoint profile",
+            )?;
             let _permit = self.try_expensive_permit()?;
             let effective_limit = input
                 .module_limit
@@ -432,6 +476,10 @@ impl AppContext {
         &self,
         input: ListResourcesInput,
     ) -> Result<ListResourcesOutput, SharedError> {
+        ensure_capability(
+            self.startup_probe.supports_resource_listing,
+            "resource listing is unavailable for this endpoint profile",
+        )?;
         let _permit = self.try_expensive_permit()?;
         let effective_max_size = input
             .max_size
@@ -462,6 +510,10 @@ impl AppContext {
         &self,
         input: ListModulesInput,
     ) -> Result<ListModulesOutput, SharedError> {
+        ensure_capability(
+            self.startup_probe.supports_module_listing,
+            "module listing is unavailable for this endpoint profile",
+        )?;
         let _permit = self.try_expensive_permit()?;
         let effective_max_size = input
             .max_size
@@ -486,6 +538,10 @@ impl AppContext {
         &self,
         input: ResolveFunctionAbiInput,
     ) -> Result<Value, SharedError> {
+        ensure_capability(
+            self.startup_probe.supports_abi_resolution,
+            "ABI resolution is unavailable for this endpoint profile",
+        )?;
         Ok(json!({ "function_abi": self.rpc.resolve_function_abi(&input.function_id).await? }))
     }
 
@@ -493,6 +549,10 @@ impl AppContext {
         &self,
         input: ResolveStructAbiInput,
     ) -> Result<Value, SharedError> {
+        ensure_capability(
+            self.startup_probe.supports_abi_resolution,
+            "ABI resolution is unavailable for this endpoint profile",
+        )?;
         Ok(json!({ "struct_abi": self.rpc.resolve_struct_abi(&input.struct_tag).await? }))
     }
 
@@ -500,6 +560,10 @@ impl AppContext {
         &self,
         input: ResolveModuleAbiInput,
     ) -> Result<Value, SharedError> {
+        ensure_capability(
+            self.startup_probe.supports_abi_resolution,
+            "ABI resolution is unavailable for this endpoint profile",
+        )?;
         Ok(json!({ "module_abi": self.rpc.resolve_module_abi(&input.module_id).await? }))
     }
 
@@ -507,6 +571,10 @@ impl AppContext {
         &self,
         input: CallViewFunctionInput,
     ) -> Result<CallViewFunctionOutput, SharedError> {
+        ensure_capability(
+            self.startup_probe.supports_view_call,
+            "view-function execution is unavailable for this endpoint profile",
+        )?;
         let decoded_return_values = self
             .rpc
             .call_view_function(&input.function_id, &input.type_args, &input.args)
@@ -633,6 +701,7 @@ impl AppContext {
         input: SimulateRawTransactionInput,
     ) -> Result<SimulateRawTransactionOutput, SharedError> {
         self.ensure_transaction_capabilities_current().await?;
+        let _snapshot = self.load_transaction_endpoint_snapshot().await?;
         let simulation = self
             .rpc
             .dry_run_raw(&input.raw_txn_bcs_hex, &input.sender_public_key)
@@ -660,7 +729,6 @@ impl AppContext {
         input: SubmitSignedTransactionInput,
     ) -> Result<SubmitSignedTransactionOutput, SharedError> {
         ensure_transaction_mode(self.mode())?;
-        self.ensure_transaction_capabilities_current().await?;
         let signed_bytes = decode_hex_bytes(&input.signed_txn_bcs_hex)?;
         let signed_txn: SignedUserTransaction =
             bcs_ext::from_bytes(&signed_bytes).map_err(|error| {
@@ -669,18 +737,43 @@ impl AppContext {
                     format!("invalid signed transaction bcs hex: {error}"),
                 )
             })?;
-        self.revalidate_chain_context().await?;
         let txn_hash = signed_txn.id().to_string();
-        let effective_timeout_seconds = if input.blocking {
-            Some(
-                input
-                    .timeout_seconds
-                    .unwrap_or(self.config.watch_timeout.as_secs())
-                    .min(self.config.max_submit_blocking_timeout.as_secs()),
-            )
-        } else {
-            None
-        };
+        let effective_timeout_seconds = effective_submit_timeout_seconds(
+            input.blocking,
+            input.timeout_seconds,
+            self.config.watch_timeout,
+            self.config.max_submit_blocking_timeout,
+        );
+        if self.has_unresolved_submission(&txn_hash).await {
+            return Ok(submission_unknown_output(
+                txn_hash,
+                effective_timeout_seconds,
+            ));
+        }
+        self.ensure_transaction_capabilities_current().await?;
+        let snapshot = self.load_transaction_endpoint_snapshot().await?;
+        validate_signed_transaction_submission(
+            &signed_txn,
+            &input.prepared_chain_context,
+            &snapshot.chain_context,
+        )?;
+        if signed_txn.expiration_timestamp_secs() <= snapshot.now_seconds {
+            return Ok(rejected_submission_output(
+                txn_hash,
+                "transaction_expired",
+                effective_timeout_seconds,
+            ));
+        }
+        if self
+            .signed_transaction_sequence_is_stale(&signed_txn)
+            .await?
+        {
+            return Ok(rejected_submission_output(
+                txn_hash,
+                "sequence_number_stale",
+                effective_timeout_seconds,
+            ));
+        }
 
         match self
             .rpc
@@ -700,15 +793,12 @@ impl AppContext {
                 } else {
                     None
                 };
-                Ok(SubmitSignedTransactionOutput {
+                Ok(accepted_submission_output(
                     txn_hash,
-                    submission_state: SubmissionState::Accepted,
-                    submitted: true,
-                    error_code: None,
+                    true,
                     effective_timeout_seconds,
-                    next_action: SubmissionNextAction::WatchTransaction,
                     watch_result,
-                })
+                ))
             }
             Err(error)
                 if matches!(
@@ -716,15 +806,11 @@ impl AppContext {
                     SharedErrorCode::NodeUnavailable | SharedErrorCode::RpcUnavailable
                 ) =>
             {
-                Ok(SubmitSignedTransactionOutput {
+                self.record_unresolved_submission(&txn_hash).await;
+                Ok(submission_unknown_output(
                     txn_hash,
-                    submission_state: SubmissionState::Unknown,
-                    submitted: false,
-                    error_code: Some("submission_unknown".to_owned()),
                     effective_timeout_seconds,
-                    next_action: SubmissionNextAction::ReconcileByTxnHash,
-                    watch_result: None,
-                })
+                ))
             }
             Err(error)
                 if matches!(
@@ -732,15 +818,11 @@ impl AppContext {
                     SharedErrorCode::TransactionExpired | SharedErrorCode::SequenceNumberStale
                 ) =>
             {
-                Ok(SubmitSignedTransactionOutput {
+                Ok(rejected_submission_output(
                     txn_hash,
-                    submission_state: SubmissionState::Rejected,
-                    submitted: false,
-                    error_code: Some(shared_error_code_name(error.code).to_owned()),
+                    shared_error_code_name(error.code),
                     effective_timeout_seconds,
-                    next_action: SubmissionNextAction::ReprepareThenResign,
-                    watch_result: None,
-                })
+                ))
             }
             Err(error) => Err(error),
         }
@@ -761,18 +843,14 @@ impl AppContext {
     ) -> Result<PreparationResult, SharedError> {
         ensure_transaction_mode(self.mode())?;
         self.ensure_transaction_capabilities_current().await?;
-        self.revalidate_chain_context().await?;
-        let node_info = self.rpc.node_info().await?;
-        let chain_info = self.rpc.chain_info().await?;
-        let chain_context = extract_chain_context(&node_info, &chain_info)?;
-        let now_seconds = extract_u64(&node_info, &["now_seconds"])?;
+        let snapshot = self.load_transaction_endpoint_snapshot().await?;
         let (sequence_number, sequence_number_source) = self
             .resolve_sequence_number(&sender.to_string(), sequence_number)
             .await?;
         let (gas_unit_price, gas_unit_price_source) =
             self.resolve_gas_price(gas_unit_price).await?;
         let expiration_timestamp_secs =
-            self.resolve_expiration(now_seconds, expiration_time_secs)?;
+            self.resolve_expiration(snapshot.now_seconds, expiration_time_secs)?;
         let raw_txn = build_raw_transaction(
             sender,
             sequence_number,
@@ -781,7 +859,7 @@ impl AppContext {
             gas_unit_price,
             expiration_timestamp_secs,
             gas_token.unwrap_or_else(|| G_STC_TOKEN_CODE.to_string()),
-            ChainId::new(chain_context.chain_id),
+            ChainId::new(snapshot.chain_context.chain_id),
         );
         let raw_txn_bcs_hex = encode_hex_bcs(&raw_txn)?;
         let raw_txn_view = serde_json::to_value(TransactionRequest::from(raw_txn.clone()))
@@ -822,7 +900,7 @@ impl AppContext {
             raw_txn_bcs_hex,
             raw_txn: raw_txn_view,
             transaction_summary,
-            chain_context,
+            chain_context: snapshot.chain_context,
             prepared_at,
             sequence_number_source,
             gas_unit_price_source,
@@ -907,15 +985,14 @@ impl AppContext {
         }
     }
 
-    async fn revalidate_chain_context(&self) -> Result<(), SharedError> {
-        let node_info = self.rpc.node_info().await?;
-        let chain_info = self.rpc.chain_info().await?;
-        validate_chain_identity(&self.config, &node_info, &chain_info)
-    }
-
     async fn ensure_transaction_capabilities_current(&self) -> Result<(), SharedError> {
         if self.mode() != Mode::Transaction {
             return Ok(());
+        }
+        if let Some(cached) = self.transaction_probe.read().await.as_ref() {
+            if cached.observed_at.elapsed() <= self.config.chain_status_cache_ttl {
+                return validate_transaction_probe(&cached.probe);
+            }
         }
         let probe = timeout(self.config.startup_probe_timeout, self.rpc.probe(true))
             .await
@@ -925,13 +1002,67 @@ impl AppContext {
                     "transaction capability probe timed out",
                 )
             })??;
-        if !probe.supports_transaction_submission || !probe.supports_raw_dry_run {
-            return Err(SharedError::new(
-                SharedErrorCode::UnsupportedOperation,
-                "transaction capability probe failed: required submission or dry-run methods are unavailable",
-            ));
+        {
+            let mut cached = self.transaction_probe.write().await;
+            *cached = Some(CachedProbe {
+                probe: probe.clone(),
+                observed_at: Instant::now(),
+            });
         }
-        Ok(())
+        validate_transaction_probe(&probe)
+    }
+
+    async fn load_transaction_endpoint_snapshot(
+        &self,
+    ) -> Result<TransactionEndpointSnapshot, SharedError> {
+        let node_info = self.rpc.node_info().await?;
+        let chain_info = self.rpc.chain_info_uncached().await?;
+        validate_chain_identity(&self.config, &node_info, &chain_info)?;
+        let now_seconds = extract_u64(&node_info, &["now_seconds"])?;
+        let head_timestamp = extract_u64(&chain_info, &["head", "timestamp"])?;
+        enforce_transaction_head_lag(now_seconds, head_timestamp, self.config.max_head_lag)?;
+        let chain_context = extract_chain_context(&node_info, &chain_info)?;
+        Ok(TransactionEndpointSnapshot {
+            chain_context,
+            now_seconds,
+        })
+    }
+
+    async fn signed_transaction_sequence_is_stale(
+        &self,
+        signed_txn: &SignedUserTransaction,
+    ) -> Result<bool, SharedError> {
+        let sender = signed_txn.sender().to_string();
+        let current_sequence = self.resolve_sequence_number(&sender, None).await?.0;
+        Ok(signed_txn.sequence_number() < current_sequence)
+    }
+
+    async fn has_unresolved_submission(&self, txn_hash: &str) -> bool {
+        self.prune_unresolved_submissions().await;
+        self.unresolved_submissions
+            .read()
+            .await
+            .contains_key(txn_hash)
+    }
+
+    async fn record_unresolved_submission(&self, txn_hash: &str) {
+        self.prune_unresolved_submissions().await;
+        self.unresolved_submissions.write().await.insert(
+            txn_hash.to_owned(),
+            UnresolvedSubmission {
+                recorded_at: Instant::now(),
+            },
+        );
+    }
+
+    async fn clear_unresolved_submission(&self, txn_hash: &str) {
+        self.unresolved_submissions.write().await.remove(txn_hash);
+    }
+
+    async fn prune_unresolved_submissions(&self) {
+        let retention = self.config.max_expiration_ttl + self.config.max_watch_timeout;
+        let mut unresolved = self.unresolved_submissions.write().await;
+        unresolved.retain(|_, submission| submission.recorded_at.elapsed() <= retention);
     }
 
     fn try_watch_permit(&self) -> Result<OwnedSemaphorePermit, SharedError> {
@@ -961,6 +1092,143 @@ fn ensure_transaction_mode(mode: Mode) -> Result<(), SharedError> {
         return Err(SharedError::new(
             SharedErrorCode::PermissionDenied,
             "transaction tools are disabled in read_only mode",
+        ));
+    }
+    Ok(())
+}
+
+fn ensure_capability(supported: bool, message: &'static str) -> Result<(), SharedError> {
+    if supported {
+        Ok(())
+    } else {
+        Err(SharedError::new(
+            SharedErrorCode::UnsupportedOperation,
+            message,
+        ))
+    }
+}
+
+fn effective_submit_timeout_seconds(
+    blocking: bool,
+    requested_timeout_seconds: Option<u64>,
+    watch_timeout: Duration,
+    max_submit_blocking_timeout: Duration,
+) -> Option<u64> {
+    blocking.then(|| {
+        requested_timeout_seconds
+            .unwrap_or(watch_timeout.as_secs())
+            .min(max_submit_blocking_timeout.as_secs())
+    })
+}
+
+fn accepted_submission_output(
+    txn_hash: String,
+    submitted: bool,
+    effective_timeout_seconds: Option<u64>,
+    watch_result: Option<WatchTransactionOutput>,
+) -> SubmitSignedTransactionOutput {
+    SubmitSignedTransactionOutput {
+        txn_hash,
+        submission_state: SubmissionState::Accepted,
+        submitted,
+        error_code: None,
+        effective_timeout_seconds,
+        next_action: SubmissionNextAction::WatchTransaction,
+        watch_result,
+    }
+}
+
+fn submission_unknown_output(
+    txn_hash: String,
+    effective_timeout_seconds: Option<u64>,
+) -> SubmitSignedTransactionOutput {
+    SubmitSignedTransactionOutput {
+        txn_hash,
+        submission_state: SubmissionState::Unknown,
+        submitted: false,
+        error_code: Some("submission_unknown".to_owned()),
+        effective_timeout_seconds,
+        next_action: SubmissionNextAction::ReconcileByTxnHash,
+        watch_result: None,
+    }
+}
+
+fn rejected_submission_output(
+    txn_hash: String,
+    error_code: &'static str,
+    effective_timeout_seconds: Option<u64>,
+) -> SubmitSignedTransactionOutput {
+    SubmitSignedTransactionOutput {
+        txn_hash,
+        submission_state: SubmissionState::Rejected,
+        submitted: false,
+        error_code: Some(error_code.to_owned()),
+        effective_timeout_seconds,
+        next_action: SubmissionNextAction::ReprepareThenResign,
+        watch_result: None,
+    }
+}
+
+fn validate_transaction_probe(probe: &EffectiveProbe) -> Result<(), SharedError> {
+    if !probe.supports_transaction_submission || !probe.supports_raw_dry_run {
+        return Err(SharedError::new(
+            SharedErrorCode::UnsupportedOperation,
+            "transaction capability probe failed: required submission or dry-run methods are unavailable",
+        ));
+    }
+    Ok(())
+}
+
+fn enforce_transaction_head_lag(
+    now_seconds: u64,
+    head_timestamp: u64,
+    max_head_lag: Duration,
+) -> Result<(), SharedError> {
+    let lag_seconds = now_seconds.saturating_sub(head_timestamp);
+    if lag_seconds > max_head_lag.as_secs() {
+        return Err(SharedError::retryable(
+            SharedErrorCode::RpcUnavailable,
+            format!(
+                "endpoint head lag is {lag_seconds}s, above max_head_lag {}s",
+                max_head_lag.as_secs()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn validate_signed_transaction_submission(
+    signed_txn: &SignedUserTransaction,
+    prepared_chain_context: &ChainContext,
+    current_chain_context: &ChainContext,
+) -> Result<(), SharedError> {
+    let signed_chain_id = signed_txn.chain_id().id();
+    if signed_chain_id != current_chain_context.chain_id {
+        return Err(SharedError::new(
+            SharedErrorCode::InvalidChainContext,
+            format!(
+                "signed transaction chain_id {signed_chain_id} does not match current endpoint chain_id {}",
+                current_chain_context.chain_id
+            ),
+        ));
+    }
+    if prepared_chain_context.chain_id != current_chain_context.chain_id
+        || canonicalize_network_name(&prepared_chain_context.network)
+            != canonicalize_network_name(&current_chain_context.network)
+        || prepared_chain_context.genesis_hash != current_chain_context.genesis_hash
+    {
+        return Err(SharedError::new(
+            SharedErrorCode::InvalidChainContext,
+            "prepared chain_context does not match the current endpoint chain identity",
+        ));
+    }
+    if prepared_chain_context.chain_id != signed_chain_id {
+        return Err(SharedError::new(
+            SharedErrorCode::InvalidChainContext,
+            format!(
+                "prepared chain_context chain_id {} does not match signed transaction chain_id {signed_chain_id}",
+                prepared_chain_context.chain_id
+            ),
         ));
     }
     Ok(())
@@ -1385,12 +1653,33 @@ fn rfc3339_now() -> Result<String, SharedError> {
 #[cfg(test)]
 mod tests {
     use super::{
-        extract_chain_context, is_terminal_watch_status, status_summary_from_parts,
-        validate_chain_identity,
+        AppContext, CachedProbe, SignedUserTransaction, accepted_submission_output,
+        effective_submit_timeout_seconds, enforce_transaction_head_lag, extract_chain_context,
+        is_terminal_watch_status, status_summary_from_parts, submission_unknown_output,
+        validate_chain_identity, validate_signed_transaction_submission,
+        validate_transaction_probe,
     };
-    use serde_json::json;
-    use starcoin_node_mcp_types::{Mode, RuntimeConfig, VmProfile};
-    use std::{path::PathBuf, time::Duration};
+    use httpmock::{Mock, prelude::*};
+    use serde_json::{Value, json};
+    use starcoin_node_mcp_rpc::NodeRpcClient;
+    use starcoin_node_mcp_types::{
+        ChainContext, EffectiveProbe, Mode, RuntimeConfig, SubmissionState,
+        SubmitSignedTransactionInput, VmProfile,
+    };
+    use starcoin_vm2_crypto::ed25519::genesis_key_pair;
+    use starcoin_vm2_vm_types::{
+        account_address::AccountAddress,
+        on_chain_resource::ChainId,
+        transaction::{Script, TransactionPayload},
+    };
+    use std::{
+        collections::HashMap,
+        path::PathBuf,
+        str::FromStr,
+        sync::Arc,
+        time::{Duration, Instant},
+    };
+    use tokio::sync::{RwLock, Semaphore};
     use url::Url;
 
     #[test]
@@ -1462,9 +1751,224 @@ mod tests {
         )));
     }
 
+    #[test]
+    fn transaction_probe_requires_submission_and_dry_run() {
+        validate_transaction_probe(&sample_probe()).expect("fully capable probe should pass");
+        let missing_submit = EffectiveProbe {
+            supports_transaction_submission: false,
+            ..sample_probe()
+        };
+        assert_eq!(
+            validate_transaction_probe(&missing_submit)
+                .expect_err("missing submit capability should fail")
+                .code,
+            starcoin_node_mcp_types::SharedErrorCode::UnsupportedOperation
+        );
+    }
+
+    #[test]
+    fn submit_timeout_is_clamped_when_blocking() {
+        assert_eq!(
+            effective_submit_timeout_seconds(
+                true,
+                Some(90),
+                Duration::from_secs(30),
+                Duration::from_secs(60),
+            ),
+            Some(60)
+        );
+        assert_eq!(
+            effective_submit_timeout_seconds(
+                false,
+                Some(90),
+                Duration::from_secs(30),
+                Duration::from_secs(60),
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn head_lag_policy_fails_closed_above_threshold() {
+        enforce_transaction_head_lag(120, 90, Duration::from_secs(60))
+            .expect("healthy lag should pass");
+        assert_eq!(
+            enforce_transaction_head_lag(200, 100, Duration::from_secs(30))
+                .expect_err("lag above threshold should fail")
+                .code,
+            starcoin_node_mcp_types::SharedErrorCode::RpcUnavailable
+        );
+    }
+
+    #[test]
+    fn validate_signed_submission_accepts_matching_chain_context() {
+        let signed_txn = sample_signed_transaction(254, 7);
+        let prepared = sample_chain_context(254, "main", "0x1");
+        let current = sample_chain_context(254, "Main", "0x1");
+        validate_signed_transaction_submission(&signed_txn, &prepared, &current)
+            .expect("matching signed and prepared chain contexts should pass");
+    }
+
+    #[test]
+    fn validate_signed_submission_rejects_chain_mismatch() {
+        let signed_txn = sample_signed_transaction(254, 7);
+        let prepared = sample_chain_context(254, "main", "0x1");
+        let current = sample_chain_context(253, "barnard", "0x2");
+        let error = validate_signed_transaction_submission(&signed_txn, &prepared, &current)
+            .expect_err("mismatched endpoint identity should fail");
+        assert_eq!(
+            error.code,
+            starcoin_node_mcp_types::SharedErrorCode::InvalidChainContext
+        );
+    }
+
+    #[test]
+    fn submit_result_helpers_preserve_policy_shape() {
+        let accepted = accepted_submission_output("0x1".to_owned(), true, Some(5), None);
+        assert_eq!(
+            accepted.submission_state,
+            starcoin_node_mcp_types::SubmissionState::Accepted
+        );
+        assert!(accepted.submitted);
+
+        let unknown = submission_unknown_output("0x2".to_owned(), Some(9));
+        assert_eq!(unknown.error_code.as_deref(), Some("submission_unknown"));
+        assert_eq!(
+            unknown.next_action,
+            starcoin_node_mcp_types::SubmissionNextAction::ReconcileByTxnHash
+        );
+    }
+
+    #[tokio::test]
+    async fn unresolved_submission_entries_expire_from_local_policy_cache() {
+        let app = sample_app_context();
+        assert!(!app.has_unresolved_submission("0xabc").await);
+
+        app.record_unresolved_submission("0xabc").await;
+        assert!(app.has_unresolved_submission("0xabc").await);
+
+        {
+            let mut unresolved = app.unresolved_submissions.write().await;
+            unresolved
+                .get_mut("0xabc")
+                .expect("entry should exist")
+                .recorded_at = Instant::now()
+                - (app.config.max_expiration_ttl
+                    + app.config.max_watch_timeout
+                    + Duration::from_secs(1));
+        }
+
+        assert!(!app.has_unresolved_submission("0xabc").await);
+    }
+
+    #[tokio::test]
+    async fn submit_unknown_blocks_blind_resubmission_before_second_txpool_call() {
+        let server = MockServer::start();
+        mock_json_rpc_result(&server, "node.status", json!(true));
+        mock_json_rpc_result(&server, "chain.info", sample_chain_info_value());
+        mock_json_rpc_result(&server, "node.info", sample_node_info_value());
+        mock_json_rpc_result(&server, "chain.get_block_by_number", Value::Null);
+        mock_json_rpc_result(&server, "chain.get_transaction2", Value::Null);
+        mock_json_rpc_error(&server, "chain.get_events", -32601, "method not found");
+        mock_json_rpc_error(&server, "state.list_resource", -32601, "method not found");
+        mock_json_rpc_error(&server, "state.list_code", -32601, "method not found");
+        mock_json_rpc_error(
+            &server,
+            "contract2.resolve_function",
+            -32601,
+            "method not found",
+        );
+        mock_json_rpc_error(
+            &server,
+            "contract.resolve_function",
+            -32601,
+            "method not found",
+        );
+        mock_json_rpc_error(
+            &server,
+            "contract2.resolve_module",
+            -32601,
+            "method not found",
+        );
+        mock_json_rpc_error(
+            &server,
+            "contract.resolve_module",
+            -32601,
+            "method not found",
+        );
+        mock_json_rpc_error(
+            &server,
+            "contract2.resolve_struct",
+            -32601,
+            "method not found",
+        );
+        mock_json_rpc_error(
+            &server,
+            "contract.resolve_struct",
+            -32601,
+            "method not found",
+        );
+        mock_json_rpc_error(&server, "contract2.call_v2", -32601, "method not found");
+        mock_json_rpc_error(&server, "contract.call_v2", -32601, "method not found");
+        mock_json_rpc_result(&server, "txpool.gas_price", json!("1"));
+        mock_json_rpc_result(&server, "txpool.next_sequence_number2", json!("0"));
+        mock_json_rpc_result(
+            &server,
+            "contract2.dry_run_raw",
+            json!({ "status": "Executed" }),
+        );
+        mock_json_rpc_result(
+            &server,
+            "state.get_account_state",
+            json!({ "sequence_number": "0" }),
+        );
+        let submit = server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains("\"method\":\"txpool.submit_hex_transaction2\"");
+            then.status(503).body("submit unavailable");
+        });
+
+        let app = AppContext::bootstrap(sample_runtime_config_with_endpoint(&server.url("/")))
+            .await
+            .expect("bootstrap should succeed");
+        let hits_after_bootstrap = submit.hits();
+        let signed_txn = sample_signed_transaction(254, 0);
+        let signed_txn_bcs_hex = format!(
+            "0x{}",
+            hex::encode(bcs_ext::to_bytes(&signed_txn).expect("sample tx should serialize"))
+        );
+        let input = SubmitSignedTransactionInput {
+            signed_txn_bcs_hex,
+            prepared_chain_context: sample_chain_context(254, "main", "0x1"),
+            blocking: false,
+            timeout_seconds: None,
+        };
+
+        let first = app
+            .submit_signed_transaction(input.clone())
+            .await
+            .expect("first submission should return an unknown state");
+        assert_eq!(first.submission_state, SubmissionState::Unknown);
+        assert_eq!(first.error_code.as_deref(), Some("submission_unknown"));
+        assert_eq!(submit.hits(), hits_after_bootstrap + 1);
+
+        let second = app
+            .submit_signed_transaction(input)
+            .await
+            .expect("second submission should be blocked locally");
+        assert_eq!(second.submission_state, SubmissionState::Unknown);
+        assert_eq!(second.error_code.as_deref(), Some("submission_unknown"));
+        assert_eq!(submit.hits(), hits_after_bootstrap + 1);
+    }
+
     fn sample_runtime_config() -> RuntimeConfig {
+        sample_runtime_config_with_endpoint("https://example.com")
+    }
+
+    fn sample_runtime_config_with_endpoint(endpoint: &str) -> RuntimeConfig {
         RuntimeConfig {
-            rpc_endpoint_url: Url::parse("https://example.com").expect("valid url"),
+            rpc_endpoint_url: Url::parse(endpoint).expect("valid url"),
             mode: Mode::Transaction,
             vm_profile: VmProfile::Auto,
             expected_chain_id: Some(254),
@@ -1507,5 +2011,132 @@ mod tests {
             config_path: Some(PathBuf::from("/tmp/node-mcp.toml")),
             log_level: "info".to_owned(),
         }
+    }
+
+    fn sample_probe() -> EffectiveProbe {
+        EffectiveProbe {
+            supports_node_info: true,
+            supports_chain_info: true,
+            supports_block_lookup: true,
+            supports_transaction_lookup: true,
+            supports_events_query: true,
+            supports_resource_listing: true,
+            supports_module_listing: true,
+            supports_abi_resolution: true,
+            supports_view_call: true,
+            supports_transaction_submission: true,
+            supports_raw_dry_run: true,
+        }
+    }
+
+    fn sample_chain_context(chain_id: u8, network: &str, genesis_hash: &str) -> ChainContext {
+        ChainContext {
+            chain_id,
+            network: network.to_owned(),
+            genesis_hash: genesis_hash.to_owned(),
+            head_block_hash: "0x2".to_owned(),
+            head_block_number: 42,
+            head_state_root: Some("0x3".to_owned()),
+            observed_at: "2026-03-25T00:00:00Z".to_owned(),
+        }
+    }
+
+    fn sample_signed_transaction(chain_id: u8, sequence_number: u64) -> SignedUserTransaction {
+        let sender = AccountAddress::from_str("0x1").expect("valid sender");
+        let raw_txn = super::build_raw_transaction(
+            sender,
+            sequence_number,
+            TransactionPayload::Script(Script::new(vec![], vec![], vec![])),
+            10_000,
+            1,
+            1_000,
+            "0x1::STC::STC".to_owned(),
+            ChainId::new(chain_id),
+        );
+        let (private_key, public_key) = genesis_key_pair();
+        raw_txn
+            .sign(&private_key, public_key)
+            .expect("sample transaction should sign")
+            .into_inner()
+    }
+
+    fn sample_app_context() -> AppContext {
+        let config = sample_runtime_config();
+        AppContext {
+            rpc: NodeRpcClient::new(&config).expect("rpc client should build"),
+            watch_permits: Arc::new(Semaphore::new(config.max_concurrent_watch_requests)),
+            expensive_permits: Arc::new(Semaphore::new(config.max_inflight_expensive_requests)),
+            startup_probe: sample_probe(),
+            transaction_probe: Arc::new(RwLock::new(Some(CachedProbe {
+                probe: sample_probe(),
+                observed_at: Instant::now(),
+            }))),
+            unresolved_submissions: Arc::new(RwLock::new(HashMap::new())),
+            config,
+        }
+    }
+
+    fn mock_json_rpc_result<'a>(server: &'a MockServer, method: &str, result: Value) -> Mock<'a> {
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains(&format!("\"method\":\"{method}\""));
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "result": result,
+                    })
+                    .to_string(),
+                );
+        })
+    }
+
+    fn mock_json_rpc_error<'a>(
+        server: &'a MockServer,
+        method: &str,
+        code: i64,
+        message: &str,
+    ) -> Mock<'a> {
+        server.mock(|when, then| {
+            when.method(POST)
+                .path("/")
+                .body_contains(&format!("\"method\":\"{method}\""));
+            then.status(200)
+                .header("content-type", "application/json")
+                .body(
+                    json!({
+                        "jsonrpc": "2.0",
+                        "id": 1,
+                        "error": {
+                            "code": code,
+                            "message": message,
+                        }
+                    })
+                    .to_string(),
+                );
+        })
+    }
+
+    fn sample_node_info_value() -> Value {
+        json!({
+            "net": { "Builtin": "Main" },
+            "now_seconds": 120,
+        })
+    }
+
+    fn sample_chain_info_value() -> Value {
+        json!({
+            "chain_id": 254,
+            "genesis_hash": "0x1",
+            "head": {
+                "number": 42,
+                "block_hash": "0x2",
+                "state_root": "0x3",
+                "timestamp": 100,
+            }
+        })
     }
 }
