@@ -291,11 +291,14 @@ impl RuntimeConfig {
                 .or(file_config.max_head_lag_seconds)
                 .unwrap_or(60),
         );
-        let warn_head_lag = duration_secs(
+        let mut warn_head_lag = duration_secs(
             cli.warn_head_lag_seconds
                 .or(file_config.warn_head_lag_seconds)
                 .unwrap_or(15),
         );
+        if warn_head_lag > max_head_lag {
+            warn_head_lag = max_head_lag;
+        }
         let allow_submit_without_prior_simulation = cli
             .allow_submit_without_prior_simulation
             .or(file_config.allow_submit_without_prior_simulation)
@@ -386,26 +389,7 @@ impl RuntimeConfig {
             .or_else(|| env::var("STARCOIN_NODE_MCP_LOG_LEVEL").ok())
             .unwrap_or_else(|| "info".to_owned());
 
-        validate_endpoint(
-            &rpc_endpoint_url,
-            allow_insecure_remote_transport,
-            &allowed_rpc_hosts,
-        )?;
-        validate_mode_requirements(
-            mode,
-            expected_chain_id,
-            expected_network.as_deref(),
-            expected_genesis_hash.as_deref(),
-            require_genesis_hash_match,
-            allow_read_only_chain_autodetect,
-            is_remote_endpoint(&rpc_endpoint_url),
-        )?;
-        validate_clamps(
-            default_expiration_ttl,
-            max_expiration_ttl,
-            watch_poll_interval,
-        )?;
-        Ok(Self {
+        let config = Self {
             rpc_endpoint_url,
             mode,
             vm_profile,
@@ -448,7 +432,9 @@ impl RuntimeConfig {
             max_inflight_expensive_requests,
             config_path,
             log_level,
-        })
+        };
+        config.validate()?;
+        Ok(config)
     }
 
     pub fn is_remote(&self) -> bool {
@@ -457,6 +443,39 @@ impl RuntimeConfig {
 
     pub fn auth_token_debug(&self) -> Option<&str> {
         self.rpc_auth_token.as_ref().map(RedactedString::expose)
+    }
+
+    pub fn validate(&self) -> anyhow::Result<()> {
+        validate_endpoint(
+            &self.rpc_endpoint_url,
+            self.allow_insecure_remote_transport,
+            &self.allowed_rpc_hosts,
+        )?;
+        validate_mode_requirements(
+            self.mode,
+            self.expected_chain_id,
+            self.expected_network.as_deref(),
+            self.expected_genesis_hash.as_deref(),
+            self.require_genesis_hash_match,
+            self.allow_read_only_chain_autodetect,
+            self.is_remote(),
+        )?;
+        validate_clamps(
+            self.default_expiration_ttl,
+            self.max_expiration_ttl,
+            self.connect_timeout,
+            self.request_timeout,
+            self.startup_probe_timeout,
+            self.watch_poll_interval,
+            self.watch_timeout,
+            self.max_submit_blocking_timeout,
+            self.max_watch_timeout,
+            self.min_watch_poll_interval,
+            self.max_head_lag,
+            self.warn_head_lag,
+            self.max_concurrent_watch_requests,
+            self.max_inflight_expensive_requests,
+        )
     }
 }
 
@@ -589,13 +608,52 @@ fn validate_mode_requirements(
 fn validate_clamps(
     default_expiration_ttl: Duration,
     max_expiration_ttl: Duration,
+    connect_timeout: Duration,
+    request_timeout: Duration,
+    startup_probe_timeout: Duration,
     watch_poll_interval: Duration,
+    watch_timeout: Duration,
+    max_submit_blocking_timeout: Duration,
+    max_watch_timeout: Duration,
+    min_watch_poll_interval: Duration,
+    max_head_lag: Duration,
+    warn_head_lag: Duration,
+    max_concurrent_watch_requests: usize,
+    max_inflight_expensive_requests: usize,
 ) -> anyhow::Result<()> {
     if default_expiration_ttl > max_expiration_ttl {
         bail!("default_expiration_ttl_seconds cannot exceed max_expiration_ttl_seconds");
     }
+    for (name, value) in [
+        ("connect_timeout_ms", connect_timeout),
+        ("request_timeout_ms", request_timeout),
+        ("startup_probe_timeout_ms", startup_probe_timeout),
+        ("watch_timeout_seconds", watch_timeout),
+        (
+            "max_submit_blocking_timeout_seconds",
+            max_submit_blocking_timeout,
+        ),
+        ("max_watch_timeout_seconds", max_watch_timeout),
+        ("max_head_lag_seconds", max_head_lag),
+    ] {
+        if value.is_zero() {
+            bail!("{name} must be greater than zero");
+        }
+    }
     if watch_poll_interval.is_zero() {
         bail!("watch_poll_interval_seconds must be greater than zero");
+    }
+    if min_watch_poll_interval.is_zero() {
+        bail!("min_watch_poll_interval_seconds must be greater than zero");
+    }
+    if warn_head_lag > max_head_lag {
+        bail!("warn_head_lag_seconds cannot exceed max_head_lag_seconds");
+    }
+    if max_concurrent_watch_requests == 0 {
+        bail!("max_concurrent_watch_requests must be greater than zero");
+    }
+    if max_inflight_expensive_requests == 0 {
+        bail!("max_inflight_expensive_requests must be greater than zero");
     }
     Ok(())
 }
