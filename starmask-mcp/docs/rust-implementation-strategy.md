@@ -95,6 +95,7 @@ Recommended responsibilities:
   - MCP stdio entrypoint
   - `rmcp` integration adapter
   - tool-to-daemon adapter
+  - optional embeddable library entrypoints for host binaries that want to reuse the same MCP adapter in-process
 - `starmask-native-host`
   - Chrome Native Messaging bridge binary
 - `starmaskctl`
@@ -136,6 +137,15 @@ Recommendation:
 - use a simple runtime model
 - current-thread Tokio runtime is sufficient unless profiling shows otherwise
 - let `rmcp` own MCP protocol and stdio transport details as much as practical
+- expose a small library facade so another Rust binary can reuse the same adapter wiring without copying `main.rs`
+
+Recommended library-facing surface:
+
+- `DaemonClient`
+- `LocalDaemonClient`
+- `StarmaskMcpServer<C>`
+- `serve_stdio(client)`
+- `default_socket_path()`
 
 ### `starmask-native-host`
 

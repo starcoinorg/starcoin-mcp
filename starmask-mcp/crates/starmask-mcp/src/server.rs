@@ -15,7 +15,7 @@ use starmask_types::{
 };
 
 use crate::{
-    daemon_client::LocalDaemonClient,
+    daemon_client::DaemonClient,
     dto::{
         EmptyParams, WalletCancelRequestInput, WalletGetPublicKeyInput,
         WalletGetRequestStatusInput, WalletListAccountsInput, WalletRequestSignTransactionInput,
@@ -24,17 +24,20 @@ use crate::{
     error_mapping::AdapterError,
 };
 
-pub struct StarmaskMcpServer {
-    daemon_client: LocalDaemonClient,
+pub struct StarmaskMcpServer<C> {
+    daemon_client: C,
 }
 
-impl StarmaskMcpServer {
-    pub fn new(daemon_client: LocalDaemonClient) -> Self {
+impl<C> StarmaskMcpServer<C> {
+    pub fn new(daemon_client: C) -> Self {
         Self { daemon_client }
     }
 }
 
-impl ServerHandler for StarmaskMcpServer {
+impl<C> ServerHandler for StarmaskMcpServer<C>
+where
+    C: DaemonClient,
+{
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_server_info(
             Implementation::new("starmask-mcp", env!("CARGO_PKG_VERSION"))

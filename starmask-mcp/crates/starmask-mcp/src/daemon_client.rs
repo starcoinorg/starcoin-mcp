@@ -1,4 +1,5 @@
 use std::{
+    future::Future,
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -21,6 +22,49 @@ use starmask_types::{
 
 use crate::error_mapping::AdapterError;
 
+pub trait DaemonClient: Clone + Send + Sync + 'static {
+    fn wallet_status(
+        &self,
+    ) -> impl Future<Output = Result<WalletStatusResult, AdapterError>> + Send;
+
+    fn wallet_list_instances(
+        &self,
+        connected_only: bool,
+    ) -> impl Future<Output = Result<WalletListInstancesResult, AdapterError>> + Send;
+
+    fn wallet_list_accounts(
+        &self,
+        wallet_instance_id: Option<starmask_types::WalletInstanceId>,
+        include_public_key: bool,
+    ) -> impl Future<Output = Result<WalletListAccountsResult, AdapterError>> + Send;
+
+    fn wallet_get_public_key(
+        &self,
+        address: String,
+        wallet_instance_id: Option<starmask_types::WalletInstanceId>,
+    ) -> impl Future<Output = Result<WalletGetPublicKeyResult, AdapterError>> + Send;
+
+    fn create_sign_transaction_request(
+        &self,
+        params: CreateSignTransactionParams,
+    ) -> impl Future<Output = Result<CreateRequestResult, AdapterError>> + Send;
+
+    fn create_sign_message_request(
+        &self,
+        params: CreateSignMessageParams,
+    ) -> impl Future<Output = Result<CreateRequestResult, AdapterError>> + Send;
+
+    fn get_request_status(
+        &self,
+        request_id: starmask_types::RequestId,
+    ) -> impl Future<Output = Result<GetRequestStatusResult, AdapterError>> + Send;
+
+    fn cancel_request(
+        &self,
+        request_id: starmask_types::RequestId,
+    ) -> impl Future<Output = Result<CancelRequestResult, AdapterError>> + Send;
+}
+
 #[derive(Clone, Debug)]
 pub struct LocalDaemonClient {
     socket_path: PathBuf,
@@ -34,8 +78,10 @@ impl LocalDaemonClient {
             timeout,
         }
     }
+}
 
-    pub async fn wallet_status(&self) -> Result<WalletStatusResult, AdapterError> {
+impl DaemonClient for LocalDaemonClient {
+    async fn wallet_status(&self) -> Result<WalletStatusResult, AdapterError> {
         self.call(
             "wallet.status",
             WalletStatusParams {
@@ -45,7 +91,7 @@ impl LocalDaemonClient {
         .await
     }
 
-    pub async fn wallet_list_instances(
+    async fn wallet_list_instances(
         &self,
         connected_only: bool,
     ) -> Result<WalletListInstancesResult, AdapterError> {
@@ -59,7 +105,7 @@ impl LocalDaemonClient {
         .await
     }
 
-    pub async fn wallet_list_accounts(
+    async fn wallet_list_accounts(
         &self,
         wallet_instance_id: Option<starmask_types::WalletInstanceId>,
         include_public_key: bool,
@@ -75,7 +121,7 @@ impl LocalDaemonClient {
         .await
     }
 
-    pub async fn wallet_get_public_key(
+    async fn wallet_get_public_key(
         &self,
         address: String,
         wallet_instance_id: Option<starmask_types::WalletInstanceId>,
@@ -91,21 +137,21 @@ impl LocalDaemonClient {
         .await
     }
 
-    pub async fn create_sign_transaction_request(
+    async fn create_sign_transaction_request(
         &self,
         params: CreateSignTransactionParams,
     ) -> Result<CreateRequestResult, AdapterError> {
         self.call("request.createSignTransaction", params).await
     }
 
-    pub async fn create_sign_message_request(
+    async fn create_sign_message_request(
         &self,
         params: CreateSignMessageParams,
     ) -> Result<CreateRequestResult, AdapterError> {
         self.call("request.createSignMessage", params).await
     }
 
-    pub async fn get_request_status(
+    async fn get_request_status(
         &self,
         request_id: starmask_types::RequestId,
     ) -> Result<GetRequestStatusResult, AdapterError> {
@@ -119,7 +165,7 @@ impl LocalDaemonClient {
         .await
     }
 
-    pub async fn cancel_request(
+    async fn cancel_request(
         &self,
         request_id: starmask_types::RequestId,
     ) -> Result<CancelRequestResult, AdapterError> {
@@ -132,7 +178,9 @@ impl LocalDaemonClient {
         )
         .await
     }
+}
 
+impl LocalDaemonClient {
     async fn call<P, R>(&self, method: &str, params: P) -> Result<R, AdapterError>
     where
         P: Serialize,
