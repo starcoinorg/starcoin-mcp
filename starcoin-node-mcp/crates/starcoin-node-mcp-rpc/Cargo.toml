@@ -1,0 +1,17 @@
+[package]
+name = "starcoin-node-mcp-rpc"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+reqwest.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+starcoin-node-mcp-types = { path = "../starcoin-node-mcp-types" }
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true

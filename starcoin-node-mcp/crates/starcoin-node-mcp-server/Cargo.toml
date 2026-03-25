@@ -1,0 +1,23 @@
+[package]
+name = "starcoin-node-mcp-server"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[[bin]]
+name = "starcoin-node-mcp"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+rmcp.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+starcoin-node-mcp-core = { path = "../starcoin-node-mcp-core" }
+starcoin-node-mcp-types = { path = "../starcoin-node-mcp-types" }
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
