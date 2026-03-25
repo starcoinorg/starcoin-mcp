@@ -7,7 +7,7 @@ use std::{
 use anyhow::{Context, anyhow, bail};
 use clap::Parser;
 use schemars::JsonSchema;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use url::Url;
 
 use crate::domain::{Mode, VmProfile};
@@ -169,7 +169,7 @@ impl std::fmt::Debug for RedactedString {
     }
 }
 
-#[derive(Debug, Clone, Default, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, Default, Deserialize, JsonSchema, PartialEq, Eq, Serialize)]
 struct FileConfig {
     rpc_endpoint_url: Option<String>,
     mode: Option<Mode>,
@@ -682,8 +682,10 @@ fn is_remote_endpoint(endpoint: &Url) -> bool {
 #[cfg(test)]
 mod tests {
     use clap::Parser;
+    use schemars::schema_for;
+    use serde_json::Value;
 
-    use super::{CliArgs, RedactedString, RuntimeConfig};
+    use super::{CliArgs, FileConfig, RedactedString, RuntimeConfig};
     use crate::domain::{Mode, VmProfile};
 
     #[test]
@@ -768,5 +770,91 @@ mod tests {
         };
         assert_eq!(config.auth_token_debug(), Some("[redacted]"));
         assert_eq!(config.auth_token_raw(), Some("secret-token"));
+    }
+
+    #[test]
+    fn file_config_toml_roundtrip_preserves_fields() {
+        let config = FileConfig {
+            rpc_endpoint_url: Some("https://barnard.example.com".to_owned()),
+            mode: Some(Mode::Transaction),
+            vm_profile: Some(VmProfile::LegacyCompatible),
+            expected_chain_id: Some(251),
+            expected_network: Some("barnard".to_owned()),
+            expected_genesis_hash: Some("0xabc".to_owned()),
+            require_genesis_hash_match: Some(true),
+            connect_timeout_ms: Some(1_000),
+            request_timeout_ms: Some(5_000),
+            startup_probe_timeout_ms: Some(3_000),
+            rpc_auth_token_env: Some("STARCOIN_TOKEN".to_owned()),
+            rpc_headers: Some("x-api-key=secret".to_owned()),
+            tls_server_name: Some("barnard.example.com".to_owned()),
+            allowed_rpc_hosts: Some("barnard.example.com".to_owned()),
+            tls_pinned_spki_sha256: Some(
+                "sha256/AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=".to_owned(),
+            ),
+            allow_insecure_remote_transport: Some(false),
+            allow_read_only_chain_autodetect: Some(false),
+            default_expiration_ttl_seconds: Some(600),
+            max_expiration_ttl_seconds: Some(3_600),
+            watch_poll_interval_seconds: Some(3),
+            watch_timeout_seconds: Some(120),
+            max_head_lag_seconds: Some(60),
+            warn_head_lag_seconds: Some(15),
+            allow_submit_without_prior_simulation: Some(false),
+            chain_status_cache_ttl_seconds: Some(30),
+            abi_cache_ttl_seconds: Some(300),
+            module_cache_max_entries: Some(128),
+            disable_disk_cache: Some(true),
+            max_submit_blocking_timeout_seconds: Some(60),
+            max_watch_timeout_seconds: Some(300),
+            min_watch_poll_interval_seconds: Some(2),
+            max_list_blocks_count: Some(100),
+            max_events_limit: Some(200),
+            max_account_resource_limit: Some(100),
+            max_account_module_limit: Some(50),
+            max_list_resources_size: Some(100),
+            max_list_modules_size: Some(100),
+            max_publish_package_bytes: Some(524_288),
+            max_concurrent_watch_requests: Some(8),
+            max_inflight_expensive_requests: Some(16),
+            log_level: Some("debug".to_owned()),
+        };
+        let toml_text = toml::to_string(&config).expect("file config should serialize to TOML");
+        let roundtrip: FileConfig =
+            toml::from_str(&toml_text).expect("serialized TOML should deserialize");
+        assert_eq!(roundtrip, config);
+    }
+
+    #[test]
+    fn file_config_schema_exposes_expected_properties() {
+        let schema = schema_for!(FileConfig);
+        let schema_json = serde_json::to_value(schema).expect("schema should serialize");
+        for field in [
+            "rpc_endpoint_url",
+            "mode",
+            "vm_profile",
+            "expected_chain_id",
+            "rpc_auth_token_env",
+            "max_publish_package_bytes",
+        ] {
+            assert!(
+                schema_json
+                    .pointer(&format!("/properties/{field}"))
+                    .is_some(),
+                "schema should contain property {field}: {schema_json}",
+            );
+        }
+        let mode_schema = schema_json
+            .pointer("/$defs/Mode")
+            .or_else(|| schema_json.pointer("/definitions/Mode"))
+            .expect("schema should include a Mode definition");
+        assert_eq!(
+            mode_schema.pointer("/type"),
+            Some(&Value::String("string".to_owned()))
+        );
+        assert!(
+            mode_schema.pointer("/enum").is_some(),
+            "Mode schema should expose enum values: {mode_schema}"
+        );
     }
 }

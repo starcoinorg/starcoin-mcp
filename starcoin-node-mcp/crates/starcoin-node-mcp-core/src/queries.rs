@@ -93,12 +93,7 @@ impl AppContext {
                 ));
             }
         }
-        if peers
-            .as_ref()
-            .and_then(Value::as_array)
-            .map(|items| items.is_empty())
-            .unwrap_or(true)
-        {
+        if matches!(peers.as_ref().and_then(Value::as_array), Some(items) if items.is_empty()) {
             warnings.push("node reports zero connected peers".to_owned());
         }
         Ok(NodeHealthOutput {
@@ -415,7 +410,14 @@ impl AppContext {
                             format!("block {block_number} was not found"),
                         )
                     })?;
-                Ok(extract_optional_string(&block, &["header", "state_root"]))
+                let state_root = extract_optional_string(&block, &["header", "state_root"])
+                    .ok_or_else(|| {
+                        SharedError::new(
+                            SharedErrorCode::RpcUnavailable,
+                            format!("block {block_number} is missing header.state_root"),
+                        )
+                    })?;
+                Ok(Some(state_root))
             }
             None => Ok(None),
         }
@@ -427,16 +429,7 @@ impl AppContext {
     ) -> Result<Option<u64>, SharedError> {
         match self.rpc.next_sequence_number(address).await {
             Ok(sequence_number) => Ok(sequence_number),
-            Err(error)
-                if matches!(
-                    error.code,
-                    SharedErrorCode::UnsupportedOperation
-                        | SharedErrorCode::NodeUnavailable
-                        | SharedErrorCode::RpcUnavailable
-                ) =>
-            {
-                Ok(None)
-            }
+            Err(error) if is_degradable_sequence_lookup_error(&error) => Ok(None),
             Err(error) => Err(error),
         }
     }

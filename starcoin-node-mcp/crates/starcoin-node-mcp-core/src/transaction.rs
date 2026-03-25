@@ -243,7 +243,11 @@ impl AppContext {
         if let Some(sequence_number) = caller_sequence_number {
             return Ok((sequence_number, SequenceNumberSource::Caller));
         }
-        let txpool_next = self.rpc.next_sequence_number(address).await?;
+        let txpool_next = match self.rpc.next_sequence_number(address).await {
+            Ok(sequence_number) => sequence_number,
+            Err(error) if is_degradable_sequence_lookup_error(&error) => None,
+            Err(error) => return Err(error),
+        };
         let onchain_state = self.rpc.get_account_state(address).await?;
         let onchain_sequence = onchain_state
             .as_ref()
@@ -275,15 +279,23 @@ impl AppContext {
         }
     }
 
-    fn resolve_expiration(
+    pub(crate) fn resolve_expiration(
         &self,
         now_seconds: u64,
         requested_expiration: Option<u64>,
     ) -> Result<u64, SharedError> {
-        let max_expiration = now_seconds + self.config.max_expiration_ttl.as_secs();
+        let max_expiration = now_seconds.saturating_add(self.config.max_expiration_ttl.as_secs());
         let expiration = match requested_expiration {
+            Some(value) if value < now_seconds => {
+                return Err(SharedError::new(
+                    SharedErrorCode::TransactionExpired,
+                    format!(
+                        "requested expiration {value} is earlier than current node time {now_seconds}"
+                    ),
+                ));
+            }
             Some(value) => value.min(max_expiration),
-            None => now_seconds + self.config.default_expiration_ttl.as_secs(),
+            None => now_seconds.saturating_add(self.config.default_expiration_ttl.as_secs()),
         };
         Ok(expiration)
     }
@@ -428,6 +440,11 @@ fn normalize_simulation(simulation: &Value) -> Result<SimulationResult, SharedEr
         .unwrap_or(0);
     let events = simulation
         .get("events")
+        .or_else(|| {
+            simulation
+                .get("txn_output")
+                .and_then(|txn| txn.get("events"))
+        })
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();

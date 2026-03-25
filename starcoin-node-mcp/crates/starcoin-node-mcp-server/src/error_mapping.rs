@@ -37,10 +37,22 @@ impl From<AdapterError> for ErrorData {
                     | SharedErrorCode::TransactionNotFound => {
                         ErrorData::invalid_params(error.message, data)
                     }
-                    SharedErrorCode::UnsupportedOperation | SharedErrorCode::PermissionDenied => {
+                    SharedErrorCode::UnsupportedOperation => {
                         ErrorData::new(ErrorCode::METHOD_NOT_FOUND, error.message, data)
                     }
-                    _ => ErrorData::new(ErrorCode::INTERNAL_ERROR, error.message, data),
+                    SharedErrorCode::NodeUnavailable
+                    | SharedErrorCode::RpcUnavailable
+                    | SharedErrorCode::InvalidChainContext
+                    | SharedErrorCode::SubmissionUnknown
+                    | SharedErrorCode::SimulationFailed
+                    | SharedErrorCode::SubmissionFailed
+                    | SharedErrorCode::TransactionExpired
+                    | SharedErrorCode::SequenceNumberStale
+                    | SharedErrorCode::PermissionDenied
+                    | SharedErrorCode::ApprovalRequired
+                    | SharedErrorCode::RateLimited => {
+                        ErrorData::new(ErrorCode::INTERNAL_ERROR, error.message, data)
+                    }
                 }
             }
             AdapterError::InvalidRequest(message) => ErrorData::invalid_params(message, None),

@@ -1,8 +1,9 @@
 use super::{
     AppContext, CachedProbe, SignedUserTransaction, accepted_submission_output,
     effective_submit_timeout_seconds, enforce_transaction_head_lag, extract_chain_context,
-    is_terminal_watch_status, status_summary_from_parts, submission_unknown_output,
-    validate_chain_identity, validate_signed_transaction_submission, validate_transaction_probe,
+    extract_optional_string, is_terminal_watch_status, status_summary_from_parts,
+    submission_unknown_output, validate_chain_identity, validate_signed_transaction_submission,
+    validate_transaction_probe,
 };
 use httpmock::{Mock, prelude::*};
 use serde_json::{Value, json};
@@ -85,6 +86,25 @@ fn validate_chain_identity_accepts_case_insensitive_network_names() {
 }
 
 #[test]
+fn extract_optional_string_rejects_non_string_values() {
+    let value = json!({
+        "number": 1,
+        "array": [],
+        "object": {},
+        "null_value": null,
+        "string": "ok"
+    });
+    assert_eq!(
+        extract_optional_string(&value, &["string"]),
+        Some("ok".to_owned())
+    );
+    assert_eq!(extract_optional_string(&value, &["number"]), None);
+    assert_eq!(extract_optional_string(&value, &["array"]), None);
+    assert_eq!(extract_optional_string(&value, &["object"]), None);
+    assert_eq!(extract_optional_string(&value, &["null_value"]), None);
+}
+
+#[test]
 fn watch_only_terminates_on_confirmation() {
     assert!(!is_terminal_watch_status(&status_summary_from_parts(
         Some(&json!({"status": "Pending"})),
@@ -142,6 +162,18 @@ fn head_lag_policy_fails_closed_above_threshold() {
             .expect_err("lag above threshold should fail")
             .code,
         starcoin_node_mcp_types::SharedErrorCode::RpcUnavailable
+    );
+}
+
+#[test]
+fn resolve_expiration_rejects_past_requested_timestamps() {
+    let app = sample_app_context();
+    let error = app
+        .resolve_expiration(120, Some(119))
+        .expect_err("past expiration should fail before preparation");
+    assert_eq!(
+        error.code,
+        starcoin_node_mcp_types::SharedErrorCode::TransactionExpired
     );
 }
 
@@ -364,6 +396,52 @@ async fn submit_unknown_blocks_blind_resubmission_before_second_txpool_call() {
     assert_eq!(second.submission_state, SubmissionState::Unknown);
     assert_eq!(second.error_code.as_deref(), Some("submission_unknown"));
     assert_eq!(submit.hits(), hits_after_bootstrap + 1);
+}
+
+#[tokio::test]
+async fn resolve_sequence_number_degrades_when_txpool_sequence_hint_is_unavailable() {
+    let server = MockServer::start();
+    mock_json_rpc_error(
+        &server,
+        "txpool.next_sequence_number2",
+        -32601,
+        "method not found",
+    );
+    mock_json_rpc_error(
+        &server,
+        "txpool.next_sequence_number",
+        -32601,
+        "method not found",
+    );
+    mock_json_rpc_result(
+        &server,
+        "state.get_account_state",
+        json!({ "sequence_number": "9" }),
+    );
+    let config = sample_runtime_config_with_endpoint(&server.url("/"));
+    let app = AppContext {
+        rpc: NodeRpcClient::new(&config).expect("rpc client should build"),
+        watch_permits: Arc::new(Semaphore::new(config.max_concurrent_watch_requests)),
+        expensive_permits: Arc::new(Semaphore::new(config.max_inflight_expensive_requests)),
+        startup_probe: sample_probe(),
+        transaction_probe: Arc::new(RwLock::new(Some(CachedProbe {
+            probe: sample_probe(),
+            observed_at: Instant::now(),
+        }))),
+        prepared_transactions: Arc::new(RwLock::new(HashMap::new())),
+        unresolved_submissions: Arc::new(RwLock::new(HashMap::new())),
+        config,
+    };
+
+    let (sequence, source) = app
+        .resolve_sequence_number("0x1", None)
+        .await
+        .expect("on-chain sequence should still be usable");
+    assert_eq!(sequence, 9);
+    assert_eq!(
+        source,
+        starcoin_node_mcp_types::SequenceNumberSource::Onchain
+    );
 }
 
 fn sample_runtime_config() -> RuntimeConfig {

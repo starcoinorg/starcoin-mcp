@@ -90,11 +90,9 @@ pub(crate) fn extract_string(value: &Value, path: &[&str]) -> Result<String, Sha
 }
 
 pub(crate) fn extract_optional_string(value: &Value, path: &[&str]) -> Option<String> {
-    lookup(value, path).and_then(|value| match value {
-        Value::String(string) => Some(string.clone()),
-        Value::Number(number) => Some(number.to_string()),
-        other => Some(other.to_string()),
-    })
+    lookup(value, path)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 pub(crate) fn extract_u64(value: &Value, path: &[&str]) -> Result<u64, SharedError> {
@@ -212,6 +210,15 @@ pub(crate) fn is_transport_error(error: &SharedError) -> bool {
     matches!(
         error.code,
         SharedErrorCode::NodeUnavailable | SharedErrorCode::RpcUnavailable
+    )
+}
+
+pub(crate) fn is_degradable_sequence_lookup_error(error: &SharedError) -> bool {
+    matches!(
+        error.code,
+        SharedErrorCode::UnsupportedOperation
+            | SharedErrorCode::NodeUnavailable
+            | SharedErrorCode::RpcUnavailable
     )
 }
 
