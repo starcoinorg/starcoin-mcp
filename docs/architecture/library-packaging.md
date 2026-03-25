@@ -17,7 +17,9 @@ Repository-level rule:
 
 - `starcoin-node-mcp` remains chain-facing only
 - `starmask-mcp` remains wallet-facing only
-- embedding both into one host binary must not create a combined signer-and-node authority
+- the repository must not ship a merged library that blurs wallet-facing and chain-facing responsibilities
+
+If an external host links both libraries into one process, that host is explicitly assuming a combined trust domain and must treat it as such.
 
 ## Common Packaging Pattern
 
@@ -72,6 +74,8 @@ Recommended public facade:
 
 This keeps wallet lifecycle and persistence in `starmaskd` while allowing another Rust binary to reuse the same MCP adapter in-process.
 
+Keep the architecture boundary explicit between `starmask-mcp` (MCP stdio adapter), `starmaskd` (lifecycle owner and persistence owner), `starmask-native-host` (Chrome Native Messaging bridge), and the Starmask extension (approval UI and signing authority).
+
 ## Node MCP Packaging
 
 `starcoin-node-mcp` does not need a daemon in the first release.
@@ -92,7 +96,7 @@ Recommended public facade:
 
 ## Non-Goal
 
-The repository should not introduce one monolithic combined library that merges wallet and node MCP behavior into a single trust domain.
+The repository should not ship one monolithic combined library that merges wallet and node MCP behavior into a single trust domain.
 
 If one host binary wants both capabilities, it should link both MCP server libraries separately and preserve their distinct dependency graphs and failure handling.
 

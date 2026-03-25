@@ -17,7 +17,7 @@ use starmask_types::{
 };
 
 use crate::{
-    daemon_client::DaemonClient,
+    daemon_client::{DaemonClient, WalletListAccountsRequest, WalletListInstancesRequest},
     dto::{
         EmptyParams, WalletCancelRequestInput, WalletGetPublicKeyInput,
         WalletGetRequestStatusInput, WalletListAccountsInput, WalletRequestSignTransactionInput,
@@ -123,13 +123,13 @@ where
                 let params: WalletListAccountsInput = parse_arguments(request.arguments)?;
                 serde_json::to_value(
                     self.daemon_client
-                        .wallet_list_accounts(
-                            params
+                        .wallet_list_accounts(WalletListAccountsRequest {
+                            wallet_instance_id: params
                                 .wallet_instance_id()
                                 .map_err(AdapterError::from)
                                 .map_err(to_mcp_error)?,
-                            params.include_public_key,
-                        )
+                            include_public_key: params.include_public_key,
+                        })
                         .await
                         .map_err(to_mcp_error)?,
                 )
@@ -242,7 +242,9 @@ where
                 let _: EmptyParams = parse_arguments(request.arguments)?;
                 serde_json::to_value(
                     self.daemon_client
-                        .wallet_list_instances(false)
+                        .wallet_list_instances(WalletListInstancesRequest {
+                            connected_only: false,
+                        })
                         .await
                         .map_err(to_mcp_error)?,
                 )

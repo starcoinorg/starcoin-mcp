@@ -8,7 +8,9 @@ mod error_mapping;
 mod runtime;
 mod server;
 
-pub use daemon_client::{DaemonClient, LocalDaemonClient};
+pub use daemon_client::{
+    DaemonClient, LocalDaemonClient, WalletListAccountsRequest, WalletListInstancesRequest,
+};
 pub use error_mapping::AdapterError;
 pub use runtime::serve_stdio;
 pub use server::StarmaskMcpServer;

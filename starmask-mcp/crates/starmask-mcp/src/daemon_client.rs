@@ -22,6 +22,17 @@ use starmask_types::{
 
 use crate::error_mapping::AdapterError;
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WalletListInstancesRequest {
+    pub connected_only: bool,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WalletListAccountsRequest {
+    pub wallet_instance_id: Option<starmask_types::WalletInstanceId>,
+    pub include_public_key: bool,
+}
+
 pub trait DaemonClient: Clone + Send + Sync + 'static {
     fn wallet_status(
         &self,
@@ -29,13 +40,12 @@ pub trait DaemonClient: Clone + Send + Sync + 'static {
 
     fn wallet_list_instances(
         &self,
-        connected_only: bool,
+        request: WalletListInstancesRequest,
     ) -> impl Future<Output = Result<WalletListInstancesResult, AdapterError>> + Send;
 
     fn wallet_list_accounts(
         &self,
-        wallet_instance_id: Option<starmask_types::WalletInstanceId>,
-        include_public_key: bool,
+        request: WalletListAccountsRequest,
     ) -> impl Future<Output = Result<WalletListAccountsResult, AdapterError>> + Send;
 
     fn wallet_get_public_key(
@@ -93,13 +103,13 @@ impl DaemonClient for LocalDaemonClient {
 
     async fn wallet_list_instances(
         &self,
-        connected_only: bool,
+        request: WalletListInstancesRequest,
     ) -> Result<WalletListInstancesResult, AdapterError> {
         self.call(
             "wallet.listInstances",
             WalletListInstancesParams {
                 protocol_version: starmask_types::DAEMON_PROTOCOL_VERSION,
-                connected_only,
+                connected_only: request.connected_only,
             },
         )
         .await
@@ -107,15 +117,14 @@ impl DaemonClient for LocalDaemonClient {
 
     async fn wallet_list_accounts(
         &self,
-        wallet_instance_id: Option<starmask_types::WalletInstanceId>,
-        include_public_key: bool,
+        request: WalletListAccountsRequest,
     ) -> Result<WalletListAccountsResult, AdapterError> {
         self.call(
             "wallet.listAccounts",
             WalletListAccountsParams {
                 protocol_version: starmask_types::DAEMON_PROTOCOL_VERSION,
-                wallet_instance_id,
-                include_public_key,
+                wallet_instance_id: request.wallet_instance_id,
+                include_public_key: request.include_public_key,
             },
         )
         .await
