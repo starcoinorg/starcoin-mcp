@@ -2,10 +2,9 @@
 
 ## Status
 
-This document is the phase-2 security model for the planned multi-backend implementation.
+This document is the phase-2 security model for the current multi-backend implementation.
 
-It is not part of the current `v1` release contract. The current extension-backed security model
-remains defined by:
+It supplements, rather than replaces, the current extension-backed security model in:
 
 - `docs/security-model.md`
 
@@ -74,6 +73,7 @@ Required properties:
 2. transaction and message rendering happen in that same local prompt
 3. decrypted key material is never written to the coordinator database
 4. unlock cache is bounded by a short TTL
+5. the current implementation uses `tty_prompt`; richer local prompt surfaces remain future work
 
 ## 6. Password and Unlock Boundaries
 
@@ -82,8 +82,10 @@ Phase-2 design choice:
 1. there is no MCP-visible password field
 2. there is no daemon JSON-RPC method that accepts a password
 3. phase 2 does not require `wallet_request_unlock`
-4. a locked backend may fail signing requests with `wallet_locked`
-5. backend-local prompt flows may ask for a password during signing
+4. a locked backend without `unlock` capability must fail signing requests with `wallet_locked`
+5. a locked backend with `unlock` capability may collect the password locally during signing
+6. if that backend-local unlock fails or is cancelled, the request still terminates with
+   `wallet_locked`
 
 This keeps password handling out of MCP and out of the coordinator while phase 3 unlock flows are
 still pending.

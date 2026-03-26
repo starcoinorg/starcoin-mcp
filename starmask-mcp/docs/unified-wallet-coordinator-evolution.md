@@ -2,26 +2,30 @@
 
 ## Status
 
-This document is a forward-looking architecture and rollout design.
+This document records the multi-backend architecture, the implemented phase-2 baseline, and the
+remaining rollout beyond that baseline.
 
-It is not the current `v1` normative contract. The authoritative `v1` behavior remains defined by:
+It is not a single normative contract. Current concrete behavior remains split across:
 
 - `docs/starmask-mcp-interface-design.md`
 - `docs/daemon-protocol.md`
 - `docs/security-model.md`
 - `docs/configuration.md`
+- `docs/wallet-backend-agent-contract.md`
+- `docs/wallet-backend-local-socket-binding.md`
+- `docs/wallet-backend-security-model.md`
 
 This document exists to formally capture the multi-backend direction without pretending those
 changes are already implemented.
 
 ## 1. Motivation
 
-The current stack is effective for one signer backend, the Starmask browser extension, but it does
-not yet support:
+The original stack was effective for one signer backend, the Starmask browser extension, but phase
+2 expands it to support:
 
-- `local_account_dir` signing through Starcoin `AccountProvider`
-- a generic signer-backend model
-- explicit backend-local unlock workflows
+- `local_account_dir` signing through a generic backend agent
+- a backend-kind-aware coordinator model
+- backend-local unlock during signing without exposing passwords to MCP or daemon RPC
 
 The goal of this evolution is to preserve one stable MCP entrypoint while allowing more than one
 local signing backend to participate safely.
@@ -56,32 +60,40 @@ The key change is conceptual:
 - the extension becomes one backend agent
 - a local account directory agent becomes another backend agent
 
-## 4. Proposed Backend Kinds
+## 4. Phase-2 Backend Model
 
-Planned backend kinds:
+Implemented backend kinds:
 
 - `starmask_extension`
 - `local_account_dir`
+
+Reserved future backend kinds:
+
 - `private_key_dev`
 
-Planned transport kinds:
+Implemented transport kinds:
 
 - `native_messaging`
 - `local_socket`
 
-Planned approval surfaces:
+Approval surfaces present in shared types:
 
 - `browser_ui`
 - `tty_prompt`
 - `desktop_prompt`
 - `none` only for explicitly unsafe development backends
 
-## 5. Proposed Logical Backend-Agent Contract
+Current runtime constraints:
 
-Before any new backend ships, the project needs one backend-generic logical contract between
-`starmaskd` and a signer backend.
+1. `starmask_extension` uses `browser_ui`
+2. `local_account_dir` currently requires `tty_prompt`
+3. `desktop_prompt` is reserved in shared enums but rejected until implemented
 
-Planned logical verbs:
+## 5. Current Logical Backend-Agent Contract
+
+Phase 2 lands a backend-generic logical contract between `starmaskd` and a signer backend.
+
+Current logical verbs:
 
 - `backend.register`
 - `backend.heartbeat`
@@ -92,15 +104,14 @@ Planned logical verbs:
 - `request.resolve`
 - `request.reject`
 
-The existing Native Messaging contract is the first transport binding of that logical model. A
-future local-account agent should reuse the same lifecycle semantics even if its wire framing is
-different.
+The Native Messaging contract remains the extension-specific binding. The local-account agent now
+reuses the same lifecycle semantics over the local-socket transport.
 
-## 6. Proposed Data Model Evolution
+## 6. Phase-2 Data Model
 
 ### Wallet instance
 
-Planned additional fields:
+Phase-2 internal fields:
 
 - `backend_kind`
 - `transport_kind`
@@ -110,20 +121,20 @@ Planned additional fields:
 
 ### Wallet account
 
-Planned additional fields:
+Phase-2 internal fields:
 
 - `is_read_only`
 
 ### Requests
 
-The existing request lifecycle stays asynchronous, but future phases may add:
+The existing request lifecycle stays asynchronous. Phase 2 adds capability-aware routing for
+backend-local unlock, while future phases may still add:
 
 - `unlock` as a new request kind
-- capability-aware routing
 
-## 7. Proposed MCP Surface Evolution
+## 7. MCP Surface Evolution
 
-The safest path is additive.
+The MCP surface stays additive.
 
 ### Keep stable
 
@@ -138,37 +149,39 @@ These tools should remain stable:
 - `wallet_get_request_status`
 - `wallet_cancel_request`
 
-### Add only after backend capability model exists
+### Still deferred
 
 - `wallet_request_unlock`
 
-That tool must not be introduced before:
+The current phase-2 runtime intentionally keeps unlock inside sign flows for backends that
+advertise `unlock`. A standalone unlock tool must not be introduced before:
 
 1. backends can advertise `unlock` capability
 2. backend-local approval surfaces are specified
 3. the daemon can reject unsupported backends deterministically
 
-## 8. Proposed Daemon Protocol Evolution
+## 8. Daemon Protocol Evolution
 
-The current daemon protocol version is `1`. Future protocol changes should not silently mutate that
-contract.
+The current daemon exposes two protocol versions with distinct roles:
+
+- client-facing daemon RPC stays at `v1`
+- generic backend-agent RPC uses `v2`
 
 Rules:
 
 1. keep protocol `v1` stable for the extension-backed stack
-2. introduce protocol `v2` only when backend-generic fields or unlock requests are actually added
-3. keep a written compatibility story before any version bump
+2. keep protocol `v2` scoped to backend agents until the client-facing surface actually needs a new
+   contract
+3. keep a written compatibility story before any later version bump
 
-Likely `v2` additions:
+Likely future additions after `v2`:
 
 - backend-generic wallet-instance summaries
 - `request.createUnlock`
-- backend registration methods that are not extension-specific
 
-## 9. Proposed Configuration Evolution
+## 9. Configuration Evolution
 
-The current configuration is extension-centric. A future multi-backend config should move to a
-backend list such as:
+Phase 2 replaces the extension-centric configuration with a backend list such as:
 
 ```toml
 [[wallet_backends]]
@@ -180,8 +193,8 @@ id = "local-main"
 backend_kind = "local_account_dir"
 ```
 
-That change should land only when the runtime can actually instantiate multiple backend kinds. Until
-then, the current `v1` config remains authoritative.
+The runtime now validates backend kind, transport, prompt mode, and local unlock-cache constraints
+when loading this configuration.
 
 ## 10. Security Considerations for `local_account_dir`
 
@@ -212,6 +225,8 @@ then, the current `v1` config remains authoritative.
 - define and implement a local backend-agent transport
 - specify registration, heartbeats, and request lifecycle semantics
 - add configuration for `local_account_dir`
+- keep backend-local password entry inside the sign flow
+- keep current local backend support limited to `tty_prompt`
 
 ### Phase 3: explicit unlock flow
 
@@ -225,18 +240,9 @@ then, the current `v1` config remains authoritative.
 - keep it disabled by default
 - block it in production channels
 
-## 12. Acceptance Additions Required Before Phase 2 Freeze
+## 12. Phase-2 Companion Documents
 
-Before the project can freeze a multi-backend implementation, it still needs:
-
-1. the generic backend-agent contract
-2. the concrete local-socket transport binding
-3. the multi-backend security model
-4. the multi-backend persistence and schema plan
-5. the multi-backend configuration contract
-6. the phase-2 acceptance matrix
-
-Those prerequisites are now captured in:
+The phase-2 implementation is anchored by:
 
 - `docs/wallet-backend-agent-contract.md`
 - `docs/wallet-backend-local-socket-binding.md`
@@ -247,12 +253,9 @@ Those prerequisites are now captured in:
 
 ## 13. Practical Conclusion
 
-The multi-backend design is worth pursuing, but the disciplined path is:
+Phase 2 is now real code, not only a proposal. The remaining discipline is:
 
-1. keep current `v1` docs truthful and extension-backed
-2. specify the generic backend model separately
-3. promote pieces from this document into the normative docs only when code and tests actually land
-4. treat the phase-2 companion documents above as the implementation target, not as speculative
-   notes
-
-That separation prevents future-state design from being mistaken for current contract.
+1. keep the stable MCP-facing `v1` surface truthful
+2. keep backend-agent `v2` behavior documented in the phase-2 companion docs
+3. treat explicit unlock requests and development-only backends as future work until code and tests
+   land

@@ -2,10 +2,9 @@
 
 ## Status
 
-This document is a forward-looking contract for the planned multi-backend architecture.
+This document is the logical contract for the current phase-2 multi-backend architecture.
 
-It is not part of the current `v1` implementation contract. The current extension-backed behavior
-remains defined by:
+The extension-backed `v1` behavior remains defined by:
 
 - `docs/native-messaging-contract.md`
 - `docs/daemon-protocol.md`
@@ -115,7 +114,7 @@ Those are separate transport bindings or higher-level interfaces.
 
 Each backend instance must advertise a capability set.
 
-Planned capability flags:
+Phase-2 capability flags:
 
 - `unlock`
 - `get_public_key`
@@ -128,6 +127,8 @@ Rules:
    capability
 2. capabilities are instance-scoped, not just backend-kind scoped
 3. capability absence is authoritative and must fail closed
+4. `unlock` allows a backend to accept sign requests while still requiring backend-local password
+   entry before signature production
 
 ## 7. Wallet Instance Metadata
 
@@ -471,7 +472,7 @@ Required properties:
 
 ## 15. Local Account Backend Notes
 
-For `local_account_dir`, the backend agent should wrap Starcoin `AccountProvider`.
+For `local_account_dir`, the backend agent should wrap Starcoin account storage and signing APIs.
 
 Minimum functional requirements:
 
@@ -480,6 +481,8 @@ Minimum functional requirements:
 3. sign canonical transaction bytes through `sign_txn`
 4. sign canonical messages through `sign_message`
 5. keep unlock and password entry entirely inside the backend agent
+6. if the backend advertises `unlock`, any password prompt must happen only after local approval is
+   displayed and must never cross daemon transport
 
 ## 16. Phase-2 Decisions Closed by Companion Documents
 
@@ -506,5 +509,5 @@ This document should be read together with:
 - `docs/security-model.md` for current `v1` invariants
 - `docs/native-messaging-contract.md` for the existing concrete transport binding
 
-When phase 2 implementation begins, the project should promote the stable pieces of this document
-into the normative interface, protocol, security, and persistence documents.
+This document is now paired with the implemented phase-2 transport, configuration, security, and
+acceptance documents.

@@ -2,10 +2,14 @@
 
 ## Status
 
-This document is the authoritative configuration contract for the current `v1` implementation.
+This document is the authoritative configuration contract for the current runtime.
 
-`v1` configuration is extension-backed and matches the current Rust code in `crates/starmaskd`.
-Planned multi-backend configuration is tracked separately in:
+The current Rust code in `crates/starmaskd` supports both:
+
+- legacy extension-backed `v1` top-level settings for compatibility
+- phase-2 `wallet_backends` entries for generic backends
+
+Detailed multi-backend entry rules remain defined separately in:
 
 - `docs/unified-wallet-coordinator-evolution.md`
 - `docs/wallet-backend-configuration.md`
@@ -42,7 +46,7 @@ Validation should happen before:
 
 ## 4. Current Runtime Config Shape
 
-The current daemon runtime config is extension-centric and contains:
+The current daemon runtime config contains:
 
 - `channel`
 - `allowed_extension_ids`
@@ -59,8 +63,10 @@ The current daemon runtime config is extension-centric and contains:
 - `heartbeat_interval_seconds`
 - `wallet_offline_after_seconds`
 - `result_retention_seconds`
+- `wallet_backends`
 
-There is no `wallet_backends` array in the current codebase.
+If `wallet_backends` is absent, legacy top-level extension fields are translated into one implicit
+extension backend.
 
 ## 5. Default Paths
 
@@ -157,15 +163,16 @@ The current code does not expose terminal-record retention as a user-configurabl
 
 ## 9. Policy Defaults
 
-The current implementation effectively closes the remaining policy questions in favor of a narrow
-and deterministic design:
+The current implementation closes the remaining policy questions in favor of a narrow and
+deterministic design:
 
 - explicit wallet selection is required when routing is ambiguous
 - auto-route is allowed only when exactly one wallet instance matches
 - account listing does not require an interactive approval step
 - public-key lookup may use cached metadata
 - requests fail fast when the target wallet is unavailable
-- requests fail fast when the target wallet is locked
+- requests fail fast when the target wallet is locked unless the selected backend advertises
+  backend-local unlock support
 - blind signing is not supported
 
 ## 10. Environment Variable Mapping
@@ -225,6 +232,5 @@ Typical cases:
 
 ## 13. Non-Goals
 
-This document does not define package-manager-specific install commands or the planned multi-backend
-configuration model. Those follow-on changes are tracked in
-`docs/unified-wallet-coordinator-evolution.md`.
+This document does not define package-manager-specific install commands. Per-backend phase-2 entry
+rules are defined in `docs/wallet-backend-configuration.md`.

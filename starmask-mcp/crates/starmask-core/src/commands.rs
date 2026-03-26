@@ -1,6 +1,7 @@
 use starmask_types::{
-    ClientRequestId, DurationSeconds, PresentationId, RequestId, RequestResult,
-    WalletAccountRecord, WalletInstanceId,
+    ApprovalSurface, BackendKind, ClientRequestId, DurationSeconds, LockState, PresentationId,
+    RequestId, RequestResult, TransportKind, WalletAccountRecord, WalletCapability,
+    WalletInstanceId,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -40,9 +41,33 @@ pub struct RegisterExtensionCommand {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RegisterBackendCommand {
+    pub wallet_instance_id: WalletInstanceId,
+    pub backend_kind: BackendKind,
+    pub transport_kind: TransportKind,
+    pub approval_surface: ApprovalSurface,
+    pub instance_label: String,
+    pub extension_id: String,
+    pub extension_version: String,
+    pub protocol_version: u32,
+    pub capabilities: Vec<WalletCapability>,
+    pub backend_metadata: serde_json::Value,
+    pub profile_hint: Option<String>,
+    pub lock_state: LockState,
+    pub accounts: Vec<WalletAccountRecord>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct HeartbeatExtensionCommand {
     pub wallet_instance_id: WalletInstanceId,
     pub presented_request_ids: Vec<RequestId>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct HeartbeatBackendCommand {
+    pub wallet_instance_id: WalletInstanceId,
+    pub presented_request_ids: Vec<RequestId>,
+    pub lock_state: Option<LockState>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -53,10 +78,17 @@ pub struct UpdateExtensionAccountsCommand {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct UpdateBackendAccountsCommand {
+    pub wallet_instance_id: WalletInstanceId,
+    pub lock_state: LockState,
+    pub accounts: Vec<WalletAccountRecord>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct MarkRequestPresentedCommand {
     pub request_id: RequestId,
     pub wallet_instance_id: WalletInstanceId,
-    pub delivery_lease_id: starmask_types::DeliveryLeaseId,
+    pub delivery_lease_id: Option<starmask_types::DeliveryLeaseId>,
     pub presentation_id: PresentationId,
 }
 
@@ -105,8 +137,11 @@ pub enum CoordinatorCommand {
         request_id: RequestId,
     },
     RegisterExtension(RegisterExtensionCommand),
+    RegisterBackend(RegisterBackendCommand),
     HeartbeatExtension(HeartbeatExtensionCommand),
+    HeartbeatBackend(HeartbeatBackendCommand),
     UpdateExtensionAccounts(UpdateExtensionAccountsCommand),
+    UpdateBackendAccounts(UpdateBackendAccountsCommand),
     PullNextRequest {
         wallet_instance_id: WalletInstanceId,
     },

@@ -1,10 +1,12 @@
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{
     errors::SharedErrorCode,
     ids::{ClientRequestId, RequestId, WalletInstanceId},
     lifecycle::{
-        Curve, LockState, MessageFormat, RejectReasonCode, RequestKind, RequestStatus, ResultKind,
+        ApprovalSurface, BackendKind, Curve, LockState, MessageFormat, RejectReasonCode,
+        RequestKind, RequestStatus, ResultKind, TransportKind, WalletCapability,
     },
     native_bridge::NativeBridgeAccount,
     payload::RequestResult,
@@ -13,6 +15,7 @@ use crate::{
 };
 
 pub const DAEMON_PROTOCOL_VERSION: u32 = 1;
+pub const GENERIC_BACKEND_PROTOCOL_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct SystemPingParams {
@@ -197,6 +200,57 @@ pub struct CancelRequestResult {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct BackendAccount {
+    pub address: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub label: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub public_key: Option<String>,
+    pub is_default: bool,
+    pub is_read_only: bool,
+    pub is_locked: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct BackendRegisterParams {
+    pub protocol_version: u32,
+    pub wallet_instance_id: WalletInstanceId,
+    pub backend_kind: BackendKind,
+    pub transport_kind: TransportKind,
+    pub approval_surface: ApprovalSurface,
+    pub instance_label: String,
+    pub lock_state: LockState,
+    pub capabilities: Vec<WalletCapability>,
+    pub backend_metadata: Value,
+    pub accounts: Vec<BackendAccount>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct BackendRegisteredResult {
+    pub wallet_instance_id: WalletInstanceId,
+    pub daemon_protocol_version: u32,
+    pub accepted: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct BackendHeartbeatParams {
+    pub protocol_version: u32,
+    pub wallet_instance_id: WalletInstanceId,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub presented_request_ids: Vec<RequestId>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub lock_state: Option<LockState>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct BackendUpdateAccountsParams {
+    pub protocol_version: u32,
+    pub wallet_instance_id: WalletInstanceId,
+    pub lock_state: LockState,
+    pub accounts: Vec<BackendAccount>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct ExtensionRegisterParams {
     pub protocol_version: u32,
     pub wallet_instance_id: WalletInstanceId,
@@ -282,7 +336,8 @@ pub struct RequestPresentedParams {
     pub protocol_version: u32,
     pub wallet_instance_id: WalletInstanceId,
     pub request_id: RequestId,
-    pub delivery_lease_id: crate::DeliveryLeaseId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub delivery_lease_id: Option<crate::DeliveryLeaseId>,
     pub presentation_id: crate::PresentationId,
 }
 

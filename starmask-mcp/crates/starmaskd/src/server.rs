@@ -1,4 +1,4 @@
-use std::{collections::BTreeSet, path::Path, time::Duration};
+use std::{path::Path, time::Duration};
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -16,23 +16,30 @@ use tracing::{debug, warn};
 use starmask_core::{
     CoordinatorCommand, CoordinatorResponse,
     commands::{
-        CreateSignMessageCommand, CreateSignTransactionCommand, HeartbeatExtensionCommand,
-        MarkRequestPresentedCommand, RegisterExtensionCommand, RejectRequestCommand,
-        ResolveRequestCommand, UpdateExtensionAccountsCommand,
+        CreateSignMessageCommand, CreateSignTransactionCommand, HeartbeatBackendCommand,
+        HeartbeatExtensionCommand, MarkRequestPresentedCommand, RegisterBackendCommand,
+        RejectRequestCommand, ResolveRequestCommand, UpdateBackendAccountsCommand,
+        UpdateExtensionAccountsCommand,
     },
 };
 use starmask_types::{
-    AckResult, CancelRequestParams, Channel, CreateSignMessageParams, CreateSignTransactionParams,
-    ExtensionHeartbeatParams, ExtensionRegisterParams, ExtensionRegisteredResult,
-    ExtensionUpdateAccountsParams, GetRequestStatusParams, JsonRpcErrorResponse, JsonRpcRequest,
-    JsonRpcResponse, JsonRpcSuccess, NativeBridgeAccount, RequestHasAvailableParams,
-    RequestPresentedParams, RequestPullNextParams, RequestRejectParams, RequestResolveParams,
-    RequestResult, ResultKind, SharedError, SharedErrorCode, SystemGetInfoParams, SystemPingParams,
-    TimestampMs, WalletAccountRecord, WalletGetPublicKeyParams, WalletListAccountsParams,
+    AckResult, BackendHeartbeatParams, BackendRegisterParams, BackendRegisteredResult,
+    BackendUpdateAccountsParams, CancelRequestParams, Channel, CreateSignMessageParams,
+    CreateSignTransactionParams, DAEMON_PROTOCOL_VERSION, ExtensionHeartbeatParams,
+    ExtensionRegisterParams, ExtensionRegisteredResult, ExtensionUpdateAccountsParams,
+    GENERIC_BACKEND_PROTOCOL_VERSION, GetRequestStatusParams, JsonRpcErrorResponse,
+    JsonRpcRequest, JsonRpcResponse, JsonRpcSuccess, NativeBridgeAccount,
+    RequestHasAvailableParams, RequestPresentedParams, RequestPullNextParams,
+    RequestRejectParams, RequestResolveParams, RequestResult, ResultKind, SharedError,
+    SharedErrorCode, SystemGetInfoParams, SystemPingParams, TimestampMs, WalletAccountRecord,
+    WalletCapability, WalletGetPublicKeyParams, WalletListAccountsParams,
     WalletListInstancesParams, WalletStatusParams,
 };
 
-use crate::coordinator_runtime::CoordinatorHandle;
+use crate::{
+    config::{LocalAccountDirBackendConfig, WalletBackendConfig},
+    coordinator_runtime::CoordinatorHandle,
+};
 
 const REQUEST_READ_TIMEOUT: Duration = Duration::from_secs(5);
 const MAX_REQUEST_BYTES: usize = 1024 * 1024;
@@ -40,13 +47,32 @@ const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 #[derive(Clone, Debug)]
 pub struct ServerPolicy {
     pub channel: Channel,
-    pub allowed_extension_ids: BTreeSet<String>,
-    pub native_host_name: String,
+    pub wallet_backends: Vec<WalletBackendConfig>,
 }
 
 impl ServerPolicy {
-    fn accepts_extension(&self, extension_id: &str) -> bool {
-        self.allowed_extension_ids.contains(extension_id)
+    fn accepts_extension(&self, extension_id: &str) -> Option<&crate::config::StarmaskExtensionBackendConfig> {
+        self.wallet_backends
+            .iter()
+            .filter_map(WalletBackendConfig::as_extension)
+            .find(|backend| backend.allowed_extension_ids.contains(extension_id))
+    }
+
+    fn configured_backend(
+        &self,
+        wallet_instance_id: &starmask_types::WalletInstanceId,
+    ) -> Option<&WalletBackendConfig> {
+        self.wallet_backends
+            .iter()
+            .find(|backend| backend.backend_id() == wallet_instance_id.as_str())
+    }
+
+    fn configured_local_backend(
+        &self,
+        wallet_instance_id: &starmask_types::WalletInstanceId,
+    ) -> Option<&LocalAccountDirBackendConfig> {
+        self.configured_backend(wallet_instance_id)
+            .and_then(WalletBackendConfig::as_local_account_dir)
     }
 }
 
@@ -258,7 +284,11 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "request.hasAvailable" => {
-            let params = decode_protocol::<RequestHasAvailableParams>(&id, &request.params)?;
+            let params = decode_protocol_one_of::<RequestHasAvailableParams>(
+                &id,
+                &request.params,
+                &[DAEMON_PROTOCOL_VERSION, GENERIC_BACKEND_PROTOCOL_VERSION],
+            )?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::RequestHasAvailable {
@@ -289,58 +319,79 @@ async fn dispatch_request(
         }
         "extension.register" => {
             let params = decode_protocol::<ExtensionRegisterParams>(&id, &request.params)?;
-            if !policy.accepts_extension(&params.extension_id) {
+            let Some(config) = policy.accepts_extension(&params.extension_id) else {
                 warn!(
                     channel = ?policy.channel,
-                    native_host_name = %policy.native_host_name,
                     extension_id = %params.extension_id,
                     "rejected extension registration outside allowlist"
                 );
-                serde_json::to_value(ExtensionRegisteredResult {
-                    wallet_instance_id: params.wallet_instance_id,
-                    daemon_protocol_version: starmask_types::DAEMON_PROTOCOL_VERSION,
-                    accepted: false,
-                })
-                .map_err(|error| error_response(None, error))?
-            } else {
-                let wallet_instance_id = params.wallet_instance_id.clone();
-                let lock_state = params.lock_state;
-                expect_response(
-                    handle
-                        .dispatch(CoordinatorCommand::RegisterExtension(
-                            RegisterExtensionCommand {
-                                wallet_instance_id: wallet_instance_id.clone(),
-                                extension_id: params.extension_id,
-                                extension_version: params.extension_version,
-                                protocol_version: params.protocol_version,
-                                profile_hint: params.profile_hint,
-                                lock_state,
-                                accounts: params
-                                    .accounts_summary
-                                    .into_iter()
-                                    .map(|account| {
-                                        bridge_account_to_wallet_account(
-                                            &wallet_instance_id,
-                                            account,
-                                            lock_state,
-                                        )
-                                    })
-                                    .collect(),
-                            },
-                        ))
-                        .await,
-                    |response| match response {
-                        CoordinatorResponse::Ack => Ok(()),
-                        other => Err(unexpected_response(other)),
-                    },
-                )?;
-                serde_json::to_value(ExtensionRegisteredResult {
-                    wallet_instance_id,
-                    daemon_protocol_version: starmask_types::DAEMON_PROTOCOL_VERSION,
-                    accepted: true,
-                })
-                .map_err(|error| error_response(None, error))?
-            }
+                return Ok(JsonRpcResponse::Success(JsonRpcSuccess::new(
+                    id,
+                    serde_json::to_value(ExtensionRegisteredResult {
+                        wallet_instance_id: params.wallet_instance_id,
+                        daemon_protocol_version: DAEMON_PROTOCOL_VERSION,
+                        accepted: false,
+                    })
+                    .map_err(|error| error_response(None, error))?,
+                )));
+            };
+            let wallet_instance_id = params.wallet_instance_id.clone();
+            let lock_state = params.lock_state;
+            let extension_id = params.extension_id.clone();
+            let extension_version = params.extension_version.clone();
+            let profile_hint = params.profile_hint.clone().or(config.profile_hint.clone());
+            expect_response(
+                handle
+                    .dispatch(CoordinatorCommand::RegisterBackend(RegisterBackendCommand {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        backend_kind: starmask_types::BackendKind::StarmaskExtension,
+                        transport_kind: starmask_types::TransportKind::NativeMessaging,
+                        approval_surface: starmask_types::ApprovalSurface::BrowserUi,
+                        instance_label: params
+                            .profile_hint
+                            .clone()
+                            .unwrap_or_else(|| config.common.instance_label.clone()),
+                        extension_id: extension_id.clone(),
+                        extension_version: extension_version.clone(),
+                        protocol_version: params.protocol_version,
+                        capabilities: vec![
+                            WalletCapability::GetPublicKey,
+                            WalletCapability::SignMessage,
+                            WalletCapability::SignTransaction,
+                        ],
+                        backend_metadata: serde_json::json!({
+                            "backend_id": config.common.backend_id,
+                            "extension_id": extension_id,
+                            "extension_version": extension_version,
+                            "native_host_name": config.native_host_name,
+                            "profile_hint": profile_hint,
+                        }),
+                        profile_hint,
+                        lock_state,
+                        accounts: params
+                            .accounts_summary
+                            .into_iter()
+                            .map(|account| {
+                                bridge_account_to_wallet_account(
+                                    &wallet_instance_id,
+                                    account,
+                                    lock_state,
+                                )
+                            })
+                            .collect(),
+                    }))
+                    .await,
+                |response| match response {
+                    CoordinatorResponse::Ack => Ok(()),
+                    other => Err(unexpected_response(other)),
+                },
+            )?;
+            serde_json::to_value(ExtensionRegisteredResult {
+                wallet_instance_id,
+                daemon_protocol_version: DAEMON_PROTOCOL_VERSION,
+                accepted: true,
+            })
+            .map_err(|error| error_response(None, error))?
         }
         "extension.heartbeat" => {
             let params = decode_protocol::<ExtensionHeartbeatParams>(&id, &request.params)?;
@@ -389,8 +440,153 @@ async fn dispatch_request(
             )?)
             .map_err(|error| error_response(None, error))?
         }
+        "backend.register" => {
+            let params = decode_protocol_exact::<BackendRegisterParams>(
+                &id,
+                &request.params,
+                GENERIC_BACKEND_PROTOCOL_VERSION,
+            )?;
+            let config = policy
+                .configured_local_backend(&params.wallet_instance_id)
+                .ok_or_else(|| {
+                    JsonRpcErrorResponse::new(
+                        &id,
+                        SharedError::new(
+                            SharedErrorCode::BackendNotAllowed,
+                            "wallet_instance_id is not configured as an enabled local backend",
+                        )
+                        .with_retryable(false),
+                    )
+                })?;
+            validate_generic_backend_registration(config, &params)
+                .map_err(|error| JsonRpcErrorResponse::new(&id, error))?;
+            let wallet_instance_id = params.wallet_instance_id.clone();
+            expect_response(
+                handle
+                    .dispatch(CoordinatorCommand::RegisterBackend(RegisterBackendCommand {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        backend_kind: params.backend_kind,
+                        transport_kind: params.transport_kind,
+                        approval_surface: params.approval_surface,
+                        instance_label: params.instance_label,
+                        extension_id: String::new(),
+                        extension_version: String::new(),
+                        protocol_version: params.protocol_version,
+                        capabilities: canonical_capabilities(params.capabilities),
+                        backend_metadata: params.backend_metadata,
+                        profile_hint: None,
+                        lock_state: params.lock_state,
+                        accounts: params
+                            .accounts
+                            .into_iter()
+                            .map(|account| {
+                                backend_account_to_wallet_account(
+                                    &wallet_instance_id,
+                                    account,
+                                )
+                            })
+                            .collect(),
+                    }))
+                    .await,
+                |response| match response {
+                    CoordinatorResponse::Ack => Ok(()),
+                    other => Err(unexpected_response(other)),
+                },
+            )?;
+            serde_json::to_value(BackendRegisteredResult {
+                wallet_instance_id,
+                daemon_protocol_version: GENERIC_BACKEND_PROTOCOL_VERSION,
+                accepted: true,
+            })
+            .map_err(|error| error_response(None, error))?
+        }
+        "backend.heartbeat" => {
+            let params = decode_protocol_exact::<BackendHeartbeatParams>(
+                &id,
+                &request.params,
+                GENERIC_BACKEND_PROTOCOL_VERSION,
+            )?;
+            if policy
+                .configured_local_backend(&params.wallet_instance_id)
+                .is_none()
+            {
+                return Err(JsonRpcErrorResponse::new(
+                    &id,
+                    SharedError::new(
+                        SharedErrorCode::BackendNotAllowed,
+                        "wallet_instance_id is not configured as an enabled local backend",
+                    )
+                    .with_retryable(false),
+                ));
+            }
+            serde_json::to_value(expect_response(
+                handle
+                    .dispatch(CoordinatorCommand::HeartbeatBackend(
+                        HeartbeatBackendCommand {
+                            wallet_instance_id: params.wallet_instance_id,
+                            presented_request_ids: params.presented_request_ids,
+                            lock_state: params.lock_state,
+                        },
+                    ))
+                    .await,
+                |response| match response {
+                    CoordinatorResponse::Ack => Ok(AckResult { ok: true }),
+                    other => Err(unexpected_response(other)),
+                },
+            )?)
+            .map_err(|error| error_response(None, error))?
+        }
+        "backend.updateAccounts" => {
+            let params = decode_protocol_exact::<BackendUpdateAccountsParams>(
+                &id,
+                &request.params,
+                GENERIC_BACKEND_PROTOCOL_VERSION,
+            )?;
+            if policy
+                .configured_local_backend(&params.wallet_instance_id)
+                .is_none()
+            {
+                return Err(JsonRpcErrorResponse::new(
+                    &id,
+                    SharedError::new(
+                        SharedErrorCode::BackendNotAllowed,
+                        "wallet_instance_id is not configured as an enabled local backend",
+                    )
+                    .with_retryable(false),
+                ));
+            }
+            serde_json::to_value(expect_response(
+                handle
+                    .dispatch(CoordinatorCommand::UpdateBackendAccounts(
+                        UpdateBackendAccountsCommand {
+                            wallet_instance_id: params.wallet_instance_id.clone(),
+                            lock_state: params.lock_state,
+                            accounts: params
+                                .accounts
+                                .into_iter()
+                                .map(|account| {
+                                    backend_account_to_wallet_account(
+                                        &params.wallet_instance_id,
+                                        account,
+                                    )
+                                })
+                                .collect(),
+                        },
+                    ))
+                    .await,
+                |response| match response {
+                    CoordinatorResponse::Ack => Ok(AckResult { ok: true }),
+                    other => Err(unexpected_response(other)),
+                },
+            )?)
+            .map_err(|error| error_response(None, error))?
+        }
         "request.pullNext" => {
-            let params = decode_protocol::<RequestPullNextParams>(&id, &request.params)?;
+            let params = decode_protocol_one_of::<RequestPullNextParams>(
+                &id,
+                &request.params,
+                &[DAEMON_PROTOCOL_VERSION, GENERIC_BACKEND_PROTOCOL_VERSION],
+            )?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::PullNextRequest {
@@ -405,7 +601,11 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "request.presented" => {
-            let params = decode_protocol::<RequestPresentedParams>(&id, &request.params)?;
+            let params = decode_protocol_one_of::<RequestPresentedParams>(
+                &id,
+                &request.params,
+                &[DAEMON_PROTOCOL_VERSION, GENERIC_BACKEND_PROTOCOL_VERSION],
+            )?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::MarkRequestPresented(
@@ -425,7 +625,11 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "request.resolve" => {
-            let params = decode_protocol::<RequestResolveParams>(&id, &request.params)?;
+            let params = decode_protocol_one_of::<RequestResolveParams>(
+                &id,
+                &request.params,
+                &[DAEMON_PROTOCOL_VERSION, GENERIC_BACKEND_PROTOCOL_VERSION],
+            )?;
             let result = request_result_from_params(&params)
                 .map_err(|error| error_response(Some(&id), error))?;
             serde_json::to_value(expect_response(
@@ -445,7 +649,11 @@ async fn dispatch_request(
             .map_err(|error| error_response(None, error))?
         }
         "request.reject" => {
-            let params = decode_protocol::<RequestRejectParams>(&id, &request.params)?;
+            let params = decode_protocol_one_of::<RequestRejectParams>(
+                &id,
+                &request.params,
+                &[DAEMON_PROTOCOL_VERSION, GENERIC_BACKEND_PROTOCOL_VERSION],
+            )?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::RejectRequest(RejectRequestCommand {
@@ -482,9 +690,45 @@ fn decode_protocol<T>(id: &str, value: &Value) -> Result<T, JsonRpcErrorResponse
 where
     T: DeserializeOwned + HasProtocolVersion,
 {
+    decode_protocol_exact(id, value, DAEMON_PROTOCOL_VERSION)
+}
+
+fn decode_protocol_exact<T>(
+    id: &str,
+    value: &Value,
+    expected: u32,
+) -> Result<T, JsonRpcErrorResponse>
+where
+    T: DeserializeOwned + HasProtocolVersion,
+{
     let params = serde_json::from_value::<T>(value.clone())
         .map_err(|error| error_response(Some(id), error))?;
-    if params.protocol_version() != starmask_types::DAEMON_PROTOCOL_VERSION {
+    if params.protocol_version() != expected {
+        return Err(JsonRpcErrorResponse::new(
+            id,
+            SharedError::new(
+                SharedErrorCode::ProtocolVersionMismatch,
+                format!(
+                    "Unsupported daemon protocol version {}",
+                    params.protocol_version()
+                ),
+            ),
+        ));
+    }
+    Ok(params)
+}
+
+fn decode_protocol_one_of<T>(
+    id: &str,
+    value: &Value,
+    expected_versions: &[u32],
+) -> Result<T, JsonRpcErrorResponse>
+where
+    T: DeserializeOwned + HasProtocolVersion,
+{
+    let params = serde_json::from_value::<T>(value.clone())
+        .map_err(|error| error_response(Some(id), error))?;
+    if !expected_versions.contains(&params.protocol_version()) {
         return Err(JsonRpcErrorResponse::new(
             id,
             SharedError::new(
@@ -538,6 +782,9 @@ macro_rules! impl_has_protocol_version {
 }
 
 impl_has_protocol_version!(
+    BackendHeartbeatParams,
+    BackendRegisterParams,
+    BackendUpdateAccountsParams,
     CancelRequestParams,
     CreateSignMessageParams,
     CreateSignTransactionParams,
@@ -639,9 +886,102 @@ fn bridge_account_to_wallet_account(
         label: account.label,
         public_key: account.public_key,
         is_default: account.is_default,
+        is_read_only: false,
         is_locked: lock_state != starmask_types::LockState::Unlocked,
         last_seen_at: TimestampMs::from_millis(0),
     }
+}
+
+fn backend_account_to_wallet_account(
+    wallet_instance_id: &starmask_types::WalletInstanceId,
+    account: starmask_types::BackendAccount,
+) -> WalletAccountRecord {
+    WalletAccountRecord {
+        wallet_instance_id: wallet_instance_id.clone(),
+        address: account.address,
+        label: account.label,
+        public_key: account.public_key,
+        is_default: account.is_default,
+        is_read_only: account.is_read_only,
+        is_locked: account.is_locked,
+        last_seen_at: TimestampMs::from_millis(0),
+    }
+}
+
+fn canonical_capabilities(mut capabilities: Vec<WalletCapability>) -> Vec<WalletCapability> {
+    capabilities.sort();
+    capabilities.dedup();
+    capabilities
+}
+
+fn validate_generic_backend_registration(
+    config: &LocalAccountDirBackendConfig,
+    params: &BackendRegisterParams,
+) -> Result<(), SharedError> {
+    if params.backend_kind != starmask_types::BackendKind::LocalAccountDir {
+        return Err(SharedError::new(
+            SharedErrorCode::InvalidBackendRegistration,
+            "backend_kind does not match the configured backend",
+        )
+        .with_retryable(false));
+    }
+    if params.transport_kind != starmask_types::TransportKind::LocalSocket {
+        return Err(SharedError::new(
+            SharedErrorCode::InvalidBackendRegistration,
+            "transport_kind must be local_socket for generic backend registration",
+        )
+        .with_retryable(false));
+    }
+    if params.approval_surface != config.common.approval_surface {
+        return Err(SharedError::new(
+            SharedErrorCode::InvalidBackendRegistration,
+            "approval_surface does not match the configured backend",
+        )
+        .with_retryable(false));
+    }
+    if params.instance_label.trim().is_empty() {
+        return Err(SharedError::new(
+            SharedErrorCode::InvalidBackendRegistration,
+            "instance_label cannot be empty",
+        )
+        .with_retryable(false));
+    }
+    if !params.backend_metadata.is_object() {
+        return Err(SharedError::new(
+            SharedErrorCode::InvalidBackendRegistration,
+            "backend_metadata must be a JSON object",
+        )
+        .with_retryable(false));
+    }
+    let metadata_len = serde_json::to_vec(&params.backend_metadata)
+        .map_err(|error| SharedError::new(SharedErrorCode::InvalidBackendRegistration, error.to_string()))?
+        .len();
+    if metadata_len > 4 * 1024 {
+        return Err(SharedError::new(
+            SharedErrorCode::InvalidBackendRegistration,
+            "backend_metadata exceeds the 4 KiB phase-2 limit",
+        )
+        .with_retryable(false));
+    }
+
+    let requested = canonical_capabilities(params.capabilities.clone());
+    let allowed = config
+        .common
+        .approval_surface;
+    let _ = allowed;
+    for capability in requested {
+        if !WalletBackendConfig::LocalAccountDir(config.clone())
+            .allowed_capabilities()
+            .contains(&capability)
+        {
+            return Err(SharedError::new(
+                SharedErrorCode::InvalidBackendRegistration,
+                format!("unsupported capability advertised: {capability:?}"),
+            )
+            .with_retryable(false));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -650,7 +990,10 @@ mod tests {
     use serde_json::{Value, json};
 
     use super::{ServerPolicy, dispatch_request};
-    use crate::coordinator_runtime::CoordinatorHandle;
+    use crate::{
+        config::{CommonBackendConfig, StarmaskExtensionBackendConfig, WalletBackendConfig},
+        coordinator_runtime::CoordinatorHandle,
+    };
     use starmask_types::{
         Channel, DAEMON_PROTOCOL_VERSION, ExtensionRegisteredResult, JsonRpcRequest,
         JsonRpcResponse, JsonRpcSuccess, LockState, SharedErrorCode, WalletInstanceId,
@@ -659,11 +1002,21 @@ mod tests {
     fn test_policy(allowed_extension_ids: &[&str]) -> ServerPolicy {
         ServerPolicy {
             channel: Channel::Development,
-            allowed_extension_ids: allowed_extension_ids
-                .iter()
-                .map(|extension_id| (*extension_id).to_owned())
-                .collect(),
-            native_host_name: "com.starcoin.test".to_owned(),
+            wallet_backends: vec![WalletBackendConfig::StarmaskExtension(
+                StarmaskExtensionBackendConfig {
+                    common: CommonBackendConfig {
+                        backend_id: "browser-default".to_owned(),
+                        instance_label: "Browser Default".to_owned(),
+                        approval_surface: starmask_types::ApprovalSurface::BrowserUi,
+                    },
+                    allowed_extension_ids: allowed_extension_ids
+                        .iter()
+                        .map(|extension_id| (*extension_id).to_owned())
+                        .collect(),
+                    native_host_name: "com.starcoin.test".to_owned(),
+                    profile_hint: None,
+                },
+            )],
         }
     }
 

@@ -5,11 +5,12 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use starmask_core::{RepositoryError, RequestRepository, WalletRepository};
 use starmask_types::{
-    ClientRequestId, DeliveryLease, DeliveryLeaseId, PresentationId, RequestId, RequestRecord,
-    TimestampMs, WalletAccountRecord, WalletInstanceId, WalletInstanceRecord,
+    ApprovalSurface, BackendKind, ClientRequestId, DeliveryLease, DeliveryLeaseId,
+    PresentationId, RequestId, RequestRecord, TimestampMs, TransportKind, WalletAccountRecord,
+    WalletCapability, WalletInstanceId, WalletInstanceRecord,
 };
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub const SCHEMA_VERSION: u32 = 2;
 
 pub struct SqliteStore {
     connection: Connection,
@@ -169,22 +170,36 @@ impl WalletRepository for SqliteStore {
         self.connection
             .execute(
                 "INSERT INTO wallet_instances (
-                    wallet_instance_id, extension_id, extension_version, protocol_version,
-                    profile_hint, lock_state, connected, last_seen_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                    wallet_instance_id, backend_kind, transport_kind, approval_surface,
+                    instance_label, extension_id, extension_version, protocol_version,
+                    capabilities_json, backend_metadata_json, profile_hint, lock_state,
+                    connected, last_seen_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
                  ON CONFLICT(wallet_instance_id) DO UPDATE SET
+                    backend_kind = excluded.backend_kind,
+                    transport_kind = excluded.transport_kind,
+                    approval_surface = excluded.approval_surface,
+                    instance_label = excluded.instance_label,
                     extension_id = excluded.extension_id,
                     extension_version = excluded.extension_version,
                     protocol_version = excluded.protocol_version,
+                    capabilities_json = excluded.capabilities_json,
+                    backend_metadata_json = excluded.backend_metadata_json,
                     profile_hint = excluded.profile_hint,
                     lock_state = excluded.lock_state,
                     connected = excluded.connected,
                     last_seen_at = excluded.last_seen_at",
                 params![
                     wallet_instance.wallet_instance_id.as_str(),
+                    encode_string_enum(wallet_instance.backend_kind)?,
+                    encode_string_enum(wallet_instance.transport_kind)?,
+                    encode_string_enum(wallet_instance.approval_surface)?,
+                    wallet_instance.instance_label,
                     wallet_instance.extension_id,
                     wallet_instance.extension_version,
                     wallet_instance.protocol_version,
+                    encode_json(&wallet_instance.capabilities)?,
+                    encode_json(&wallet_instance.backend_metadata)?,
                     wallet_instance.profile_hint,
                     encode_string_enum(wallet_instance.lock_state)?,
                     bool_to_int(wallet_instance.connected),
@@ -227,14 +242,15 @@ impl WalletRepository for SqliteStore {
             transaction
                 .execute(
                     "INSERT INTO wallet_accounts (
-                        wallet_instance_id, address, label, public_key, is_default, is_locked, last_seen_at
-                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                        wallet_instance_id, address, label, public_key, is_default, is_read_only, is_locked, last_seen_at
+                     ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
                     params![
                         account.wallet_instance_id.as_str(),
                         account.address,
                         account.label,
                         account.public_key,
                         bool_to_int(account.is_default),
+                        bool_to_int(account.is_read_only),
                         bool_to_int(account.is_locked),
                         account.last_seen_at.as_millis(),
                     ],
@@ -293,6 +309,20 @@ fn apply_migrations(connection: &Connection) -> Result<(), RepositoryError> {
                 .execute_batch(include_str!("../migrations/0001_initial.sql"))
                 .map_err(sql_error)?;
             connection
+                .execute_batch(include_str!("../migrations/0002_generic_wallet_backends.sql"))
+                .map_err(sql_error)?;
+            backfill_wallet_instances_v2(connection)?;
+            connection
+                .pragma_update(None, "user_version", i64::from(SCHEMA_VERSION))
+                .map_err(sql_error)?;
+            Ok(())
+        }
+        1 => {
+            connection
+                .execute_batch(include_str!("../migrations/0002_generic_wallet_backends.sql"))
+                .map_err(sql_error)?;
+            backfill_wallet_instances_v2(connection)?;
+            connection
                 .pragma_update(None, "user_version", i64::from(SCHEMA_VERSION))
                 .map_err(sql_error)?;
             Ok(())
@@ -302,6 +332,65 @@ fn apply_migrations(connection: &Connection) -> Result<(), RepositoryError> {
             "unsupported schema version: {other}"
         ))),
     }
+}
+
+fn backfill_wallet_instances_v2(connection: &Connection) -> Result<(), RepositoryError> {
+    let capabilities = encode_json(&vec![
+        WalletCapability::GetPublicKey,
+        WalletCapability::SignMessage,
+        WalletCapability::SignTransaction,
+    ])?;
+    let mut statement = connection
+        .prepare(
+            "SELECT wallet_instance_id, extension_id, extension_version, profile_hint FROM wallet_instances",
+        )
+        .map_err(sql_error)?;
+    let rows = statement
+        .query_map(params![], |row| {
+            Ok((
+                row.get::<_, String>("wallet_instance_id")?,
+                row.get::<_, String>("extension_id")?,
+                row.get::<_, String>("extension_version")?,
+                row.get::<_, Option<String>>("profile_hint")?,
+            ))
+        })
+        .map_err(sql_error)?;
+
+    for row in rows {
+        let (wallet_instance_id, extension_id, extension_version, profile_hint) =
+            row.map_err(sql_error)?;
+        let instance_label = profile_hint
+            .clone()
+            .filter(|value| !value.trim().is_empty())
+            .unwrap_or_else(|| wallet_instance_id.clone());
+        let backend_metadata = serde_json::json!({
+            "extension_id": extension_id,
+            "extension_version": extension_version,
+            "profile_hint": profile_hint,
+        });
+        connection
+            .execute(
+                "UPDATE wallet_instances
+                 SET backend_kind = ?2,
+                     transport_kind = ?3,
+                     approval_surface = ?4,
+                     instance_label = ?5,
+                     capabilities_json = ?6,
+                     backend_metadata_json = ?7
+                 WHERE wallet_instance_id = ?1",
+                params![
+                    wallet_instance_id,
+                    encode_string_enum(BackendKind::StarmaskExtension)?,
+                    encode_string_enum(TransportKind::NativeMessaging)?,
+                    encode_string_enum(ApprovalSurface::BrowserUi)?,
+                    instance_label,
+                    capabilities,
+                    encode_json(&backend_metadata)?,
+                ],
+            )
+            .map_err(sql_error)?;
+    }
+    Ok(())
 }
 
 fn query_requests<P>(
@@ -487,9 +576,15 @@ fn read_request(row: &Row<'_>) -> rusqlite::Result<RequestRecord> {
 fn read_wallet_instance(row: &Row<'_>) -> rusqlite::Result<WalletInstanceRecord> {
     Ok(WalletInstanceRecord {
         wallet_instance_id: read_id(row, "wallet_instance_id")?,
+        backend_kind: decode_string_enum(&row.get::<_, String>("backend_kind")?)?,
+        transport_kind: decode_string_enum(&row.get::<_, String>("transport_kind")?)?,
+        approval_surface: decode_string_enum(&row.get::<_, String>("approval_surface")?)?,
+        instance_label: row.get("instance_label")?,
         extension_id: row.get("extension_id")?,
         extension_version: row.get("extension_version")?,
         protocol_version: row.get("protocol_version")?,
+        capabilities: decode_json(&row.get::<_, String>("capabilities_json")?)?,
+        backend_metadata: decode_json(&row.get::<_, String>("backend_metadata_json")?)?,
         profile_hint: row.get("profile_hint")?,
         lock_state: decode_string_enum(&row.get::<_, String>("lock_state")?)?,
         connected: row.get::<_, i64>("connected")? != 0,
@@ -504,6 +599,7 @@ fn read_wallet_account(row: &Row<'_>) -> rusqlite::Result<WalletAccountRecord> {
         label: row.get("label")?,
         public_key: row.get("public_key")?,
         is_default: row.get::<_, i64>("is_default")? != 0,
+        is_read_only: row.get::<_, i64>("is_read_only")? != 0,
         is_locked: row.get::<_, i64>("is_locked")? != 0,
         last_seen_at: TimestampMs::from_millis(row.get("last_seen_at")?),
     })

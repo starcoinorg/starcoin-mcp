@@ -304,7 +304,9 @@ mod tests {
                 message_id: "msg-1".to_owned(),
                 wallet_instance_id: wallet_instance_id.clone(),
                 request_id: request_id.clone(),
-                delivery_lease_id: starmask_types::DeliveryLeaseId::new("lease-1").unwrap(),
+                delivery_lease_id: Some(
+                    starmask_types::DeliveryLeaseId::new("lease-1").unwrap(),
+                ),
                 presentation_id: PresentationId::new("presentation-1").unwrap(),
             },
             &NativeBridgeResponse::ExtensionAck {

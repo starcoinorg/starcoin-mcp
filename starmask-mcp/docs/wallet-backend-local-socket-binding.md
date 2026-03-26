@@ -5,8 +5,8 @@
 This document is the phase-2 implementation contract for the first generic backend-agent transport
 binding.
 
-It is not part of the current `v1` release contract. It becomes normative only when the
-multi-backend implementation lands.
+It now describes the normative local-socket path used by the current `local_account_dir`
+implementation.
 
 ## 1. Purpose
 
@@ -139,7 +139,7 @@ Example:
     "approval_surface": "tty_prompt",
     "instance_label": "Local Main",
     "lock_state": "locked",
-    "capabilities": ["get_public_key", "sign_message", "sign_transaction"],
+    "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction"],
     "backend_metadata": {
       "account_provider_kind": "local",
       "prompt_mode": "tty_prompt"
@@ -356,7 +356,9 @@ For `local_account_dir`, the concrete agent should:
 2. register with `wallet_instance_id = backend_id`
 3. expose accounts from Starcoin `AccountProvider`
 4. keep unlock and password entry fully inside the agent process
-5. use `tty_prompt` or `desktop_prompt`, never `none`
+5. in the current implementation, use `tty_prompt`
+6. if the target account is locked, perform any password entry only inside the local prompt flow
+   and reject with `wallet_locked` when unlock fails
 
 ## 14. Relationship to Other Documents
 
@@ -366,4 +368,3 @@ This document should be read with:
 - `docs/wallet-backend-configuration.md`
 - `docs/wallet-backend-security-model.md`
 - `docs/wallet-backend-persistence-and-schema.md`
-

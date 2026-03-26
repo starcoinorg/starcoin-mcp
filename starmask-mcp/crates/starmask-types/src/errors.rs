@@ -11,13 +11,20 @@ pub enum SharedErrorCode {
     WalletLocked,
     WalletSelectionRequired,
     WalletInstanceNotFound,
+    RequestNotOwned,
+    LeaseMismatch,
     ExtensionNotConnected,
+    BackendNotAllowed,
+    InvalidBackendRegistration,
+    BackendUnavailable,
+    BackendPolicyBlocked,
     InvalidAccount,
     RequestNotFound,
     RequestExpired,
     RequestRejected,
     RequestCancelled,
     InvalidTransactionPayload,
+    InvalidMessagePayload,
     UnsupportedChain,
     InternalBridgeError,
     ResultUnavailable,
@@ -41,6 +48,7 @@ impl SharedErrorCode {
             Self::WalletUnavailable
                 | Self::WalletSelectionRequired
                 | Self::ExtensionNotConnected
+                | Self::BackendUnavailable
                 | Self::InternalBridgeError
                 | Self::NodeUnavailable
                 | Self::RpcUnavailable

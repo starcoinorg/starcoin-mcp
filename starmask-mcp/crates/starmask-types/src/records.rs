@@ -5,7 +5,10 @@ use crate::{
     ids::{
         ClientRequestId, DeliveryLeaseId, PayloadHash, PresentationId, RequestId, WalletInstanceId,
     },
-    lifecycle::{LockState, RejectReasonCode, RequestKind, RequestStatus},
+    lifecycle::{
+        ApprovalSurface, BackendKind, LockState, RejectReasonCode, RequestKind, RequestStatus,
+        TransportKind, WalletCapability,
+    },
     payload::{RequestPayload, RequestResult},
     time::TimestampMs,
 };
@@ -62,9 +65,15 @@ pub struct RequestRecord {
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct WalletInstanceRecord {
     pub wallet_instance_id: WalletInstanceId,
+    pub backend_kind: BackendKind,
+    pub transport_kind: TransportKind,
+    pub approval_surface: ApprovalSurface,
+    pub instance_label: String,
     pub extension_id: String,
     pub extension_version: String,
     pub protocol_version: u32,
+    pub capabilities: Vec<WalletCapability>,
+    pub backend_metadata: serde_json::Value,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub profile_hint: Option<String>,
     pub lock_state: LockState,
@@ -81,6 +90,7 @@ pub struct WalletAccountRecord {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_key: Option<String>,
     pub is_default: bool,
+    pub is_read_only: bool,
     pub is_locked: bool,
     pub last_seen_at: TimestampMs,
 }

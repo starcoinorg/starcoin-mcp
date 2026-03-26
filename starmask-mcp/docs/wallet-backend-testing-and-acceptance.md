@@ -2,10 +2,9 @@
 
 ## Status
 
-This document is the phase-2 acceptance contract for the planned multi-backend implementation.
+This document is the phase-2 acceptance contract for the current multi-backend implementation.
 
-It is not part of the current `v1` release contract. The current extension-backed acceptance rules
-remain defined by:
+The current extension-backed acceptance rules also remain defined by:
 
 - `docs/testing-and-acceptance.md`
 
@@ -79,8 +78,10 @@ The implementation must demonstrate:
 2. read-only accounts are listed but never routed for signing
 3. `sign_transaction` returns a signed transaction without daemon-side signing
 4. `sign_message` returns a message signature without daemon-side signing
-5. a locked local backend fails signing safely with `wallet_locked`
-6. a local prompt flow can approve and reject both request kinds
+5. a locked local backend can perform backend-local unlock during a sign flow without exposing the
+   password over daemon transport
+6. unlock failure or cancellation still rejects safely with `wallet_locked`
+7. a local prompt flow can approve and reject both request kinds
 
 ## 7. Security Acceptance
 
@@ -122,6 +123,8 @@ The implementation must demonstrate:
 3. duplicate `backend_id` values fail config validation
 4. invalid `approval_surface` for a backend kind fails config validation
 5. invalid `local_account_dir` path fails config validation
+6. missing `chain_id` fails config validation
+7. `desktop_prompt` is rejected until that prompt surface is implemented
 
 ## 11. Performance and Boundedness Acceptance
 
