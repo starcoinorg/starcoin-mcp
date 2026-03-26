@@ -1,15 +1,18 @@
 # Starmask SQLite Schema and Migration Design
 
-## Purpose
+## 1. Purpose
 
-This document defines the first SQLite schema for `starmaskd` and the migration strategy that supports:
+This document defines the first SQLite schema for `starmaskd` and the migration strategy that
+supports:
 
 - durable request lifecycle state
-- wallet registration and account cache
+- wallet-instance registration and account cache
 - bounded result retention
 - restart-safe recovery
 
-## Design Goals
+The schema is backend-generic and must support both browser and local-account wallet instances.
+
+## 2. Design Goals
 
 The schema should optimize for:
 
@@ -17,8 +20,9 @@ The schema should optimize for:
 2. simple restart recovery queries
 3. explicit uniqueness constraints for idempotency
 4. easy inspection during diagnostics
+5. compatibility with multiple backend kinds
 
-## SQLite Engine Rules
+## 3. SQLite Engine Rules
 
 At startup, the daemon should apply:
 
@@ -30,7 +34,7 @@ Optional:
 
 - `PRAGMA synchronous = NORMAL`
 
-## Migration Strategy
+## 4. Migration Strategy
 
 The first implementation should use numbered SQL migrations in source control.
 
@@ -46,19 +50,19 @@ starmaskd/migrations/
 Rules:
 
 1. migrations are append-only
-2. no manual drift between Rust structs and SQL columns
-3. startup must fail clearly if the schema version is unsupported
+2. there is no manual drift between Rust structs and SQL columns
+3. startup fails clearly if the schema version is unsupported
 
-## Version Tracking
+## 5. Version Tracking
 
 Recommended approach:
 
 - use SQLite `user_version`
 - also expose the schema version in `system.getInfo`
 
-## Tables
+## 6. Tables
 
-## `requests`
+### 6.1 `requests`
 
 Recommended columns:
 
@@ -67,7 +71,7 @@ Recommended columns:
 - `kind TEXT NOT NULL`
 - `status TEXT NOT NULL`
 - `wallet_instance_id TEXT NOT NULL`
-- `account_address TEXT NOT NULL`
+- `account_address TEXT`
 - `payload_hash TEXT NOT NULL`
 - `payload_json TEXT NOT NULL`
 - `result_json TEXT`
@@ -89,30 +93,34 @@ Recommended columns:
 Recommended constraints:
 
 1. `kind` constrained to:
+   - `unlock`
    - `sign_transaction`
    - `sign_message`
 2. `status` constrained to canonical lifecycle values
-3. `client_request_id` unique within active retention horizon
+3. `client_request_id` unique within the active retention horizon
 
 Practical first implementation:
 
 - create a unique index on `client_request_id`
-- keep terminal records long enough that safe retry collisions are still valid
+- keep terminal records long enough that safe retry collisions remain valid
 
-## `wallet_instances`
+### 6.2 `wallet_instances`
 
 Recommended columns:
 
 - `wallet_instance_id TEXT PRIMARY KEY`
-- `extension_id TEXT NOT NULL`
-- `extension_version TEXT NOT NULL`
+- `backend_kind TEXT NOT NULL`
+- `transport_kind TEXT NOT NULL`
+- `approval_surface TEXT NOT NULL`
 - `protocol_version INTEGER NOT NULL`
-- `profile_hint TEXT`
+- `label TEXT`
 - `lock_state TEXT NOT NULL`
 - `connected INTEGER NOT NULL`
+- `capabilities_json TEXT NOT NULL`
+- `backend_metadata_json TEXT NOT NULL`
 - `last_seen_at INTEGER NOT NULL`
 
-## `wallet_accounts`
+### 6.3 `wallet_accounts`
 
 Recommended columns:
 
@@ -121,6 +129,7 @@ Recommended columns:
 - `label TEXT`
 - `public_key TEXT`
 - `is_default INTEGER NOT NULL`
+- `is_read_only INTEGER NOT NULL`
 - `last_seen_at INTEGER NOT NULL`
 
 Recommended constraints:
@@ -129,11 +138,11 @@ Recommended constraints:
   - `(wallet_instance_id, address)`
 - foreign key to `wallet_instances(wallet_instance_id)`
 
-## Indexes
+## 7. Indexes
 
 Recommended indexes:
 
-### `requests`
+### 7.1 `requests`
 
 - index on `(status, expires_at)`
 - index on `(wallet_instance_id, status)`
@@ -141,21 +150,24 @@ Recommended indexes:
 - index on `(result_expires_at)`
 - unique index on `(client_request_id)`
 
-### `wallet_instances`
+### 7.2 `wallet_instances`
 
 - index on `(connected, last_seen_at)`
+- index on `(backend_kind, connected)`
 
-### `wallet_accounts`
+### 7.3 `wallet_accounts`
 
 - index on `(address)`
 - index on `(wallet_instance_id, address)`
 
-## JSON Storage Strategy
+## 8. JSON Storage Strategy
 
 The first implementation should store payload and result bodies as JSON strings:
 
 - `payload_json`
 - `result_json`
+- `capabilities_json`
+- `backend_metadata_json`
 
 Why:
 
@@ -163,12 +175,13 @@ Why:
 2. easier future schema evolution
 3. enough for first-release local scale
 
-Rule:
+Rules:
 
 - the Rust repository layer owns encoding and decoding
-- SQL callers should not partially manipulate JSON blobs
+- SQL callers do not partially manipulate JSON blobs
+- typed enums and structs remain the source of truth in Rust
 
-## Canonical Query Patterns
+## 9. Canonical Query Patterns
 
 The repository layer needs optimized support for:
 
@@ -178,83 +191,38 @@ The repository layer needs optimized support for:
 4. list all non-terminal requests at daemon startup
 5. evict results whose `result_expires_at < now`
 6. delete old terminal records after retention
-7. find all wallet instances that expose one account
+7. resolve wallet instances by account and capability
 
-## Claim Query Rules
+## 10. Migration Safety Rules
 
-Claiming the next request for a wallet should be transactional.
+Schema changes must preserve:
 
-Recommended flow:
+1. existing terminal request records
+2. idempotency guarantees for `client_request_id`
+3. recoverability of presented requests
+4. compatibility checks between schema version and daemon version
 
-1. begin immediate transaction
-2. select one eligible `created` request for the target `wallet_instance_id`
-3. update it to `dispatched`
-4. assign `delivery_lease_id`
-5. commit
+If a migration changes a JSON payload shape:
 
-This prevents concurrent claimers from taking the same request.
+- add a Rust-layer compatibility path or migration transform
+- do not silently reinterpret old payload blobs
 
-## Mutation Boundaries
+## 11. Performance Notes
 
-Every lifecycle transition should happen in one explicit transaction.
+The first schema should stay simple, but it still needs predictable local latency.
 
-Examples:
+Recommended rules:
 
-- create request
-- cancel request
-- mark presented
-- approve request
-- reject request
-- expire request
-- return expired delivery lease to `created`
-- evict result payload
+1. avoid wide multi-table joins on hot status-polling paths
+2. keep request polling satisfied by one indexed request lookup
+3. replace account snapshots in bounded transactions
+4. prune expired payloads and terminal rows incrementally
 
-## Startup Recovery Queries
+## 12. Closed First-Release Decisions
 
-At daemon startup, the repository must support:
+The first schema is closed on these decisions:
 
-1. load all non-terminal requests
-2. clear or reinterpret expired delivery leases
-3. keep valid presentation leases
-4. load connected and recently seen wallet instances
-5. load account cache for all known wallet instances
-
-## Garbage Collection Strategy
-
-Recommended background jobs:
-
-1. result payload eviction
-2. old terminal record deletion
-3. stale disconnected wallet cleanup
-
-Each job should run as:
-
-- coordinator maintenance command
-- one explicit transaction per batch
-
-## Migration Testing
-
-The first implementation should test:
-
-1. fresh database bootstrap
-2. upgrade from previous schema version
-3. startup failure on unsupported future version
-4. WAL and FK settings applied successfully
-
-## Diagnostic Requirements
-
-`starmaskctl doctor` should be able to inspect:
-
-- database path
-- schema version
-- count of non-terminal requests
-- count of result payloads awaiting eviction
-- count of connected wallet instances
-
-## Non-Goals
-
-This document does not define the Rust repository method signatures.
-
-Those are defined in:
-
-- `rust-core-api-design.md`
+1. one shared `requests` table covers unlock and both signing flows
+2. backend-specific metadata lives in `backend_metadata_json`
+3. result payloads are retained for bounded multi-read access
+4. schema migrations are numbered and append-only

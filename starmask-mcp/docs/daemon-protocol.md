@@ -1,15 +1,15 @@
 # Starmaskd Daemon Protocol
 
-## Purpose
+## 1. Purpose
 
-This document defines the RPC contract between:
+This document defines the local RPC contract between:
 
 - `starmask-mcp`
 - `starmaskd`
 
 The protocol is local-only and versioned independently from MCP itself.
 
-## Goals
+## 2. Goals
 
 The daemon protocol must provide:
 
@@ -17,9 +17,10 @@ The daemon protocol must provide:
 2. safe retry behavior
 3. explicit wallet routing
 4. durable status polling
-5. no direct signing capability outside the extension
+5. no direct signing capability outside registered backends
+6. one stable contract across browser and local-account backends
 
-## Transport
+## 3. Transport
 
 The daemon protocol uses JSON-RPC 2.0 over:
 
@@ -37,16 +38,16 @@ The first implementation may use one request per local connection:
 
 Framing rule for this mode:
 
-- request body is complete when the client closes its write side (EOF)
+- request body is complete when the client closes its write side
 - daemon returns exactly one JSON-RPC response, then closes the connection
 
 Persistent local connections may be added later without changing the request and response envelope.
 
-## Protocol Version
+## 4. Protocol Version
 
 Initial daemon protocol version:
 
-- `1`
+- `2`
 
 Every client request must include:
 
@@ -56,7 +57,7 @@ If the version is unsupported, the daemon must return:
 
 - `protocol_version_mismatch`
 
-## Envelope
+## 5. Envelope
 
 Every JSON-RPC request should follow this shape:
 
@@ -66,7 +67,7 @@ Every JSON-RPC request should follow this shape:
   "id": "rpc-123",
   "method": "request.createSignTransaction",
   "params": {
-    "protocol_version": 1
+    "protocol_version": 2
   }
 }
 ```
@@ -85,32 +86,25 @@ Every error response should contain a shared code where applicable:
 }
 ```
 
-## Rust Implementation Guidance
+## 6. Rust Implementation Guidance
 
 Recommended Rust boundary model:
 
 1. parse JSON-RPC messages into DTOs with `serde`
 2. convert DTOs into typed domain commands
-3. send those commands to one daemon coordinator task
+3. send those commands to one coordinator service
 4. let the coordinator own lifecycle transitions and persistence
 
-The daemon should not let arbitrary transport tasks mutate request state directly.
+The daemon must not let transport tasks mutate request state directly.
 
-Recommended crates:
-
-- `serde`
-- `serde_json`
-- Tokio for local IPC transport
-- `thiserror` for typed library errors
-
-Boundary rule:
+Boundary rules:
 
 - this daemon protocol remains project-owned even if `starmask-mcp` uses `rmcp`
-- `rmcp` should not leak into daemon-facing Rust core crates
+- backend-specific transport logic remains outside the daemon client contract
 
-## System Methods
+## 7. System Methods
 
-### `system.ping`
+### 7.1 `system.ping`
 
 Purpose:
 
@@ -126,7 +120,7 @@ Result:
 - `daemon_protocol_version`
 - `daemon_version`
 
-### `system.getInfo`
+### 7.2 `system.getInfo`
 
 Purpose:
 
@@ -144,14 +138,15 @@ Result:
 - `db_schema_version`
 - `result_retention_seconds`
 - `default_request_ttl_seconds`
+- `enabled_backend_kinds`
 
-## Wallet Methods
+## 8. Wallet Methods
 
-### `wallet.status`
+### 8.1 `wallet.status`
 
 Purpose:
 
-- return current wallet availability
+- return coordinator availability and wallet-instance summaries
 
 Params:
 
@@ -160,11 +155,19 @@ Params:
 Result:
 
 - `wallet_available`
-- `wallet_online`
 - `default_wallet_instance_id`
 - `wallet_instances`
+  - `wallet_instance_id`
+  - `backend_kind`
+  - `transport_kind`
+  - `approval_surface`
+  - `connected`
+  - `lock_state`
+  - `capabilities`
+  - `accounts_count`
+  - `label`
 
-### `wallet.listInstances`
+### 8.2 `wallet.listInstances`
 
 Purpose:
 
@@ -178,23 +181,12 @@ Params:
 Result:
 
 - `wallet_instances`
-  - `wallet_instance_id`
-  - `extension_connected`
-  - `lock_state`
-  - `profile_hint`
-  - `last_seen_at`
 
-### `wallet.listAccounts`
+### 8.3 `wallet.listAccounts`
 
 Purpose:
 
-- list visible wallet accounts
-
-Policy:
-
-- the first release does not require an interactive approval gate for account listing
-- account listing remains a local same-user capability, not a signing capability
-- public keys may be returned only when known and requested
+- return visible accounts across one or more wallet instances
 
 Params:
 
@@ -206,16 +198,15 @@ Result:
 
 - `wallet_instances`
   - `wallet_instance_id`
-  - `extension_connected`
-  - `lock_state`
+  - `backend_kind`
   - `accounts`
     - `address`
     - `label`
-    - `public_key`: optional
+    - `public_key`
     - `is_default`
-    - `is_locked`
+    - `is_read_only`
 
-### `wallet.getPublicKey`
+### 8.4 `wallet.getPublicKey`
 
 Purpose:
 
@@ -227,53 +218,58 @@ Params:
 - `address`
 - `wallet_instance_id`: optional
 
-Resolution rules:
-
-1. if `wallet_instance_id` is provided, the daemon must route only to that instance
-2. if `wallet_instance_id` is omitted and exactly one known instance exposes the account, the daemon may auto-select
-3. otherwise the daemon must fail with `wallet_selection_required`
-
-Lookup rules:
-
-1. if a cached public key is available for the selected account, the daemon may return it immediately
-2. if no cached public key exists and the wallet is locked, the daemon must fail with `wallet_locked`
-3. if no cached public key exists and the account is unknown, the daemon must fail with `invalid_account`
-
 Result:
 
 - `wallet_instance_id`
+- `backend_kind`
 - `address`
 - `public_key`
 - `curve`
 
-## Request Creation Methods
+## 9. Request Methods
 
-Request creation is asynchronous but must be safe to retry.
-
-### Idempotency Rule
-
-Both request-creation methods require:
-
-- `client_request_id`
-
-The daemon must enforce:
-
-1. same `client_request_id` plus same `payload_hash` returns the existing request
-2. same `client_request_id` plus different `payload_hash` fails with `idempotency_key_conflict`
-3. retries must not create duplicate approval prompts
-
-### `request.createSignTransaction`
+### 9.1 `request.createUnlock`
 
 Purpose:
 
-- create a new asynchronous transaction-signing request
+- create an unlock request for a backend that supports local unlock
+
+Params:
+
+- `protocol_version`
+- `client_request_id`
+- `wallet_instance_id`
+- `account_address`: optional
+- `ttl_seconds`: optional
+- `client_context`: optional
+
+Result:
+
+- `request_id`
+- `client_request_id`
+- `kind`
+- `status`
+- `wallet_instance_id`
+- `created_at`
+- `expires_at`
+
+Rules:
+
+- passwords must not appear in params
+- backends without `unlock` capability return `unsupported_operation`
+
+### 9.2 `request.createSignTransaction`
+
+Purpose:
+
+- create an asynchronous transaction-signing request
 
 Params:
 
 - `protocol_version`
 - `client_request_id`
 - `account_address`
-- `wallet_instance_id`: optional but strongly recommended
+- `wallet_instance_id`: optional
 - `chain_id`
 - `raw_txn_bcs_hex`
 - `tx_kind`
@@ -281,25 +277,6 @@ Params:
 - `client_context`: optional
 - `ttl_seconds`: optional
 
-Creation policy:
-
-1. the daemon must resolve the wallet instance before creating the request
-2. the selected wallet instance must be connected
-3. the selected wallet instance must be unlocked
-4. the first release fails fast if no connected unlocked wallet instance can satisfy the request
-5. the first release does not queue signing requests for future wallet availability
-
-Possible shared errors:
-
-- `wallet_selection_required`
-- `wallet_instance_not_found`
-- `wallet_unavailable`
-- `wallet_locked`
-- `invalid_account`
-- `invalid_transaction_payload`
-- `unsupported_chain`
-- `idempotency_key_conflict`
-
 Result:
 
 - `request_id`
@@ -310,27 +287,23 @@ Result:
 - `created_at`
 - `expires_at`
 
-### `request.createSignMessage`
+### 9.3 `request.createSignMessage`
 
 Purpose:
 
-- create a new asynchronous message-signing request
+- create an asynchronous message-signing request
 
 Params:
 
 - `protocol_version`
 - `client_request_id`
 - `account_address`
-- `wallet_instance_id`: optional but strongly recommended
+- `wallet_instance_id`: optional
+- `message_format`
 - `message`
-- `format`
 - `display_hint`: optional
 - `client_context`: optional
 - `ttl_seconds`: optional
-
-Creation policy:
-
-- same as `request.createSignTransaction`
 
 Result:
 
@@ -342,13 +315,11 @@ Result:
 - `created_at`
 - `expires_at`
 
-## Request Query Methods
-
-### `request.getStatus`
+### 9.4 `request.getStatus`
 
 Purpose:
 
-- return the canonical lifecycle state of a known request
+- return the current request lifecycle state and any bounded retained result
 
 Params:
 
@@ -362,23 +333,18 @@ Result:
 - `kind`
 - `status`
 - `wallet_instance_id`
+- `backend_kind`
 - `updated_at`
 - `result_kind`
 - `result_available`
 - `result_expires_at`
-- `error_code`: optional shared code explaining a blocking or terminal condition
-- `reason`: optional human-readable text
-- `signed_txn_bcs_hex`: only when available
-- `signature`: only when available
+- `error_code`
+- `reason`
+- `unlock_expires_at`: only for `unlock_granted`
+- `signed_txn_bcs_hex`: only for `signed_transaction`
+- `signature`: only for `signed_message`
 
-Rules:
-
-1. approved results are readable multiple times during the retention window
-2. after `result_expires_at`, the request remains terminal but the payload result may be omitted
-3. when the result payload has been evicted, `result_available` must be `false`
-4. when the result payload has been evicted, `error_code` should be `result_unavailable`
-
-### `request.cancel`
+### 9.5 `request.cancel`
 
 Purpose:
 
@@ -393,42 +359,77 @@ Result:
 
 - `request_id`
 - `status`
+- `cancelled_at`
+
+## 10. Routing Rules
+
+1. If `wallet_instance_id` is supplied, only that wallet instance may satisfy the request.
+2. If `wallet_instance_id` is omitted and exactly one wallet instance exposes the target account
+   and capability, the daemon may auto-route.
+3. If multiple wallet instances match, the daemon must fail with `wallet_selection_required`.
+4. A backend without the requested capability must never be auto-selected.
+5. If the target backend is offline, return `wallet_unavailable`.
+6. If the target backend is locked for a sign request, return `wallet_locked`.
+
+## 11. Lifecycle Rules
+
+The daemon owns canonical lifecycle state.
+
+Supported statuses:
+
+- `created`
+- `dispatched`
+- `pending_user_approval`
+- `approved`
+- `rejected`
 - `cancelled`
+- `expired`
+- `failed`
 
 Rules:
 
-1. `created`, `dispatched`, and `pending_user_approval` may be cancelled
-2. cancelling a terminal request is a no-op with `cancelled = false`
-3. if the request was already approved, the daemon must not revoke the signature result
+1. request creation is idempotent through `client_request_id`
+2. conflicting payloads for the same `client_request_id` fail with `idempotency_conflict`
+3. `request.getStatus` is the only RPC for reading retained results
+4. cancellation is best-effort until the request reaches a terminal state
 
-## Status Ownership
+## 12. Error Codes
 
-The daemon is the single owner of request lifecycle state.
+The daemon protocol should preserve shared error codes such as:
 
-The MCP shim:
+- `protocol_version_mismatch`
+- `wallet_selection_required`
+- `wallet_unavailable`
+- `wallet_locked`
+- `unsupported_operation`
+- `invalid_request`
+- `idempotency_conflict`
+- `result_unavailable`
 
-- validates inputs
-- forwards calls
-- does not synthesize lifecycle transitions
+Transport failures should remain transport failures and must not be projected as fake request
+statuses.
 
-## Retry Guidance
+## 13. Security Rules
 
-Clients should:
+The daemon protocol must never carry:
 
-1. reuse `client_request_id` when retrying a create call after an uncertain transport failure
-2. poll by `request_id` after a successful create response
-3. avoid creating a second request unless the first request reached a terminal state
+- private keys
+- account passwords
+- backend-local unlock tokens
 
-## Non-Goals
+The daemon may carry:
 
-The daemon protocol does not define:
+- public keys
+- signed transaction bytes
+- message signatures
 
-- the extension wire format
-- the browser approval UI
-- the on-disk storage schema
+All of those remain subject to bounded retention and log redaction.
 
-Those are defined in:
+## 14. Ready-to-Implement Checklist
 
-- `native-messaging-contract.md`
-- `approval-ui-spec.md`
-- `persistence-and-recovery.md`
+This protocol is implementation-ready when:
+
+1. JSON-RPC DTOs exist for every method above
+2. error mapping preserves shared error codes
+3. idempotent request creation is tested
+4. unlock, sign-transaction, sign-message, and status polling paths are all covered
