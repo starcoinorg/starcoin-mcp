@@ -8,6 +8,8 @@ use starmask_types::{SharedError, SharedErrorCode};
 pub enum AdapterError {
     #[error(transparent)]
     Shared(#[from] SharedError),
+    #[error("invalid request: {0}")]
+    InvalidRequest(String),
     #[error("daemon transport error: {0}")]
     Transport(String),
     #[error("daemon protocol error: {0}")]
@@ -24,7 +26,7 @@ impl From<serde_json::Error> for AdapterError {
 
 impl From<starmask_types::IdValidationError> for AdapterError {
     fn from(value: starmask_types::IdValidationError) -> Self {
-        Self::Protocol(value.to_string())
+        Self::InvalidRequest(value.to_string())
     }
 }
 
@@ -47,6 +49,7 @@ impl From<AdapterError> for ErrorData {
                     _ => ErrorData::new(ErrorCode::INTERNAL_ERROR, error.message, data),
                 }
             }
+            AdapterError::InvalidRequest(message) => ErrorData::invalid_params(message, None),
             AdapterError::Transport(message)
             | AdapterError::Protocol(message)
             | AdapterError::Serialization(message) => ErrorData::internal_error(message, None),

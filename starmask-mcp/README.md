@@ -24,6 +24,8 @@ This subproject contains the interface design draft for `starmask-mcp` under the
 - `docs/rmcp-adapter-design.md`: MCP shim structure around `rmcp`
 - `docs/native-messaging-examples.md`: canonical Native Messaging sample payloads
 - `docs/test-harness-design.md`: test layering and fake-component strategy
+- `docs/mcp-shim-coverage-matrix.md`: adapter-layer automated coverage and gap inventory
+- `docs/mcp-shim-real-environment-runbook.md`: real-environment validation steps and evidence checklist
 
 ## Status
 
