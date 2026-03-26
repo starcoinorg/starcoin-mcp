@@ -71,6 +71,9 @@ These instructions apply to the whole repository unless a subproject adds strict
 - Run tests for the affected crate or binary first.
 - Do not default to `--all-features` for routine local runs.
 - Ask before running a full workspace test suite if the change is broad or expensive.
+- Default to a dedicated git worktree for each new task branch, created from the latest relevant `main` branch.
+- Reuse the current worktree only when the user explicitly asks for that, or when the task is to continue an already-existing in-place dirty worktree.
+- If you continue in a dirty worktree instead of creating a worktree, state that reason before making substantial changes.
 - After reaching a verified milestone, create a commit promptly instead of leaving large validated changes uncommitted.
 - Push promptly when the user asks, when the branch has reached a shareable checkpoint, or when remote backup materially reduces risk.
 - Do not push half-finished or unverified changes just to satisfy a cadence rule.
