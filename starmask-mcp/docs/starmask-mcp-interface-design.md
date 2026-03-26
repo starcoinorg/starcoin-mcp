@@ -1,320 +1,123 @@
-# Starmask MCP Unified Wallet Coordination Interface Design
+# Starmask MCP Interface Design
 
-## 1. Purpose
+## Status
 
-This document defines the first production-ready interface design for the `starmask-mcp`
-stack after broadening it from an extension-only signing bridge into a unified local wallet
-coordination system.
+This document is the authoritative contract for the current `v1` implementation in this
+repository.
 
-The package and binary names remain:
+Current `v1` scope is:
 
 - `starmask-mcp`
 - `starmaskd`
 - `starmask-native-host`
+- Starmask Chrome extension
 
-Those names are retained for compatibility, but the architecture now supports more than one
-signing backend:
+Planned multi-backend evolution, including `local_account_dir`, explicit unlock requests, and a
+generic signer-backend model, is tracked separately in
+`docs/unified-wallet-coordinator-evolution.md`.
 
-- `starmask_extension`
-- `local_account_dir`
-- `private_key_dev`
+## 1. Purpose
 
-The primary goal is to let a local MCP host request Starcoin signing operations through one
-stable MCP tool surface while keeping key ownership and approval inside the selected signer
-backend.
+This document defines the interface design for `starmask-mcp` when deployed with the following
+runtime topology:
 
-## 2. Scope
+- MCP host: Codex, Claude Code, or another local MCP-capable host
+- MCP entrypoint: `starmask-mcp`
+- local daemon: `starmaskd`
+- browser integration: Starmask Chrome extension
+- Chrome bridge: `starmask-native-host`
 
-This document defines:
+The design goal is to provide a safe local signing entrypoint to MCP hosts without exposing private
+key material outside the Starmask extension.
 
-- runtime topology
-- backend kinds and capabilities
-- MCP tool surface
-- coordinator routing rules
-- request lifecycle
-- end-to-end closed-loop flows
-- performance constraints
-- first-release non-goals
+## 2. Design Principles
 
-This document does not define:
+1. `starmask-mcp` never holds private keys.
+2. `starmaskd` never signs transactions.
+3. The Chrome extension is the only signing authority in `v1`.
+4. Every signing request requires explicit wallet approval.
+5. MCP hosts interact only with `starmask-mcp`.
+6. All non-MCP transports are local-only.
+7. Requests are asynchronous by default and identified by `request_id`.
+8. Request creation is idempotent through `client_request_id`.
+9. The daemon fails fast when no connected unlocked wallet instance can satisfy a signing request.
+10. Protocol strings stay at the boundary; typed enums and newtypes stay in core Rust types.
 
-- the exact SQLite schema
-- the exact backend transport wire format
-- the exact browser or desktop UI layout
-
-Those are follow-up implementation documents and must conform to the contract defined here.
-
-## 3. Naming and Compatibility
-
-Historical documents described `starmask-mcp` as an adapter from MCP to the Starmask Chrome
-extension. That model is now too narrow.
-
-The updated terminology is:
-
-- `starmask-mcp`: the MCP entrypoint and Rust adapter
-- `starmaskd`: the generic local wallet coordinator
-- `wallet backend`: any signer backend that registers with the coordinator
-- `wallet instance`: one concrete backend session or logical signer instance
-
-Examples:
-
-- one Starmask browser profile connected through Native Messaging is one wallet instance
-- one local account vault agent serving one account directory is one wallet instance
-
-## 4. Design Goals
-
-1. The MCP host talks only to `starmask-mcp`.
-2. `starmaskd` owns request lifecycle and routing, but does not sign.
-3. The selected wallet backend owns approval, unlock state, and signing authority.
-4. Signing backends must render or validate canonical payload bytes, not trust host summaries.
-5. Requests are asynchronous, durable, and idempotent through `client_request_id`.
-6. Routing is deterministic and fails closed when selection is ambiguous.
-7. All transports are local-only in the first release.
-8. Unsupported payloads are rejected rather than blind-signed.
-9. The same tool surface must work across browser and local-account backends.
-10. The system must remain efficient for interactive CLI and agent workflows.
-
-## 5. Runtime Topology
+## 3. Runtime Topology
 
 ```mermaid
 flowchart LR
     H["MCP Host"] --> M["starmask-mcp"]
     M --> D["starmaskd"]
-    D --> E["Starmask backend agent"]
-    D --> L["Local account backend agent"]
-    E --> N["starmask-native-host"]
-    N --> X["Starmask Chrome extension"]
-    L --> A["starcoin AccountProvider"]
+    D --> N["starmask-native-host"]
+    N --> E["Starmask Chrome Extension"]
 ```
 
-`starmaskd` is the shared coordination plane. It stores request state, tracks wallet instances,
-enforces routing and TTL rules, and exposes one local daemon API. The actual signer is always a
-backend agent.
-
-### 5.1 Cross-Service Transaction Loop
-
-`starmask-mcp` is intentionally signing-focused. Transaction preparation, simulation, submission,
-and observation remain the responsibility of `starcoin-node-mcp` or another Starcoin client.
+### 3.1 Component responsibilities
 
-The supported end-to-end loop is:
+#### `starmask-mcp`
 
-```mermaid
-sequenceDiagram
-    participant Host as MCP Host
-    participant Node as starcoin-node-mcp
-    participant Wallet as starmask-mcp
-    participant Daemon as starmaskd
-    participant Backend as Wallet backend
+- exposes MCP tools to the host
+- validates tool inputs at the MCP boundary
+- converts tool calls into daemon RPC requests
+- returns structured results to the host
 
-    Host->>Node: prepare transfer or contract call
-    Node-->>Host: raw_txn_bcs_hex + chain metadata
-    Host->>Wallet: wallet_request_sign_transaction
-    Wallet->>Daemon: create request
-    Daemon->>Backend: request.available / dispatch
-    Backend-->>Daemon: request.presented
-    Backend-->>Daemon: request.resolve(signed_txn_bcs_hex)
-    Host->>Wallet: wallet_get_request_status
-    Wallet-->>Host: approved + signed_txn_bcs_hex
-    Host->>Node: submit signed transaction
-    Host->>Node: watch transaction
-```
+#### `starmaskd`
 
-This document treats that flow as the primary production transaction path.
+- maintains local request store and state machine
+- tracks wallet availability and extension registrations
+- routes requests between MCP clients and extension sessions
+- enforces TTL and recovery rules
+- persists state required for retries and polling
 
-## 6. Component Responsibilities
+#### `starmask-native-host`
 
-### 6.1 `starmask-mcp`
+- is a Native Messaging shim launched by Chrome
+- bridges extension messages to `starmaskd`
+- does not implement wallet logic
 
-- exposes MCP tools over stdio
-- validates tool inputs
-- converts tool requests into daemon-client requests
-- maps daemon responses into structured MCP tool outputs
-- remains thin and stateless
+#### Starmask Chrome extension
 
-### 6.2 `starmaskd`
+- holds encrypted wallet state and unlock state
+- parses Starcoin transactions and messages
+- displays approval UI
+- produces signatures and signed transactions
 
-- owns canonical request records
-- tracks wallet instance registration and health
-- resolves routing and ambiguity
-- enforces lifecycle, TTL, idempotency, cancellation, and recovery
-- never performs signing itself
+## 4. Process Model
 
-### 6.3 Wallet backend agents
+### 4.1 `starmask-mcp`
 
-All signer backends implement the same logical contract:
+- launch mode: on demand by MCP host
+- transport: MCP over stdio
+- lifetime: tied to MCP host session or tool-use pattern
 
-- register one wallet instance
-- publish account metadata and capability metadata
-- claim pending work
-- render local approval
-- produce signatures or signed transactions
-- report completion, rejection, or backend failure
+### 4.2 `starmaskd`
 
-### 6.4 `starmask_extension` backend
+- launch mode: long-lived user daemon
+- transport to clients: Unix domain socket on macOS/Linux, named pipe on Windows
+- lifetime: user session scoped
 
-- transport: Native Messaging through `starmask-native-host`
-- approval surface: browser UI
-- unlock model: extension-owned
-- signing authority: extension key management
+### 4.3 `starmask-native-host`
 
-### 6.5 `local_account_dir` backend
+- launch mode: on demand by Chrome via Native Messaging
+- transport to extension: Native Messaging stdin/stdout
+- transport to daemon: local socket or pipe
+- lifetime: tied to the extension connection
 
-- transport: local agent socket or equivalent local IPC
-- approval surface: local TTY prompt or trusted desktop prompt
-- unlock model: local account password managed by the local agent
-- signing authority: `AccountProvider::Local`
+### 4.4 Extension service worker
 
-### 6.6 `private_key_dev` backend
+- opens a persistent Native Messaging connection while the wallet is online
+- registers the current wallet instance with the daemon
 
-- transport: local agent socket
-- approval surface: local prompt or explicitly unsafe unattended mode
-- unlock model: key material injected from secret file or environment
-- signing authority: `AccountProvider::PrivateKey`
-- production status: disabled by default and not supported for production channels
+## 5. Current MCP Tool Surface
 
-## 7. Backend Kinds and Capabilities
+The `v1` tool surface is intentionally narrow and matches the current Rust implementation.
 
-Every wallet instance advertises:
-
-- `wallet_instance_id`
-- `backend_kind`
-- `transport_kind`
-- `approval_surface`
-- `lock_state`
-- `connected`
-- `capabilities`
-- `accounts_count`
-- `label`
-- `last_seen_at`
-
-### 7.1 Backend kinds
-
-Supported first-release values:
-
-- `starmask_extension`
-- `local_account_dir`
-- `private_key_dev`
-
-### 7.2 Transport kinds
-
-Supported first-release values:
-
-- `native_messaging`
-- `local_socket`
-
-### 7.3 Approval surfaces
-
-Supported first-release values:
-
-- `browser_ui`
-- `tty_prompt`
-- `desktop_prompt`
-- `none`
-
-`approval_surface = none` is allowed only for explicitly unsafe development backends.
-
-### 7.4 Capabilities
-
-Supported first-release capability flags:
-
-- `unlock`
-- `get_public_key`
-- `sign_message`
-- `sign_transaction`
-
-Backends must not advertise capabilities they cannot complete safely.
-
-## 8. Core Domain Model
-
-### 8.1 Wallet instance record
-
-`WalletInstanceRecord` is the coordinator-facing description of one signer instance.
-
-Required fields:
-
-- `wallet_instance_id`
-- `backend_kind`
-- `transport_kind`
-- `approval_surface`
-- `protocol_version`
-- `label`
-- `lock_state`
-- `connected`
-- `capabilities`
-- `backend_metadata`
-- `last_seen_at`
-
-`backend_metadata` is backend-specific and may include:
-
-- extension ID and version for `starmask_extension`
-- account directory path hint and prompt mode for `local_account_dir`
-- explicit unsafe-mode marker for `private_key_dev`
-
-### 8.2 Wallet account record
-
-`WalletAccountRecord` represents one visible account within one wallet instance.
-
-Required fields:
-
-- `wallet_instance_id`
-- `address`
-- `label`
-- `public_key`
-- `is_default`
-- `is_read_only`
-- `last_seen_at`
-
-### 8.3 Request kinds
-
-Supported first-release request kinds:
-
-- `unlock`
-- `sign_transaction`
-- `sign_message`
-
-### 8.4 Request payloads
-
-`unlock`
-
-- target `wallet_instance_id`
-- optional `account_address`
-- requested unlock TTL
-
-`sign_transaction`
-
-- `chain_id`
-- `account_address`
-- `raw_txn_bcs_hex`
-- `tx_kind`
-- optional `display_hint`
-- optional `client_context`
-
-`sign_message`
-
-- `account_address`
-- `message_format`
-- `message`
-- optional `display_hint`
-- optional `client_context`
-
-### 8.5 Request results
-
-Supported first-release result variants:
-
-- `unlock_granted`
-- `signed_transaction`
-- `signed_message`
-- `none`
-
-## 9. MCP Tool Surface
-
-The tool surface stays intentionally narrow, but it is now backend-generic.
-
-### 9.1 `wallet_status`
+### 5.1 `wallet_status`
 
 Purpose:
 
-- return coordinator health and registered wallet instance summaries
+- return current wallet availability and extension connectivity
 
 Input:
 
@@ -323,49 +126,64 @@ Input:
 Output:
 
 - `wallet_available`
+- `wallet_online`
 - `default_wallet_instance_id`
 - `wallet_instances`
   - `wallet_instance_id`
-  - `backend_kind`
-  - `transport_kind`
-  - `approval_surface`
-  - `connected`
+  - `extension_connected`
   - `lock_state`
-  - `capabilities`
-  - `accounts_count`
-  - `label`
-- `message`
+  - `profile_hint`
+  - `last_seen_at`
 
-### 9.2 `wallet_list_accounts`
+### 5.2 `wallet_list_instances`
 
 Purpose:
 
-- list visible accounts across wallet instances
+- return known wallet instances
 
 Input:
 
-- `wallet_instance_id`: optional
-- `include_public_key`: boolean, default `false`
+- no required parameters in the MCP adapter
 
 Output:
 
 - `wallet_instances`
   - `wallet_instance_id`
-  - `backend_kind`
+  - `extension_connected`
+  - `lock_state`
+  - `profile_hint`
+  - `last_seen_at`
+
+### 5.3 `wallet_list_accounts`
+
+Purpose:
+
+- list accounts currently exposed by Starmask to the local daemon
+
+Input:
+
+- `wallet_instance_id`: optional filter
+- `include_public_key`: boolean, default `false`
+
+Policy:
+
+- the current implementation does not require an interactive approval gate for account listing
+- account listing is treated as local metadata access, not signing authority
+
+Output:
+
+- `wallet_instances`
+  - `wallet_instance_id`
+  - `extension_connected`
   - `lock_state`
   - `accounts`
     - `address`
     - `label`
     - `public_key`
     - `is_default`
-    - `is_read_only`
+    - `is_locked`
 
-Policy:
-
-- account listing is treated as metadata access
-- backends may return cached public keys without interactive approval
-
-### 9.3 `wallet_get_public_key`
+### 5.4 `wallet_get_public_key`
 
 Purpose:
 
@@ -376,52 +194,20 @@ Input:
 - `address`
 - `wallet_instance_id`: optional
 
+Resolution rules:
+
+- if `wallet_instance_id` is omitted and exactly one wallet instance exposes the account, the
+  daemon may auto-select
+- otherwise the request fails with `wallet_selection_required`
+
 Output:
 
 - `wallet_instance_id`
-- `backend_kind`
 - `address`
 - `public_key`
 - `curve`
 
-Routing rule:
-
-- if `wallet_instance_id` is omitted and exactly one wallet instance exposes the address, the
-  coordinator may auto-route
-- otherwise the request fails with `wallet_selection_required`
-
-### 9.4 `wallet_request_unlock`
-
-Purpose:
-
-- request that a backend unlock itself for future signing operations
-
-Input:
-
-- `client_request_id`
-- `wallet_instance_id`
-- `account_address`: optional
-- `ttl_seconds`: optional requested unlock duration
-- `client_context`: optional
-
-Output:
-
-- `request_id`
-- `client_request_id`
-- `status`
-- `wallet_instance_id`
-- `created_at`
-- `expires_at`
-- `message`
-
-Rules:
-
-- only backends advertising `unlock` may receive this request
-- `starmask_extension` may return `unsupported_operation` if unlock remains wallet-owned and
-  out of band
-- passwords or secrets must never traverse MCP or daemon payloads
-
-### 9.5 `wallet_request_sign_transaction`
+### 5.5 `wallet_request_sign_transaction`
 
 Purpose:
 
@@ -431,68 +217,61 @@ Input:
 
 - `client_request_id`
 - `account_address`
-- `wallet_instance_id`: optional
+- `wallet_instance_id`: optional explicit route target
 - `chain_id`
 - `raw_txn_bcs_hex`
 - `tx_kind`
-- `display_hint`: optional
-- `client_context`: optional
-- `ttl_seconds`: optional
+- `display_hint`: optional human-readable description
+- `client_context`: optional string such as `codex`
+- `ttl_seconds`: optional bounded override
 
 Output:
 
 - `request_id`
 - `client_request_id`
+- `kind`
 - `status`
 - `wallet_instance_id`
 - `created_at`
 - `expires_at`
-- `message`
 
-Rules:
+Creation policy:
 
-- the selected backend must advertise `sign_transaction`
-- if the selected backend is locked, the coordinator fails fast with `wallet_locked`
-- callers should unlock explicitly through `wallet_request_unlock`
-- backends must reject unsupported or undecodable payloads instead of blind-signing
+- the selected wallet instance must be connected and unlocked
+- the current implementation fails fast instead of queueing for later reconnect
 
-### 9.6 `wallet_sign_message`
+### 5.6 `wallet_sign_message`
 
 Purpose:
 
 - create an asynchronous message-signing request
 
-Naming note:
-
-- the tool name is retained for compatibility
-- the operation is still asynchronous and returns a request handle, not an immediate signature
-
 Input:
 
 - `client_request_id`
 - `account_address`
-- `wallet_instance_id`: optional
-- `message_format`
+- `wallet_instance_id`: optional explicit route target
 - `message`
+- `format`
 - `display_hint`: optional
 - `client_context`: optional
-- `ttl_seconds`: optional
+- `ttl_seconds`: optional bounded override
 
 Output:
 
 - `request_id`
 - `client_request_id`
+- `kind`
 - `status`
 - `wallet_instance_id`
 - `created_at`
 - `expires_at`
-- `message`
 
-### 9.7 `wallet_get_request_status`
+### 5.7 `wallet_get_request_status`
 
 Purpose:
 
-- poll request state and fetch bounded retained results
+- poll signing request state
 
 Input:
 
@@ -505,22 +284,20 @@ Output:
 - `kind`
 - `status`
 - `wallet_instance_id`
-- `backend_kind`
-- `updated_at`
+- `created_at`
+- `expires_at`
 - `result_kind`
 - `result_available`
 - `result_expires_at`
 - `error_code`
-- `reason`
-- `unlock_expires_at`: only for `unlock_granted`
-- `signed_txn_bcs_hex`: only for `signed_transaction`
-- `signature`: only for `signed_message`
+- `error_message`
+- `result`
 
-### 9.8 `wallet_cancel_request`
+### 5.8 `wallet_cancel_request`
 
 Purpose:
 
-- cancel a non-terminal request
+- cancel a pending request if it is not yet terminal
 
 Input:
 
@@ -530,26 +307,21 @@ Output:
 
 - `request_id`
 - `status`
-- `cancelled_at`
-- `message`
+- `error_code`
 
-## 10. Routing and Selection Rules
+## 6. Routing Rules
 
 1. If the caller names `wallet_instance_id`, only that instance may receive the request.
-2. If the caller omits `wallet_instance_id` and exactly one wallet instance exposes the target
-   account and required capability, the coordinator may auto-route.
-3. If the caller omits `wallet_instance_id` and multiple wallet instances match, the coordinator
-   must fail with `wallet_selection_required`.
-4. A backend that does not advertise the requested capability must never be auto-selected.
-5. Account identity alone is insufficient when the same address appears in multiple instances.
-6. Backend priority may influence `default_wallet_instance_id`, but must not silently override
-   ambiguity rules.
+2. If the caller omits `wallet_instance_id` and exactly one wallet instance exposes the account,
+   the daemon may auto-route.
+3. If the caller omits `wallet_instance_id` and multiple wallet instances expose the account, the
+   daemon must fail with `wallet_selection_required`.
+4. Account identity alone is insufficient when more than one wallet instance exposes the same
+   address.
 
-## 11. Request Lifecycle
+## 7. Lifecycle Rules
 
-The shared lifecycle remains asynchronous and coordinator-owned.
-
-Supported statuses:
+Supported shared statuses:
 
 - `created`
 - `dispatched`
@@ -560,132 +332,31 @@ Supported statuses:
 - `expired`
 - `failed`
 
-### 11.1 Dispatch rules
+The daemon owns canonical lifecycle state. The MCP host polls through
+`wallet_get_request_status`; it does not infer state from transport behavior.
 
-1. The coordinator validates and persists the request as `created`.
-2. If a matching backend is online, the coordinator emits a backend-specific availability hint.
-3. The backend claims work through the backend transport and receives a delivery lease.
-4. Once the approval UI or prompt is actually shown, the backend marks the request as
-   `pending_user_approval`.
-5. The backend eventually resolves, rejects, or reports failure.
+## 8. Integration Note With `starcoin-node-mcp`
 
-### 11.2 Presentation ownership
+`starmask-mcp` is signing-focused. A typical transaction flow composes it with
+`starcoin-node-mcp`:
 
-After a request reaches `pending_user_approval`:
+1. prepare or simulate an unsigned transaction through `starcoin-node-mcp`
+2. create the signing request through `starmask-mcp`
+3. poll for `approved` and extract the signed transaction
+4. submit and watch the transaction through `starcoin-node-mcp`
 
-- only the same `wallet_instance_id` may resume it
-- the request must never migrate to a different backend instance
-- disconnect alone does not imply approval or rejection
+That composition is the recommended operational pattern, but it is outside the `starmask-mcp`
+tool contract itself.
 
-### 11.3 Idempotency rules
+## 9. Deliberate `v1` Omissions
 
-Creation uses `client_request_id`.
+The current implementation does not define:
 
-Required behavior:
+- a generic multi-backend signer model
+- `local_account_dir` support
+- `private_key_dev` support
+- `wallet_request_unlock`
+- blind signing
 
-- if the same `client_request_id` and the same payload are replayed, return the original request
-- if the same `client_request_id` appears with a different payload hash, reject with
-  `idempotency_conflict`
-
-## 12. Supported Closed-Loop Flows
-
-### 12.1 Wallet registration and discovery
-
-1. The backend starts and connects to `starmaskd`.
-2. The backend registers one `wallet_instance_id`.
-3. The backend advertises capability, lock-state, and transport metadata.
-4. The backend pushes account snapshots.
-5. The backend sends heartbeats while online.
-6. `wallet_status` and `wallet_list_accounts` become immediately consistent with the latest
-   backend snapshot.
-
-### 12.2 Account discovery
-
-1. The MCP host calls `wallet_status`.
-2. The host optionally filters by `backend_kind` or `wallet_instance_id`.
-3. The host calls `wallet_list_accounts`.
-4. The host selects a concrete `wallet_instance_id` when more than one candidate exists.
-
-### 12.3 Unlock flow
-
-1. The host calls `wallet_request_unlock`.
-2. The coordinator routes the request to one backend instance.
-3. The backend shows a local unlock surface.
-4. The user approves and satisfies the backend-local unlock requirement.
-5. The backend grants unlock locally and resolves the request with bounded `unlock_expires_at`.
-6. Subsequent sign requests reuse that backend-local unlock window.
-
-### 12.4 Sign transaction flow
-
-1. The host prepares a canonical raw transaction through `starcoin-node-mcp` or another trusted
-   Starcoin client.
-2. The host calls `wallet_request_sign_transaction`.
-3. The coordinator validates routing, TTL, capability, and lock state.
-4. The backend decodes `raw_txn_bcs_hex` into canonical transaction fields.
-5. The backend renders a real approval surface from canonical bytes.
-6. On approval, the backend signs and returns `signed_txn_bcs_hex`.
-7. The host polls `wallet_get_request_status`.
-8. The host submits the signed transaction through `starcoin-node-mcp`.
-9. The host watches transaction completion through `starcoin-node-mcp`.
-
-### 12.5 Sign message flow
-
-1. The host calls `wallet_sign_message`.
-2. The backend renders the message format and canonical preview.
-3. The user approves or rejects.
-4. The backend returns the signature through the retained request result.
-
-### 12.6 Cancel while approval is open
-
-1. The host calls `wallet_cancel_request`.
-2. If the request is not yet terminal, the coordinator marks it `cancelled`.
-3. The backend receives cancellation and must close or disable the approval surface promptly.
-4. `wallet_get_request_status` reflects `cancelled`.
-
-### 12.7 Recovery after backend or daemon restart
-
-1. The coordinator reloads durable non-terminal requests on startup.
-2. The coordinator restores wallet instance snapshots when possible.
-3. If a request had already been presented, only the same wallet instance may resume it.
-4. If a request had not yet been presented, it may return to `created` and be re-dispatched to
-   the same selected backend instance.
-5. Expired requests move to `expired` during maintenance.
-
-## 13. Performance and Capacity Rules
-
-1. The coordinator must reuse backend sessions and local client handles; it must not reconnect per
-   request.
-2. Local-account backends must reuse one `AccountProvider` per backend instance.
-3. Public metadata such as accounts and public keys may be cached; decrypted key material must not
-   be cached as part of coordinator state.
-4. Result retention is bounded and time-based.
-5. Maintenance work such as TTL expiry and record cleanup must run incrementally.
-6. The system should bound concurrent approval surfaces per wallet instance to avoid prompt floods.
-7. When composed with `starcoin-node-mcp`, callers should serialize prepare-sign-submit per sender
-   to avoid sequence-number conflicts.
-8. Request creation and polling must remain cheap enough for interactive CLI use.
-
-## 14. First-Release Closed Decisions
-
-The first release is closed on these decisions:
-
-1. Transaction signing accepts canonical `RawUserTransaction` bytes only.
-2. Unsupported or undecodable transactions are rejected instead of blind-signed.
-3. Passwords do not cross the MCP boundary.
-4. `wallet_request_unlock` is explicit and separate from sign requests.
-5. `private_key_dev` is disabled by default and must never be used in production channels.
-6. There is no network listener or localhost HTTP bridge.
-7. `starcoin-node-mcp` remains responsible for prepare, simulate, submit, and watch.
-
-## 15. Non-Goals
-
-The first release does not support:
-
-- private key import or export through MCP
-- production use of RPC-backed signer accounts
-- unattended policy-based auto-signing
-- silent fallback for unsupported transaction payloads
-- opaque arbitrary-byte transaction signing
-
-These may be explored later, but only if they preserve the coordinator and backend trust
-boundaries defined here.
+Those topics are intentional follow-up work and are specified separately in
+`docs/unified-wallet-coordinator-evolution.md`.

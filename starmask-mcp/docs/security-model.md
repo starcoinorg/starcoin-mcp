@@ -1,152 +1,108 @@
-# Starmask MCP Unified Wallet Security Model
+# Starmask MCP Security Model
+
+## Status
+
+This document is the authoritative `v1` security model for the current extension-backed
+implementation.
+
+Future multi-backend security evolution is tracked separately in
+`docs/unified-wallet-coordinator-evolution.md`.
 
 ## 1. Purpose
 
-This document defines the security model for the `starmask-mcp` stack after expanding it from a
-browser-extension-only design into a unified local wallet coordination system.
+This document defines the security model for the `starmask-mcp` stack.
 
-The stack now includes:
+The current stack includes:
 
 - `starmask-mcp`
 - `starmaskd`
-- wallet backend agents
-- `starmask-native-host` for browser transport
-- the Starmask browser extension when that backend is enabled
-- a local account backend built on Starcoin `AccountProvider` when enabled
+- `starmask-native-host`
+- Starmask Chrome extension
 - the local MCP host
 
-## 2. Primary Security Goal
+## 2. Security Goal
 
-The primary goal is:
+The primary security goal is:
 
-`starmask-mcp` must let a local MCP host request wallet operations without granting that host
-signing authority, password access, or private key access.
+`starmask-mcp` must allow a local MCP host to request wallet actions without granting that host
+signing authority or private key access.
 
 ## 3. Security Invariants
 
-The following rules must remain true in every implementation phase:
+The following rules must remain true in the current implementation:
 
-1. Private key material never leaves the selected signer backend.
-2. `starmaskd` never creates a signature.
-3. `starmask-mcp` never creates a signature and never stores unlock secrets.
-4. The MCP host never becomes the source of truth for what the user is approving.
-5. Approval surfaces render from canonical payload bytes or canonical parsed fields derived by the
-   backend itself.
-6. Every signing request is attributable to exactly one wallet instance and one account address.
-7. Non-terminal request state is durable across process restarts.
-8. Local IPC is restricted to the current OS user.
-9. Development-only backends remain explicitly isolated from production channels.
+1. Private key material never leaves the extension.
+2. The daemon never creates a signature.
+3. The MCP host never becomes the source of truth for what the user is approving.
+4. The extension renders the transaction or message from canonical payload bytes.
+5. Every signing request is attributable to one local account and one logical wallet instance.
+6. Non-terminal request state is durable across process restarts.
+7. Local transport is restricted to the current OS user.
 
 ## 4. Trust Boundaries
 
-### 4.1 Trusted for signing
+### Trusted for signing
 
-Only the selected wallet backend is trusted for signing.
+- Starmask extension
 
-Examples:
-
-- the Starmask extension for `starmask_extension`
-- the local account agent for `local_account_dir`
-- the dev-only private-key agent for `private_key_dev`
-
-### 4.2 Trusted for routing and persistence, but not signing
+### Trusted for persistence and routing, but not signing
 
 - `starmaskd`
 
-### 4.3 Trusted for transport adaptation only
+### Trusted for transport adaptation only
 
 - `starmask-mcp`
 - `starmask-native-host`
 
-### 4.4 Untrusted for security decisions
+### Untrusted for security decisions
 
 - MCP host output
 - `display_hint`
-- free-form client context
-- any human-readable transaction summary not derived by the signer backend
+- any transaction summary not derived by the extension itself
 
 ## 5. Assets to Protect
 
 The design must protect:
 
 1. private keys
-2. unlock passwords and unlock tokens
+2. unlock state
 3. signed transaction results before submission
 4. message signatures
-5. account directory contents
-6. request integrity and idempotency
-7. wallet routing integrity
-8. user intent at approval time
+5. request integrity
+6. wallet-instance routing integrity
+7. user intent at approval time
 
 ## 6. Threat Model
 
-The first implementation should explicitly defend against:
+The current implementation should explicitly defend against:
 
-1. a buggy or over-eager MCP host
-2. misleading `display_hint` or client-generated transaction summaries
-3. replayed or conflicting `client_request_id` values
-4. daemon restart during active requests
-5. backend restart during active requests
-6. ambiguous routing when the same address appears in multiple wallet instances
-7. accidental use of development signer backends in production
-8. insecure local account directory permissions
-9. local prompt flooding caused by excessive request fan-out
+1. a buggy or overly aggressive MCP host
+2. a local process attempting to connect to daemon transport as the same user
+3. stale or replayed request identifiers
+4. daemon restart during an active signing flow
+5. browser or extension restart during an active signing flow
+6. extension mismatch across dev, staging, and production channels
+7. misleading host-provided summaries
 
-The first implementation does not attempt to defend against:
+The current implementation does not attempt to defend against:
 
 1. a fully compromised OS user account
-2. malware with the same OS-user privileges and direct filesystem access
-3. a malicious browser runtime with arbitrary extension code execution
-4. a hostile local administrator
+2. a malicious browser runtime with arbitrary extension code execution
+3. malware with the same OS-user privileges and direct access to the local wallet runtime
 
-Those remain real risks, but they are outside the practical trust model of a local wallet
-integration.
+## 7. Approval Security Rules
 
-## 7. Backend-Specific Security Expectations
-
-### 7.1 `starmask_extension`
-
-Required properties:
-
-- the extension remains the signing authority
-- the extension renders transactions and messages from canonical payload bytes
-- the extension may show `display_hint`, but only as secondary context
-- production daemons trust only production extension IDs
-
-### 7.2 `local_account_dir`
-
-Required properties:
-
-- the local account agent is the signing authority
-- the account directory path is resolved to a real path before use
-- owner-only filesystem permission checks are enforced before opening the vault
-- unlock happens inside the local account agent, not in `starmaskd` or `starmask-mcp`
-- the approval surface is a trusted local prompt, not MCP chat output
-
-### 7.3 `private_key_dev`
-
-Required properties:
-
-- disabled by default
-- blocked in production channel
-- clearly marked unsafe in status output and logs
-- never silently enabled by environment-variable presence alone
-
-## 8. Approval Security Rules
-
-The approval surface is the final user decision point.
+The extension approval UI is the final decision point.
 
 Rules:
 
-1. the signer backend must decode and present the transaction or message itself
-2. unsupported transaction payloads must be rejected rather than blindly signed
-3. the signer backend may display `display_hint`, but must not trust it as the source of truth
-4. explicit approval is required for every sign request in the first release
-5. unlock approval and sign approval are separate flows
+1. the extension must decode and present the transaction itself
+2. the extension may show `display_hint`, but only as secondary context
+3. the extension must show enough information for an informed decision
+4. unsupported transaction payloads must not fall back to silent blind signing
+5. every sign request requires explicit approval
 
-### 8.1 Required transaction approval fields
-
-Transaction approval must present:
+### 7.1 Required transaction approval fields
 
 - account address
 - chain ID
@@ -156,53 +112,16 @@ Transaction approval must present:
 - gas budget and gas price
 - expiration
 
-### 8.2 Required message approval fields
-
-Message approval must present:
+### 7.2 Required message approval fields
 
 - account address
 - message format
 - message content or a safe canonical preview
-- origin or client context when known
+- origin context when known
 
-### 8.3 Required unlock approval fields
+## 8. Request Integrity Rules
 
-Unlock approval must present:
-
-- wallet instance label
-- target account if one account is being unlocked
-- requested unlock TTL
-- backend-local warning that unlock grants future signing authority for a bounded period
-
-## 9. Password and Unlock Handling
-
-Passwords and unlock secrets are especially sensitive.
-
-Rules:
-
-1. MCP tools must never accept account passwords as parameters.
-2. `starmaskd` must never persist account passwords.
-3. Local account unlock must happen entirely inside the local account backend.
-4. Unlock state is backend-local and must not be inferred from MCP-host memory.
-5. Unlock TTL must be bounded and clamped.
-6. Process exit must clear backend-local unlock state where feasible.
-
-### 9.1 Starcoin `AccountProvider` hardening note
-
-The current Starcoin `AccountManager` caches unlock passwords in memory as ordinary `String`
-values. That implementation detail is acceptable for local development, but production-grade
-`local_account_dir` support should harden it with zeroizing secret containers or an equivalent
-approach.
-
-Until that hardening lands, the local-account backend must:
-
-- keep unlock TTL bounded
-- avoid copying passwords across layers
-- avoid logging any password-bearing structures
-
-## 10. Request Integrity Rules
-
-Every request must have:
+Every signing request must have:
 
 - a cryptographically strong `request_id`
 - a deterministic `payload_hash`
@@ -210,147 +129,119 @@ Every request must have:
 - `expires_at`
 - one canonical status owner, which is `starmaskd`
 
-The coordinator must reject:
+The daemon must reject:
 
 - requests missing required fields
-- malformed payloads
 - expired requests
 - requests routed to unknown wallet instances
-- requests that target a backend without the required capability
-- duplicate `client_request_id` values with conflicting payload hashes
+- malformed transaction payloads
+- conflicting `client_request_id` replays with a different payload hash
 
-## 11. Routing Security
+## 9. Result Handling Rules
+
+Signed outputs are sensitive even when private keys are not exposed.
+
+Rules:
+
+1. signed results must be retained for a limited time only
+2. result availability policy must be explicit and documented
+3. result retrieval must be keyed by `request_id`
+4. daemon logs must never print full signed payloads by default
+
+## 10. Routing Security
 
 Wallet routing must be explicit and deterministic.
 
 Rules:
 
 1. if the caller names `wallet_instance_id`, only that instance may receive the request
-2. if multiple wallet instances match and none is selected, the coordinator must fail with
+2. if multiple wallet instances match and none is selected, the daemon must fail with
    `wallet_selection_required`
 3. auto-routing is allowed only when exactly one matching instance exists
 4. account identity alone is insufficient when more than one wallet instance exposes the same
    address
-5. after `pending_user_approval`, the request must remain bound to the same wallet instance
 
-## 12. Result Handling Rules
+## 11. Local Transport Security
 
-Signed outputs are sensitive even when private keys are not exposed.
-
-Rules:
-
-1. result retention must be bounded and documented
-2. result lookup must be keyed by `request_id`
-3. logs must never print raw signatures or signed transaction blobs by default
-4. cancellation and expiry must eventually clear retained results
-
-## 13. Filesystem and Local Transport Security
-
-The first release assumes local-only transports.
+The design assumes local-only transports.
 
 Required properties:
 
-1. socket or pipe permissions are limited to the current OS user
-2. there is no network listener
-3. there is no unauthenticated localhost HTTP bridge
-4. backend registration includes protocol-version checking
-5. local account directories must reject obviously insecure ownership or permission states
+1. socket or pipe permissions limited to the current OS user
+2. no network listener
+3. no unauthenticated localhost HTTP bridge
+4. protocol version negotiation on every extension registration
 
-For account-directory safety checks, the local backend should reject at least:
-
-- world-writable vault directories
-- symlink-swapped directory roots
-- missing parent directories created by a different user when ownership cannot be verified
-
-## 14. Release Channel Separation
+## 12. Release Channel Separation
 
 Development, staging, and production channels must remain isolated.
 
 Rules:
 
-1. each channel uses a distinct backend allowlist and trust policy
-2. Native Messaging manifests are channel-specific
+1. each channel uses a distinct extension ID
+2. each channel uses a distinct Native Messaging manifest
 3. production binaries must not trust development extension IDs
-4. `private_key_dev` must be blocked in production
 
-## 15. Performance as a Security Property
+## 13. Rust Implementation Security Notes
 
-Some performance controls are also security controls.
+The Rust workspace should default to:
 
-Required behavior:
+- `#![forbid(unsafe_code)]`
 
-1. per-instance approval concurrency must be bounded to avoid prompt flooding
-2. maintenance sweeps must expire abandoned requests promptly
-3. bounded unlock TTL reduces the blast radius of a stolen local session
-4. bounded result retention reduces exposure of signed artifacts
-5. metadata caching is allowed, but decrypted key material must not become a long-lived cache
+If a platform shim requires unsafe code:
 
-## 16. Threat Scenarios and Required Mitigations
+- isolate it outside the core lifecycle and persistence crates
+- document the safety invariant
+- keep the unsafe surface minimal and auditable
 
-### 16.1 Host provides a misleading transaction summary
+Additional Rust guidance:
 
-Mitigation:
+1. request IDs, lease IDs, and wallet-instance IDs should be distinct newtypes
+2. lifecycle states should be enums, not mutable free-form strings
+3. redaction helpers should be used for sensitive log fields
 
-- signer backend ignores `display_hint` as the source of truth
-- signer backend renders from canonical payload bytes
+## 14. Threat Scenarios and Expected Mitigations
 
-### 16.2 Duplicate request replay after host retry
+### Host provides a misleading description
 
 Mitigation:
 
-- `client_request_id` and `payload_hash` are checked together
-- the coordinator returns the existing request when the replay is identical
-- conflicting replays fail closed
+- extension ignores `display_hint` as the source of truth
+- extension renders from canonical payload bytes
 
-### 16.3 Backend disconnects after approval UI is shown
+### Duplicate sign request after host retry
 
 Mitigation:
 
-- the request remains durable in coordinator storage
-- only the same wallet instance may resume it
-- transport loss alone never implies approval
+- host persists `request_id`
+- daemon owns terminal state
+- status polling happens before creating a replacement request
+- conflicting `client_request_id` reuse fails with `idempotency_key_conflict`
 
-### 16.4 Local process probes the daemon socket
+### Extension disconnects after UI presentation
+
+Mitigation:
+
+- request remains in daemon store
+- recovery policy determines whether re-delivery is allowed
+- transport loss alone does not imply approval or rejection
+
+### Local process probes the daemon socket
 
 Mitigation:
 
 - OS-user-scoped local transport
 - strict request validation
-- no privileged signing without backend-local approval
+- no privileged signing operation without extension approval
 
-### 16.5 Production daemon accidentally enables a dev-only signer backend
-
-Mitigation:
-
-- explicit channel gating
-- explicit unsafe-backend configuration
-- startup validation rejects forbidden backend kinds
-
-### 16.6 Multiple requests target the same local account simultaneously
+### Dev extension accidentally talks to a production daemon
 
 Mitigation:
 
-- bound active presentations per wallet instance or account
-- prefer serialized interactive approval
-- document sender-level serialization when composing with `starcoin-node-mcp`
+- channel-specific manifest and ID allowlists
+- version compatibility checks at registration time
 
-## 17. First-Release Closed Decisions
+## 15. Non-Goals
 
-The first release is closed on these security decisions:
-
-1. account listing is not gated by an interactive approval step
-2. public-key lookup may use cached metadata
-3. passwords do not cross MCP
-4. unsupported transaction payloads are rejected rather than blindly signed
-5. after `request.presented`, only the same `wallet_instance_id` may resume the request
-6. dev-only signer backends are disabled by default
-
-## 18. Non-Goals
-
-This security model does not define:
-
-- the exact daemon wire protocol
-- the exact database schema
-- the exact UI layout
-
-Those belong in follow-up documents, but they must comply with the invariants defined here.
+This security model does not define the planned generic signer-backend model. That follow-on work is
+tracked in `docs/unified-wallet-coordinator-evolution.md`.
