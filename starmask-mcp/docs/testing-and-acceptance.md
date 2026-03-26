@@ -145,7 +145,7 @@ test or one manual verification record.
 
 Before a multi-backend release can freeze, the project must add new acceptance coverage for:
 
-1. backend-generic registration and routing
+1. backend-generic registration and routing defined by `docs/wallet-backend-agent-contract.md`
 2. `local_account_dir` filesystem permission checks
 3. backend-local unlock prompts and unlock TTL behavior
 4. local-account signing flows

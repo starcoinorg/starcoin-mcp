@@ -229,11 +229,15 @@ then, the current `v1` config remains authoritative.
 
 Before the project can freeze a multi-backend implementation, it still needs:
 
-1. a backend-generic agent contract document
+1. an approved backend-generic agent contract document
 2. a backend-generic security model update
 3. acceptance tests for local-account permission checks
 4. acceptance tests for backend-local unlock and unlock expiry
 5. clear migration rules for daemon protocol versioning
+
+The backend-generic agent contract is now captured in:
+
+- `docs/wallet-backend-agent-contract.md`
 
 ## 13. Practical Conclusion
 
