@@ -71,9 +71,18 @@ The following checks should be recorded as real-environment or manual validation
 
 ## Current Recommendation
 
+Adjacent progress outside the shim layer now exists in `crates/starmaskd/src/server.rs` for:
+
+- daemon `protocol_version_mismatch`
+- unsupported daemon method rejection
+- invalid `request.resolve` payload rejection
+- extension allowlist rejection before coordinator dispatch
+
+Those tests are useful protocol guards, but they do not replace the larger Layer 3/4/6 acceptance work below.
+
 Near-term automation work should focus on:
 
-1. Layer 3 daemon JSON-RPC tests for idempotency and shared error cases
+1. remaining Layer 3 daemon JSON-RPC tests for idempotency, lifecycle-backed shared errors, and persistence-backed behavior
 2. Layer 4 native host tests for framing and reconnect behavior
 3. Layer 6 local stack tests for cancel-while-open and resume-after-presentation flows
 
