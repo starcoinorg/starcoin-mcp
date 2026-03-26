@@ -98,7 +98,7 @@ Recommended public facade:
 
 The repository should not ship one monolithic combined library that merges wallet and node MCP behavior into a single trust domain.
 
-If one host binary wants both capabilities, it should link both MCP server libraries separately and preserve their distinct dependency graphs and failure handling.
+If one host binary wants both capabilities, it should link both MCP server libraries separately and preserve distinct server wiring and failure-handling boundaries.
 
 ## Migration Strategy
 
