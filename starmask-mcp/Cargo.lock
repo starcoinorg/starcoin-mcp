@@ -986,6 +986,7 @@ dependencies = [
  "serde",
  "serde_json",
  "starmask-types",
+ "tempfile",
  "tokio",
  "tracing",
  "tracing-subscriber",
@@ -1012,6 +1013,7 @@ dependencies = [
  "serde_json",
  "starmask-types",
  "starmaskd",
+ "tempfile",
 ]
 
 [[package]]

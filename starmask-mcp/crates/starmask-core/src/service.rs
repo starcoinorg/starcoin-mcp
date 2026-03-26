@@ -1453,6 +1453,141 @@ mod tests {
         )
     }
 
+    fn wallet_account(
+        wallet_instance_id: &WalletInstanceId,
+        address: &str,
+        is_default: bool,
+    ) -> WalletAccountRecord {
+        WalletAccountRecord {
+            wallet_instance_id: wallet_instance_id.clone(),
+            address: address.to_owned(),
+            label: None,
+            public_key: None,
+            is_default,
+            is_locked: false,
+            last_seen_at: TimestampMs::from_millis(0),
+        }
+    }
+
+    fn register_wallet(
+        coordinator: &mut Coordinator<MemoryStore, AllowAllPolicy, FixedClock, SequentialIds>,
+        wallet_instance_id: &WalletInstanceId,
+        lock_state: LockState,
+        accounts: Vec<WalletAccountRecord>,
+    ) {
+        coordinator
+            .dispatch(CoordinatorCommand::RegisterExtension(
+                RegisterExtensionCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    extension_id: "ext".to_owned(),
+                    extension_version: "1.0.0".to_owned(),
+                    protocol_version: 1,
+                    profile_hint: None,
+                    lock_state,
+                    accounts: Vec::new(),
+                },
+            ))
+            .unwrap();
+        coordinator
+            .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
+                UpdateExtensionAccountsCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    lock_state,
+                    accounts,
+                },
+            ))
+            .unwrap();
+    }
+
+    fn create_sign_transaction(
+        coordinator: &mut Coordinator<MemoryStore, AllowAllPolicy, FixedClock, SequentialIds>,
+        client_request_id: &str,
+        wallet_instance_id: &WalletInstanceId,
+        ttl_seconds: Option<DurationSeconds>,
+    ) -> starmask_types::CreateRequestResult {
+        let created = coordinator
+            .dispatch(CoordinatorCommand::CreateSignTransaction(
+                CreateSignTransactionCommand {
+                    client_request_id: ClientRequestId::new(client_request_id).unwrap(),
+                    account_address: "0x1".to_owned(),
+                    wallet_instance_id: Some(wallet_instance_id.clone()),
+                    chain_id: 251,
+                    raw_txn_bcs_hex: "0xabc".to_owned(),
+                    tx_kind: "transfer".to_owned(),
+                    display_hint: None,
+                    client_context: None,
+                    ttl_seconds,
+                },
+            ))
+            .unwrap();
+
+        let CoordinatorResponse::RequestCreated(created) = created else {
+            panic!("unexpected response");
+        };
+        created
+    }
+
+    fn create_sign_message(
+        coordinator: &mut Coordinator<MemoryStore, AllowAllPolicy, FixedClock, SequentialIds>,
+        client_request_id: &str,
+        wallet_instance_id: &WalletInstanceId,
+        ttl_seconds: Option<DurationSeconds>,
+    ) -> starmask_types::CreateRequestResult {
+        let created = coordinator
+            .dispatch(CoordinatorCommand::CreateSignMessage(
+                CreateSignMessageCommand {
+                    client_request_id: ClientRequestId::new(client_request_id).unwrap(),
+                    account_address: "0x1".to_owned(),
+                    wallet_instance_id: Some(wallet_instance_id.clone()),
+                    message: "hello".to_owned(),
+                    format: MessageFormat::Utf8,
+                    display_hint: None,
+                    client_context: None,
+                    ttl_seconds,
+                },
+            ))
+            .unwrap();
+
+        let CoordinatorResponse::RequestCreated(created) = created else {
+            panic!("unexpected response");
+        };
+        created
+    }
+
+    fn pull_next_request(
+        coordinator: &mut Coordinator<MemoryStore, AllowAllPolicy, FixedClock, SequentialIds>,
+        wallet_instance_id: &WalletInstanceId,
+    ) -> starmask_types::PulledRequest {
+        let pulled = coordinator
+            .dispatch(CoordinatorCommand::PullNextRequest {
+                wallet_instance_id: wallet_instance_id.clone(),
+            })
+            .unwrap();
+        let CoordinatorResponse::PullNextRequest(pulled) = pulled else {
+            panic!("unexpected response");
+        };
+        pulled.request.expect("request should be available")
+    }
+
+    fn mark_presented(
+        coordinator: &mut Coordinator<MemoryStore, AllowAllPolicy, FixedClock, SequentialIds>,
+        request_id: &starmask_types::RequestId,
+        wallet_instance_id: &WalletInstanceId,
+        delivery_lease_id: DeliveryLeaseId,
+        presentation_id: PresentationId,
+    ) {
+        coordinator
+            .dispatch(CoordinatorCommand::MarkRequestPresented(
+                MarkRequestPresentedCommand {
+                    request_id: request_id.clone(),
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    delivery_lease_id,
+                    presentation_id,
+                },
+            ))
+            .unwrap();
+    }
+
     #[test]
     fn create_request_is_idempotent_for_same_payload() {
         let mut coordinator = build_coordinator();
@@ -2191,5 +2326,455 @@ mod tests {
         assert_eq!(request.request_id, request_id);
         assert!(!request.resume_required);
         assert!(request.delivery_lease_id.is_some());
+    }
+
+    #[test]
+    fn create_request_clamps_ttl_within_config_bounds() {
+        let mut coordinator = build_coordinator();
+        coordinator.config.min_request_ttl = DurationSeconds::new(30);
+        coordinator.config.max_request_ttl = DurationSeconds::new(60);
+
+        let wallet_instance_id = WalletInstanceId::new("wallet-ttl").unwrap();
+        register_wallet(
+            &mut coordinator,
+            &wallet_instance_id,
+            LockState::Unlocked,
+            vec![wallet_account(&wallet_instance_id, "0x1", true)],
+        );
+
+        let low_ttl = create_sign_message(
+            &mut coordinator,
+            "client-ttl-low",
+            &wallet_instance_id,
+            Some(DurationSeconds::new(5)),
+        );
+        let high_ttl = create_sign_message(
+            &mut coordinator,
+            "client-ttl-high",
+            &wallet_instance_id,
+            Some(DurationSeconds::new(600)),
+        );
+
+        assert_eq!(
+            low_ttl.expires_at.as_millis() - low_ttl.created_at.as_millis(),
+            30_000
+        );
+        assert_eq!(
+            high_ttl.expires_at.as_millis() - high_ttl.created_at.as_millis(),
+            60_000
+        );
+    }
+
+    #[test]
+    fn create_request_rejects_locked_selected_wallet() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-locked").unwrap();
+        register_wallet(
+            &mut coordinator,
+            &wallet_instance_id,
+            LockState::Locked,
+            vec![wallet_account(&wallet_instance_id, "0x1", true)],
+        );
+
+        let error = coordinator
+            .dispatch(CoordinatorCommand::CreateSignTransaction(
+                CreateSignTransactionCommand {
+                    client_request_id: ClientRequestId::new("client-locked").unwrap(),
+                    account_address: "0x1".to_owned(),
+                    wallet_instance_id: Some(wallet_instance_id),
+                    chain_id: 251,
+                    raw_txn_bcs_hex: "0xabc".to_owned(),
+                    tx_kind: "transfer".to_owned(),
+                    display_hint: None,
+                    client_context: None,
+                    ttl_seconds: None,
+                },
+            ))
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "wallet_locked: Selected wallet instance is locked"
+        );
+    }
+
+    #[test]
+    fn cancel_created_request_moves_to_cancelled() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-cancel-created").unwrap();
+        register_wallet(
+            &mut coordinator,
+            &wallet_instance_id,
+            LockState::Unlocked,
+            vec![wallet_account(&wallet_instance_id, "0x1", true)],
+        );
+
+        let created = create_sign_transaction(
+            &mut coordinator,
+            "client-cancel-created",
+            &wallet_instance_id,
+            None,
+        );
+
+        let cancelled = coordinator
+            .dispatch(CoordinatorCommand::CancelRequest {
+                request_id: created.request_id.clone(),
+            })
+            .unwrap();
+        let CoordinatorResponse::RequestCancelled(cancelled) = cancelled else {
+            panic!("unexpected response");
+        };
+        assert_eq!(cancelled.status, RequestStatus::Cancelled);
+        assert_eq!(
+            cancelled.error_code,
+            Some(SharedErrorCode::RequestCancelled)
+        );
+    }
+
+    #[test]
+    fn cancel_presented_request_moves_to_cancelled() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-cancel-presented").unwrap();
+        register_wallet(
+            &mut coordinator,
+            &wallet_instance_id,
+            LockState::Unlocked,
+            vec![wallet_account(&wallet_instance_id, "0x1", true)],
+        );
+
+        let created = create_sign_transaction(
+            &mut coordinator,
+            "client-cancel-presented",
+            &wallet_instance_id,
+            None,
+        );
+        let pulled = pull_next_request(&mut coordinator, &wallet_instance_id);
+        mark_presented(
+            &mut coordinator,
+            &created.request_id,
+            &wallet_instance_id,
+            pulled
+                .delivery_lease_id
+                .expect("delivery lease should exist"),
+            PresentationId::new("presentation-cancel").unwrap(),
+        );
+
+        let cancelled = coordinator
+            .dispatch(CoordinatorCommand::CancelRequest {
+                request_id: created.request_id.clone(),
+            })
+            .unwrap();
+        let CoordinatorResponse::RequestCancelled(cancelled) = cancelled else {
+            panic!("unexpected response");
+        };
+        assert_eq!(cancelled.status, RequestStatus::Cancelled);
+        assert_eq!(
+            cancelled.error_code,
+            Some(SharedErrorCode::RequestCancelled)
+        );
+
+        let status = coordinator
+            .dispatch(CoordinatorCommand::GetRequestStatus {
+                request_id: created.request_id,
+            })
+            .unwrap();
+        let CoordinatorResponse::RequestStatus(status) = status else {
+            panic!("unexpected response");
+        };
+        assert_eq!(status.status, RequestStatus::Cancelled);
+    }
+
+    #[test]
+    fn request_reject_transitions_to_rejected() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-reject").unwrap();
+        let presentation_id = PresentationId::new("presentation-reject").unwrap();
+        register_wallet(
+            &mut coordinator,
+            &wallet_instance_id,
+            LockState::Unlocked,
+            vec![wallet_account(&wallet_instance_id, "0x1", true)],
+        );
+
+        let created = create_sign_transaction(
+            &mut coordinator,
+            "client-reject-normal",
+            &wallet_instance_id,
+            None,
+        );
+        let pulled = pull_next_request(&mut coordinator, &wallet_instance_id);
+        mark_presented(
+            &mut coordinator,
+            &created.request_id,
+            &wallet_instance_id,
+            pulled
+                .delivery_lease_id
+                .expect("delivery lease should exist"),
+            presentation_id.clone(),
+        );
+
+        let rejected = coordinator
+            .dispatch(CoordinatorCommand::RejectRequest(RejectRequestCommand {
+                request_id: created.request_id.clone(),
+                wallet_instance_id: wallet_instance_id.clone(),
+                presentation_id: Some(presentation_id),
+                reason_code: RejectReasonCode::RequestRejected,
+                message: Some("User explicitly rejected the request".to_owned()),
+            }))
+            .unwrap();
+        let CoordinatorResponse::RequestRejected(rejected) = rejected else {
+            panic!("unexpected response");
+        };
+        assert_eq!(rejected.status, RequestStatus::Rejected);
+        assert_eq!(rejected.error_code, SharedErrorCode::RequestRejected);
+    }
+
+    #[test]
+    fn delivery_lease_expiry_requeues_request() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-lease-expiry").unwrap();
+        register_wallet(
+            &mut coordinator,
+            &wallet_instance_id,
+            LockState::Unlocked,
+            vec![wallet_account(&wallet_instance_id, "0x1", true)],
+        );
+
+        let created = create_sign_transaction(
+            &mut coordinator,
+            "client-lease-expiry",
+            &wallet_instance_id,
+            None,
+        );
+
+        coordinator
+            .dispatch(CoordinatorCommand::PullNextRequest {
+                wallet_instance_id: wallet_instance_id.clone(),
+            })
+            .unwrap();
+
+        coordinator.clock.now = TimestampMs::from_millis(1_710_000_031_000);
+        coordinator
+            .dispatch(CoordinatorCommand::TickMaintenance)
+            .unwrap();
+
+        let pulled = coordinator
+            .dispatch(CoordinatorCommand::PullNextRequest { wallet_instance_id })
+            .unwrap();
+        let CoordinatorResponse::PullNextRequest(pulled) = pulled else {
+            panic!("unexpected response");
+        };
+        let request = pulled.request.expect("request should be re-queued");
+        assert_eq!(request.request_id, created.request_id);
+        assert!(!request.resume_required);
+        assert!(request.delivery_lease_id.is_some());
+    }
+
+    #[test]
+    fn maintenance_expires_created_request_after_ttl() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-expired-created").unwrap();
+        register_wallet(
+            &mut coordinator,
+            &wallet_instance_id,
+            LockState::Unlocked,
+            vec![wallet_account(&wallet_instance_id, "0x1", true)],
+        );
+
+        let created = create_sign_transaction(
+            &mut coordinator,
+            "client-expired-created",
+            &wallet_instance_id,
+            Some(DurationSeconds::new(1)),
+        );
+
+        coordinator.clock.now = TimestampMs::from_millis(created.expires_at.as_millis());
+        coordinator
+            .dispatch(CoordinatorCommand::TickMaintenance)
+            .unwrap();
+
+        let status = coordinator
+            .dispatch(CoordinatorCommand::GetRequestStatus {
+                request_id: created.request_id,
+            })
+            .unwrap();
+        let CoordinatorResponse::RequestStatus(status) = status else {
+            panic!("unexpected response");
+        };
+        assert_eq!(status.status, RequestStatus::Expired);
+        assert_eq!(status.error_code, Some(SharedErrorCode::RequestExpired));
+    }
+
+    #[test]
+    fn approved_result_is_readable_multiple_times_before_retention_expiry() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-read-result").unwrap();
+        register_wallet(
+            &mut coordinator,
+            &wallet_instance_id,
+            LockState::Unlocked,
+            vec![wallet_account(&wallet_instance_id, "0x1", true)],
+        );
+
+        let created = create_sign_transaction(
+            &mut coordinator,
+            "client-read-result",
+            &wallet_instance_id,
+            None,
+        );
+        let presentation_id = PresentationId::new("presentation-read-result").unwrap();
+        let pulled = pull_next_request(&mut coordinator, &wallet_instance_id);
+        mark_presented(
+            &mut coordinator,
+            &created.request_id,
+            &wallet_instance_id,
+            pulled
+                .delivery_lease_id
+                .expect("delivery lease should exist"),
+            presentation_id.clone(),
+        );
+        coordinator
+            .dispatch(CoordinatorCommand::ResolveRequest(ResolveRequestCommand {
+                request_id: created.request_id.clone(),
+                wallet_instance_id,
+                presentation_id,
+                result: starmask_types::RequestResult::SignedTransaction {
+                    signed_txn_bcs_hex: "0xsigned".to_owned(),
+                },
+            }))
+            .unwrap();
+
+        let first = coordinator
+            .dispatch(CoordinatorCommand::GetRequestStatus {
+                request_id: created.request_id.clone(),
+            })
+            .unwrap();
+        let second = coordinator
+            .dispatch(CoordinatorCommand::GetRequestStatus {
+                request_id: created.request_id,
+            })
+            .unwrap();
+
+        let CoordinatorResponse::RequestStatus(first) = first else {
+            panic!("unexpected response");
+        };
+        let CoordinatorResponse::RequestStatus(second) = second else {
+            panic!("unexpected response");
+        };
+        assert_eq!(first.status, RequestStatus::Approved);
+        assert!(first.result_available);
+        assert_eq!(first.result, second.result);
+        assert!(second.result_available);
+    }
+
+    #[test]
+    fn result_payload_eviction_keeps_terminal_metadata() {
+        let mut coordinator = build_coordinator();
+        coordinator.config.result_retention = DurationSeconds::new(60);
+
+        let wallet_instance_id = WalletInstanceId::new("wallet-evict-result").unwrap();
+        register_wallet(
+            &mut coordinator,
+            &wallet_instance_id,
+            LockState::Unlocked,
+            vec![wallet_account(&wallet_instance_id, "0x1", true)],
+        );
+
+        let created = create_sign_transaction(
+            &mut coordinator,
+            "client-evict-result",
+            &wallet_instance_id,
+            None,
+        );
+        let presentation_id = PresentationId::new("presentation-evict-result").unwrap();
+        let pulled = pull_next_request(&mut coordinator, &wallet_instance_id);
+        mark_presented(
+            &mut coordinator,
+            &created.request_id,
+            &wallet_instance_id,
+            pulled
+                .delivery_lease_id
+                .expect("delivery lease should exist"),
+            presentation_id.clone(),
+        );
+        coordinator
+            .dispatch(CoordinatorCommand::ResolveRequest(ResolveRequestCommand {
+                request_id: created.request_id.clone(),
+                wallet_instance_id,
+                presentation_id,
+                result: starmask_types::RequestResult::SignedTransaction {
+                    signed_txn_bcs_hex: "0xsigned".to_owned(),
+                },
+            }))
+            .unwrap();
+
+        coordinator.clock.now = TimestampMs::from_millis(1_710_000_061_000);
+        coordinator
+            .dispatch(CoordinatorCommand::TickMaintenance)
+            .unwrap();
+
+        let status = coordinator
+            .dispatch(CoordinatorCommand::GetRequestStatus {
+                request_id: created.request_id,
+            })
+            .unwrap();
+        let CoordinatorResponse::RequestStatus(status) = status else {
+            panic!("unexpected response");
+        };
+        assert_eq!(status.status, RequestStatus::Approved);
+        assert_eq!(status.result, None);
+        assert!(!status.result_available);
+        assert_eq!(status.result_expires_at, None);
+        assert_eq!(
+            status.result_kind,
+            starmask_types::ResultKind::SignedTransaction
+        );
+        assert_eq!(status.error_code, None);
+    }
+
+    #[test]
+    fn presented_request_is_not_redelivered_to_other_wallet_instances() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-owner").unwrap();
+        let other_wallet_instance_id = WalletInstanceId::new("wallet-other").unwrap();
+        register_wallet(
+            &mut coordinator,
+            &wallet_instance_id,
+            LockState::Unlocked,
+            vec![wallet_account(&wallet_instance_id, "0x1", true)],
+        );
+        register_wallet(
+            &mut coordinator,
+            &other_wallet_instance_id,
+            LockState::Unlocked,
+            vec![wallet_account(&other_wallet_instance_id, "0x1", true)],
+        );
+
+        let created = create_sign_transaction(
+            &mut coordinator,
+            "client-no-cross-instance",
+            &wallet_instance_id,
+            None,
+        );
+        let pulled = pull_next_request(&mut coordinator, &wallet_instance_id);
+        mark_presented(
+            &mut coordinator,
+            &created.request_id,
+            &wallet_instance_id,
+            pulled
+                .delivery_lease_id
+                .expect("delivery lease should exist"),
+            PresentationId::new("presentation-no-cross-instance").unwrap(),
+        );
+
+        let pulled = coordinator
+            .dispatch(CoordinatorCommand::PullNextRequest {
+                wallet_instance_id: other_wallet_instance_id,
+            })
+            .unwrap();
+        let CoordinatorResponse::PullNextRequest(pulled) = pulled else {
+            panic!("unexpected response");
+        };
+        assert!(pulled.request.is_none());
     }
 }

@@ -580,6 +580,9 @@ fn unexpected_response(response: CoordinatorResponse) -> JsonRpcErrorResponse {
 }
 
 fn map_runtime_error(error: anyhow::Error) -> JsonRpcErrorResponse {
+    if let Some(shared) = extract_shared_error(&error) {
+        return JsonRpcErrorResponse::new("", shared);
+    }
     JsonRpcErrorResponse::new(
         "",
         SharedError::new(SharedErrorCode::InternalBridgeError, error.to_string()),
@@ -591,6 +594,18 @@ fn error_response(id: Option<&str>, error: impl std::fmt::Display) -> JsonRpcErr
         id.unwrap_or(""),
         SharedError::new(SharedErrorCode::InternalBridgeError, error.to_string()),
     )
+}
+
+fn extract_shared_error(error: &anyhow::Error) -> Option<SharedError> {
+    if let Some(shared) = error.downcast_ref::<SharedError>() {
+        return Some(shared.clone());
+    }
+    if let Some(starmask_core::CoreError::Shared(shared)) =
+        error.downcast_ref::<starmask_core::CoreError>()
+    {
+        return Some(shared.clone());
+    }
+    None
 }
 
 fn request_result_from_params(params: &RequestResolveParams) -> Result<RequestResult> {
@@ -738,6 +753,19 @@ mod tests {
             error.error.message,
             "signature is required for signed_message"
         );
+    }
+
+    #[test]
+    fn runtime_shared_error_preserves_original_code() {
+        let error =
+            super::map_runtime_error(anyhow::Error::from(starmask_core::CoreError::shared(
+                SharedErrorCode::IdempotencyKeyConflict,
+                "duplicate client_request_id",
+            )));
+
+        assert_eq!(error.error.code, SharedErrorCode::IdempotencyKeyConflict);
+        assert_eq!(error.error.message, "duplicate client_request_id");
+        assert_eq!(error.error.retryable, Some(false));
     }
 
     #[tokio::test]
