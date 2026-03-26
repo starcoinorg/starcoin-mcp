@@ -81,6 +81,7 @@ pub struct UpdateExtensionAccountsCommand {
 pub struct UpdateBackendAccountsCommand {
     pub wallet_instance_id: WalletInstanceId,
     pub lock_state: LockState,
+    pub capabilities: Vec<WalletCapability>,
     pub accounts: Vec<WalletAccountRecord>,
 }
 

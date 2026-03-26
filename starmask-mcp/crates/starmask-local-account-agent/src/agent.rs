@@ -68,8 +68,9 @@ impl LocalAccountAgent {
         heartbeat_interval: Duration,
         config: LocalAccountDirBackendConfig,
     ) -> Result<Self> {
-        let storage = AccountStorage::create_from_path(&config.account_dir, RocksdbConfig::default())
-            .context("failed to open local account storage")?;
+        let storage =
+            AccountStorage::create_from_path(&config.account_dir, RocksdbConfig::default())
+                .context("failed to open local account storage")?;
         let manager = AccountManager::new(storage, ChainId::new(config.chain_id))
             .context("failed to open local account manager")?;
         let wallet_instance_id = WalletInstanceId::new(config.common.backend_id.clone())
@@ -115,18 +116,23 @@ impl LocalAccountAgent {
         }
 
         self.spawn_heartbeat_loop()?;
-        info!("local backend agent registered as {}", self.wallet_instance_id);
+        info!(
+            "local backend agent registered as {}",
+            self.wallet_instance_id
+        );
 
         loop {
             self.sync_snapshot(&mut snapshot)?;
 
-            match self.client.request_pull_next(starmask_types::RequestPullNextParams {
-                protocol_version: daemon_protocol_version(),
-                wallet_instance_id: self.wallet_instance_id.clone(),
-            }) {
+            match self
+                .client
+                .request_pull_next(starmask_types::RequestPullNextParams {
+                    protocol_version: daemon_protocol_version(),
+                    wallet_instance_id: self.wallet_instance_id.clone(),
+                }) {
                 Ok(result) => {
                     if let Some(request) = result.request {
-                        self.handle_request(request)?;
+                        self.handle_request(request, &snapshot)?;
                         self.sync_snapshot(&mut snapshot)?;
                         continue;
                     }
@@ -181,7 +187,7 @@ impl LocalAccountAgent {
         })
     }
 
-    fn handle_request(&mut self, request: PulledRequest) -> Result<()> {
+    fn handle_request(&mut self, request: PulledRequest, snapshot: &Snapshot) -> Result<()> {
         let account_address = AccountAddress::from_str(&request.account_address)
             .with_context(|| format!("invalid account address {}", request.account_address))?;
         let Some(account_info) = self
@@ -212,41 +218,35 @@ impl LocalAccountAgent {
             .presentation_id
             .clone()
             .unwrap_or_else(new_presentation_id);
-        let approval = match self.prompt_for_request(&request, &account_info) {
-            Ok(approval) => approval,
-            Err(rejection) => {
-                self.reject_request(
-                    &request,
-                    None,
-                    rejection.reason_code,
-                    rejection.message,
-                )?;
-                return Ok(());
-            }
-        };
-
-        self.client.request_presented(starmask_types::RequestPresentedParams {
-            protocol_version: daemon_protocol_version(),
-            wallet_instance_id: self.wallet_instance_id.clone(),
-            request_id: request.request_id.clone(),
-            delivery_lease_id: request.delivery_lease_id.clone(),
-            presentation_id: presentation_id.clone(),
-        })?;
+        self.client
+            .request_presented(starmask_types::RequestPresentedParams {
+                protocol_version: daemon_protocol_version(),
+                wallet_instance_id: self.wallet_instance_id.clone(),
+                request_id: request.request_id.clone(),
+                delivery_lease_id: request.delivery_lease_id.clone(),
+                presentation_id: presentation_id.clone(),
+            })?;
         self.push_presented_request(request.request_id.clone())?;
 
-        let result = if approval.approved {
-            self.fulfill_request(
-                &request,
-                account_address,
-                &account_info,
-                approval.password.as_deref(),
-            )
-        } else {
-            Err(RequestRejection {
-                reason_code: RejectReasonCode::RequestRejected,
-                message: Some("User rejected the signing request".to_owned()),
-            })
-        };
+        let result = (|| {
+            let approval =
+                self.prompt_for_request(&request, &account_info, &snapshot.capabilities)?;
+
+            if approval.approved {
+                self.fulfill_request(
+                    &request,
+                    account_address,
+                    &account_info,
+                    &snapshot.capabilities,
+                    approval.password.as_deref(),
+                )
+            } else {
+                Err(RequestRejection {
+                    reason_code: RejectReasonCode::RequestRejected,
+                    message: Some("User rejected the signing request".to_owned()),
+                })
+            }
+        })();
 
         self.pop_presented_request(&request.request_id)?;
 
@@ -266,9 +266,11 @@ impl LocalAccountAgent {
         request: &PulledRequest,
         account_address: AccountAddress,
         account_info: &AccountInfo,
+        capabilities: &[WalletCapability],
         password: Option<&str>,
     ) -> std::result::Result<RequestResult, RequestRejection> {
         if account_info.is_locked {
+            ensure_local_unlock_capability(account_info.is_locked, capabilities)?;
             let Some(password) = password else {
                 return Err(RequestRejection {
                     reason_code: RejectReasonCode::WalletLocked,
@@ -321,13 +323,13 @@ impl LocalAccountAgent {
             });
         }
 
-        let signed_txn = self
-            .manager
-            .sign_txn(address, raw_txn)
-            .map_err(|error| RequestRejection {
-                reason_code: RejectReasonCode::BackendUnavailable,
-                message: Some(format!("Failed to sign transaction: {error}")),
-            })?;
+        let signed_txn =
+            self.manager
+                .sign_txn(address, raw_txn)
+                .map_err(|error| RequestRejection {
+                    reason_code: RejectReasonCode::BackendUnavailable,
+                    message: Some(format!("Failed to sign transaction: {error}")),
+                })?;
         let signed_txn_bytes =
             bcs_ext::to_bytes(&signed_txn).map_err(|error| RequestRejection {
                 reason_code: RejectReasonCode::BackendUnavailable,
@@ -405,14 +407,15 @@ impl LocalAccountAgent {
         reason_code: RejectReasonCode,
         reason_message: Option<String>,
     ) -> Result<()> {
-        self.client.request_reject(starmask_types::RequestRejectParams {
-            protocol_version: daemon_protocol_version(),
-            wallet_instance_id: self.wallet_instance_id.clone(),
-            request_id: request.request_id.clone(),
-            presentation_id: presentation_id.cloned(),
-            reason_code,
-            reason_message,
-        })?;
+        self.client
+            .request_reject(starmask_types::RequestRejectParams {
+                protocol_version: daemon_protocol_version(),
+                wallet_instance_id: self.wallet_instance_id.clone(),
+                request_id: request.request_id.clone(),
+                presentation_id: presentation_id.cloned(),
+                reason_code,
+                reason_message,
+            })?;
         Ok(())
     }
 
@@ -422,12 +425,14 @@ impl LocalAccountAgent {
         if *current == next {
             return Ok(());
         }
-        self.client.backend_update_accounts(BackendUpdateAccountsParams {
-            protocol_version: daemon_protocol_version(),
-            wallet_instance_id: self.wallet_instance_id.clone(),
-            lock_state: next.lock_state,
-            accounts: next.accounts.clone(),
-        })?;
+        self.client
+            .backend_update_accounts(BackendUpdateAccountsParams {
+                protocol_version: daemon_protocol_version(),
+                wallet_instance_id: self.wallet_instance_id.clone(),
+                lock_state: next.lock_state,
+                capabilities: next.capabilities.clone(),
+                accounts: next.accounts.clone(),
+            })?;
         *current = next;
         Ok(())
     }
@@ -469,22 +474,24 @@ impl LocalAccountAgent {
 
         thread::Builder::new()
             .name("starmask-local-heartbeat".to_owned())
-            .spawn(move || loop {
-                thread::sleep(heartbeat_interval);
-                let snapshot = match state.lock() {
-                    Ok(guard) => guard.clone(),
-                    Err(_) => {
-                        warn!("heartbeat state lock poisoned");
-                        continue;
+            .spawn(move || {
+                loop {
+                    thread::sleep(heartbeat_interval);
+                    let snapshot = match state.lock() {
+                        Ok(guard) => guard.clone(),
+                        Err(_) => {
+                            warn!("heartbeat state lock poisoned");
+                            continue;
+                        }
+                    };
+                    if let Err(error) = client.backend_heartbeat(BackendHeartbeatParams {
+                        protocol_version: daemon_protocol_version(),
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        presented_request_ids: snapshot.presented_request_ids,
+                        lock_state: Some(snapshot.lock_state),
+                    }) {
+                        warn!("backend.heartbeat failed: {}", error.message);
                     }
-                };
-                if let Err(error) = client.backend_heartbeat(BackendHeartbeatParams {
-                    protocol_version: daemon_protocol_version(),
-                    wallet_instance_id: wallet_instance_id.clone(),
-                    presented_request_ids: snapshot.presented_request_ids,
-                    lock_state: Some(snapshot.lock_state),
-                }) {
-                    warn!("backend.heartbeat failed: {}", error.message);
                 }
             })
             .context("failed to spawn heartbeat thread")?;
@@ -495,15 +502,16 @@ impl LocalAccountAgent {
         &self,
         request: &PulledRequest,
         account_info: &AccountInfo,
+        capabilities: &[WalletCapability],
     ) -> std::result::Result<PromptApproval, RequestRejection> {
+        ensure_local_unlock_capability(account_info.is_locked, capabilities)?;
         print_request_summary(request, account_info);
 
-        let approved = prompt_yes_no("Approve request? [y/N]: ").map_err(|error| {
-            RequestRejection {
+        let approved =
+            prompt_yes_no("Approve request? [y/N]: ").map_err(|error| RequestRejection {
                 reason_code: RejectReasonCode::BackendUnavailable,
                 message: Some(format!("Failed to read local approval input: {error}")),
-            }
-        })?;
+            })?;
         if !approved {
             return Ok(PromptApproval {
                 approved: false,
@@ -548,6 +556,19 @@ fn account_info_to_backend_account(account: AccountInfo) -> BackendAccount {
         is_read_only: account.is_readonly,
         is_locked: account.is_locked,
     }
+}
+
+fn ensure_local_unlock_capability(
+    account_locked: bool,
+    capabilities: &[WalletCapability],
+) -> std::result::Result<(), RequestRejection> {
+    if account_locked && !capabilities.contains(&WalletCapability::Unlock) {
+        return Err(RequestRejection {
+            reason_code: RejectReasonCode::WalletLocked,
+            message: Some("Local account is locked".to_owned()),
+        });
+    }
+    Ok(())
 }
 
 fn new_presentation_id() -> PresentationId {
@@ -639,7 +660,10 @@ mod tests {
     use starcoin_types::genesis_config::ChainId;
     use tempfile::tempdir;
 
-    use super::{LocalAccountAgent, account_info_to_backend_account, decode_signing_message};
+    use super::{
+        LocalAccountAgent, account_info_to_backend_account, decode_signing_message,
+        ensure_local_unlock_capability,
+    };
     use starmask_types::{DurationSeconds, LockState, MessageFormat, WalletCapability};
     use starmaskd::config::{CommonBackendConfig, LocalAccountDirBackendConfig, LocalPromptMode};
 
@@ -700,12 +724,45 @@ mod tests {
     #[test]
     fn backend_account_uses_prefixed_public_key_hex() {
         let tempdir = tempdir().unwrap();
-        let storage = AccountStorage::create_from_path(tempdir.path(), RocksdbConfig::default()).unwrap();
+        let storage =
+            AccountStorage::create_from_path(tempdir.path(), RocksdbConfig::default()).unwrap();
         let manager = AccountManager::new(storage, ChainId::test()).unwrap();
         let account = manager.create_account("hello").unwrap();
         let info = manager.account_info(*account.address()).unwrap().unwrap();
         let backend = account_info_to_backend_account(info);
 
         assert!(backend.public_key.unwrap().starts_with("0x"));
+    }
+
+    #[test]
+    fn locked_accounts_fail_closed_without_unlock_capability() {
+        let error = ensure_local_unlock_capability(
+            true,
+            &[
+                WalletCapability::GetPublicKey,
+                WalletCapability::SignMessage,
+                WalletCapability::SignTransaction,
+            ],
+        )
+        .unwrap_err();
+
+        assert_eq!(
+            error.reason_code,
+            starmask_types::RejectReasonCode::WalletLocked
+        );
+        assert_eq!(error.message.as_deref(), Some("Local account is locked"));
+    }
+
+    #[test]
+    fn unlocked_accounts_do_not_require_unlock_capability() {
+        ensure_local_unlock_capability(
+            false,
+            &[
+                WalletCapability::GetPublicKey,
+                WalletCapability::SignMessage,
+                WalletCapability::SignTransaction,
+            ],
+        )
+        .unwrap();
     }
 }

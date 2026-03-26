@@ -9,10 +9,9 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use starmask_types::{
     AckResult, BackendHeartbeatParams, BackendRegisterParams, BackendRegisteredResult,
-    BackendUpdateAccountsParams, GENERIC_BACKEND_PROTOCOL_VERSION, JsonRpcRequest,
-    JsonRpcResponse, JsonRpcSuccess, RequestPresentedParams, RequestPullNextParams,
-    RequestPullNextResult, RequestRejectParams, RequestResolveParams, SharedError,
-    SharedErrorCode,
+    BackendUpdateAccountsParams, GENERIC_BACKEND_PROTOCOL_VERSION, JsonRpcRequest, JsonRpcResponse,
+    JsonRpcSuccess, RequestPresentedParams, RequestPullNextParams, RequestPullNextResult,
+    RequestRejectParams, RequestResolveParams, SharedError, SharedErrorCode,
 };
 
 const RESPONSE_READ_TIMEOUT: Duration = Duration::from_secs(5);

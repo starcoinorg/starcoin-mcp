@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::path::PathBuf;
 
 use anyhow::{Result, bail};
@@ -34,7 +36,10 @@ fn main() -> Result<()> {
         bail!("backend {} is not configured", cli.backend_id);
     };
     let Some(config) = backend.as_local_account_dir().cloned() else {
-        bail!("backend {} is not a local_account_dir backend", cli.backend_id);
+        bail!(
+            "backend {} is not a local_account_dir backend",
+            cli.backend_id
+        );
     };
     if config.prompt_mode != LocalPromptMode::TtyPrompt {
         bail!("local-account-agent currently supports only prompt_mode = tty_prompt");

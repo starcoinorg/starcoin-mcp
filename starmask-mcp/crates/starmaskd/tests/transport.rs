@@ -435,7 +435,11 @@ async fn unix_server_rejects_disallowed_extension_over_transport() {
 async fn unix_server_locks_down_socket_permissions() {
     let (_tempdir, socket_path, server) = spawn_test_server().await;
 
-    let socket_mode = std::fs::metadata(&socket_path).unwrap().permissions().mode() & 0o777;
+    let socket_mode = std::fs::metadata(&socket_path)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
     let parent_mode = std::fs::metadata(socket_path.parent().unwrap())
         .unwrap()
         .permissions()

@@ -3,15 +3,14 @@ use std::collections::BTreeMap;
 use tracing::debug;
 
 use starmask_types::{
-    ApprovalSurface, BackendKind, CancelRequestResult, ClientRequestId, CreateRequestResult,
-    Curve, DAEMON_PROTOCOL_VERSION, DeliveryLease, DurationSeconds, GetRequestStatusResult,
-    LockState, PayloadHash, PresentationLease, PulledRequest, RejectReasonCode,
-    RequestHasAvailableResult, RequestId, RequestKind, RequestPayload,
-    RequestPullNextResult as DaemonPullNextRequestResult, RequestRecord, RequestResult,
-    RequestStatus, ResultKind, SharedErrorCode, SystemGetInfoResult, SystemPingResult,
-    TimestampMs, TransactionPayload, TransportKind, WalletAccountGroup, WalletCapability,
-    WalletGetPublicKeyResult, WalletInstanceId, WalletInstanceRecord, WalletListAccountsResult,
-    WalletListInstancesResult, WalletStatusResult,
+    ApprovalSurface, BackendKind, CancelRequestResult, ClientRequestId, CreateRequestResult, Curve,
+    DAEMON_PROTOCOL_VERSION, DeliveryLease, DurationSeconds, GetRequestStatusResult, LockState,
+    PayloadHash, PresentationLease, PulledRequest, RejectReasonCode, RequestHasAvailableResult,
+    RequestId, RequestKind, RequestPayload, RequestPullNextResult as DaemonPullNextRequestResult,
+    RequestRecord, RequestResult, RequestStatus, ResultKind, SharedErrorCode, SystemGetInfoResult,
+    SystemPingResult, TimestampMs, TransactionPayload, TransportKind, WalletAccountGroup,
+    WalletCapability, WalletGetPublicKeyResult, WalletInstanceId, WalletInstanceRecord,
+    WalletListAccountsResult, WalletListInstancesResult, WalletStatusResult,
 };
 
 use crate::{
@@ -436,11 +435,8 @@ where
             ));
         }
 
-        let selected_wallet_instance_id = self.resolve_wallet_for_signing(
-            kind,
-            &account_address,
-            wallet_instance_id.as_ref(),
-        )?;
+        let selected_wallet_instance_id =
+            self.resolve_wallet_for_signing(kind, &account_address, wallet_instance_id.as_ref())?;
         let now = self.clock.now();
         let ttl = self.clamp_ttl(ttl_seconds);
         let expires_at = now.checked_add_seconds(ttl).ok_or_else(|| {
@@ -576,7 +572,9 @@ where
     }
 
     fn register_backend(&mut self, command: RegisterBackendCommand) -> CoreResult<()> {
-        if let Some(existing) = self.store.get_wallet_instance(&command.wallet_instance_id)?
+        if let Some(existing) = self
+            .store
+            .get_wallet_instance(&command.wallet_instance_id)?
             && existing.backend_kind != command.backend_kind
         {
             return Err(CoreError::shared(
@@ -663,18 +661,21 @@ where
         self.update_backend_accounts(UpdateBackendAccountsCommand {
             wallet_instance_id: command.wallet_instance_id,
             lock_state: command.lock_state,
+            capabilities: vec![
+                WalletCapability::GetPublicKey,
+                WalletCapability::SignMessage,
+                WalletCapability::SignTransaction,
+            ],
             accounts: command.accounts,
         })
     }
 
-    fn update_backend_accounts(
-        &mut self,
-        command: UpdateBackendAccountsCommand,
-    ) -> CoreResult<()> {
+    fn update_backend_accounts(&mut self, command: UpdateBackendAccountsCommand) -> CoreResult<()> {
         let now = self.clock.now();
         let mut instance = self.require_wallet_instance(&command.wallet_instance_id)?;
         instance.connected = true;
         instance.lock_state = command.lock_state;
+        instance.capabilities = canonical_capabilities(command.capabilities);
         instance.last_seen_at = now;
         self.store.upsert_wallet_instance(instance)?;
 
@@ -1041,12 +1042,15 @@ where
                 "Selected wallet instance is locked",
             ));
         }
-        let account = self.store.get_wallet_account(&selected, address)?.ok_or_else(|| {
-            CoreError::shared(
-                SharedErrorCode::InvalidAccount,
-                "Account is not exposed by the selected wallet instance",
-            )
-        })?;
+        let account = self
+            .store
+            .get_wallet_account(&selected, address)?
+            .ok_or_else(|| {
+                CoreError::shared(
+                    SharedErrorCode::InvalidAccount,
+                    "Account is not exposed by the selected wallet instance",
+                )
+            })?;
         if account.is_read_only {
             return Err(CoreError::shared(
                 SharedErrorCode::UnsupportedOperation,
@@ -1397,15 +1401,16 @@ mod tests {
         ApprovalSurface, BackendKind, ClientRequestId, DeliveryLease, DeliveryLeaseId,
         DurationSeconds, LockState, MessageFormat, PresentationId, RejectReasonCode,
         RequestPayload, RequestRecord, RequestStatus, SharedErrorCode, TimestampMs,
-        TransactionPayload, TransportKind, WalletAccountRecord, WalletCapability,
-        WalletInstanceId, WalletInstanceRecord,
+        TransactionPayload, TransportKind, WalletAccountRecord, WalletCapability, WalletInstanceId,
+        WalletInstanceRecord,
     };
 
     use crate::{
         commands::{
             CoordinatorCommand, CreateSignMessageCommand, CreateSignTransactionCommand,
             MarkRequestPresentedCommand, RegisterBackendCommand, RegisterExtensionCommand,
-            RejectRequestCommand, ResolveRequestCommand, UpdateExtensionAccountsCommand,
+            RejectRequestCommand, ResolveRequestCommand, UpdateBackendAccountsCommand,
+            UpdateExtensionAccountsCommand,
         },
         policy::AllowAllPolicy,
         repo::{RepositoryError, RequestRepository, WalletRepository},
@@ -2227,35 +2232,37 @@ mod tests {
         let wallet_instance_id = WalletInstanceId::new("wallet-local").unwrap();
 
         coordinator
-            .dispatch(CoordinatorCommand::RegisterBackend(RegisterBackendCommand {
-                wallet_instance_id: wallet_instance_id.clone(),
-                backend_kind: BackendKind::LocalAccountDir,
-                transport_kind: TransportKind::LocalSocket,
-                approval_surface: ApprovalSurface::TtyPrompt,
-                instance_label: "Local Main".to_owned(),
-                extension_id: String::new(),
-                extension_version: String::new(),
-                protocol_version: 2,
-                capabilities: vec![
-                    WalletCapability::Unlock,
-                    WalletCapability::GetPublicKey,
-                    WalletCapability::SignMessage,
-                    WalletCapability::SignTransaction,
-                ],
-                backend_metadata: serde_json::json!({}),
-                profile_hint: None,
-                lock_state: LockState::Locked,
-                accounts: vec![WalletAccountRecord {
+            .dispatch(CoordinatorCommand::RegisterBackend(
+                RegisterBackendCommand {
                     wallet_instance_id: wallet_instance_id.clone(),
-                    address: "0x1".to_owned(),
-                    label: None,
-                    public_key: None,
-                    is_default: true,
-                    is_read_only: false,
-                    is_locked: true,
-                    last_seen_at: TimestampMs::from_millis(0),
-                }],
-            }))
+                    backend_kind: BackendKind::LocalAccountDir,
+                    transport_kind: TransportKind::LocalSocket,
+                    approval_surface: ApprovalSurface::TtyPrompt,
+                    instance_label: "Local Main".to_owned(),
+                    extension_id: String::new(),
+                    extension_version: String::new(),
+                    protocol_version: 2,
+                    capabilities: vec![
+                        WalletCapability::Unlock,
+                        WalletCapability::GetPublicKey,
+                        WalletCapability::SignMessage,
+                        WalletCapability::SignTransaction,
+                    ],
+                    backend_metadata: serde_json::json!({}),
+                    profile_hint: None,
+                    lock_state: LockState::Locked,
+                    accounts: vec![WalletAccountRecord {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        address: "0x1".to_owned(),
+                        label: None,
+                        public_key: None,
+                        is_default: true,
+                        is_read_only: false,
+                        is_locked: true,
+                        last_seen_at: TimestampMs::from_millis(0),
+                    }],
+                },
+            ))
             .unwrap();
 
         let created = coordinator
@@ -2278,6 +2285,81 @@ mod tests {
         };
         assert_eq!(created.wallet_instance_id, wallet_instance_id);
         assert_eq!(created.status, RequestStatus::Created);
+    }
+
+    #[test]
+    fn backend_account_updates_refresh_unlock_capabilities_for_routing() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-local-updated").unwrap();
+
+        coordinator
+            .dispatch(CoordinatorCommand::RegisterBackend(
+                RegisterBackendCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    backend_kind: BackendKind::LocalAccountDir,
+                    transport_kind: TransportKind::LocalSocket,
+                    approval_surface: ApprovalSurface::TtyPrompt,
+                    instance_label: "Local Main".to_owned(),
+                    extension_id: String::new(),
+                    extension_version: String::new(),
+                    protocol_version: 2,
+                    capabilities: vec![
+                        WalletCapability::Unlock,
+                        WalletCapability::GetPublicKey,
+                        WalletCapability::SignMessage,
+                        WalletCapability::SignTransaction,
+                    ],
+                    backend_metadata: serde_json::json!({}),
+                    profile_hint: None,
+                    lock_state: LockState::Unlocked,
+                    accounts: vec![wallet_account(&wallet_instance_id, "0x1", true)],
+                },
+            ))
+            .unwrap();
+
+        coordinator
+            .dispatch(CoordinatorCommand::UpdateBackendAccounts(
+                UpdateBackendAccountsCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    lock_state: LockState::Locked,
+                    capabilities: vec![
+                        WalletCapability::GetPublicKey,
+                        WalletCapability::SignMessage,
+                        WalletCapability::SignTransaction,
+                    ],
+                    accounts: vec![WalletAccountRecord {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        address: "0x1".to_owned(),
+                        label: None,
+                        public_key: None,
+                        is_default: true,
+                        is_read_only: false,
+                        is_locked: true,
+                        last_seen_at: TimestampMs::from_millis(0),
+                    }],
+                },
+            ))
+            .unwrap();
+
+        let error = coordinator
+            .dispatch(CoordinatorCommand::CreateSignMessage(
+                CreateSignMessageCommand {
+                    client_request_id: ClientRequestId::new("client-updated-local").unwrap(),
+                    account_address: "0x1".to_owned(),
+                    wallet_instance_id: Some(wallet_instance_id),
+                    message: "hello".to_owned(),
+                    format: starmask_types::MessageFormat::Utf8,
+                    display_hint: None,
+                    client_context: None,
+                    ttl_seconds: None,
+                },
+            ))
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "wallet_locked: Selected wallet instance is locked"
+        );
     }
 
     #[test]

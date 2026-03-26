@@ -63,7 +63,7 @@ The implementation must demonstrate:
 
 1. `backend.register` round-trips with `protocol_version = 2`
 2. `backend.heartbeat` updates liveness and presented-request recovery
-3. `backend.updateAccounts` replaces the account snapshot atomically
+3. `backend.updateAccounts` replaces the account and capability snapshot atomically
 4. `request.pullNext`, `request.presented`, `request.resolve`, and `request.reject` work for a
    local backend over the local-socket binding
 5. unknown `wallet_instance_id` registration fails closed
@@ -81,7 +81,9 @@ The implementation must demonstrate:
 5. a locked local backend can perform backend-local unlock during a sign flow without exposing the
    password over daemon transport
 6. unlock failure or cancellation still rejects safely with `wallet_locked`
-7. a local prompt flow can approve and reject both request kinds
+7. a locked local backend without `unlock` capability fails closed with `wallet_locked` before
+   password collection
+8. a local prompt flow can approve and reject both request kinds
 
 ## 7. Security Acceptance
 

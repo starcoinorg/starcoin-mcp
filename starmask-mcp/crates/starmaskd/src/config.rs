@@ -15,9 +15,7 @@ use serde::Deserialize;
 use walkdir::WalkDir;
 
 use starmask_core::CoordinatorConfig;
-use starmask_types::{
-    ApprovalSurface, BackendKind, Channel, DurationSeconds, WalletCapability,
-};
+use starmask_types::{ApprovalSurface, BackendKind, Channel, DurationSeconds, WalletCapability};
 
 #[derive(Debug, Parser)]
 #[command(name = "starmaskd")]
@@ -324,7 +322,10 @@ impl RuntimeConfig {
     }
 }
 
-fn build_wallet_backends(channel: Channel, file_config: &FileConfig) -> Result<Vec<WalletBackendConfig>> {
+fn build_wallet_backends(
+    channel: Channel,
+    file_config: &FileConfig,
+) -> Result<Vec<WalletBackendConfig>> {
     let legacy_allowed_extension_ids_env = env::var("STARMASKD_ALLOWED_EXTENSION_IDS").ok();
     let legacy_native_host_name_env = env::var("STARMASKD_NATIVE_HOST_NAME").ok();
 
@@ -334,9 +335,7 @@ fn build_wallet_backends(channel: Channel, file_config: &FileConfig) -> Result<V
             || legacy_allowed_extension_ids_env.is_some()
             || legacy_native_host_name_env.is_some()
         {
-            bail!(
-                "legacy extension settings are not allowed when wallet_backends is configured"
-            );
+            bail!("legacy extension settings are not allowed when wallet_backends is configured");
         }
         build_phase2_backends(channel, file_backends)
     } else {
@@ -455,8 +454,10 @@ fn build_phase2_backends(
                 let account_dir = backend.account_dir.as_deref().ok_or_else(|| {
                     anyhow::anyhow!("backend {} must configure account_dir", common.backend_id)
                 })?;
-                let account_dir =
-                    validate_local_account_dir(account_dir, backend.require_strict_permissions.unwrap_or(true))?;
+                let account_dir = validate_local_account_dir(
+                    account_dir,
+                    backend.require_strict_permissions.unwrap_or(true),
+                )?;
                 let unlock_cache_ttl = backend.unlock_cache_ttl_seconds.ok_or_else(|| {
                     anyhow::anyhow!(
                         "backend {} must configure unlock_cache_ttl_seconds",
@@ -511,9 +512,8 @@ fn validate_symlink_escapes(root: &Path) -> Result<()> {
     for entry in WalkDir::new(root).follow_links(false) {
         let entry = entry.with_context(|| format!("failed to scan {}", root.display()))?;
         if entry.file_type().is_symlink() {
-            let target = fs::canonicalize(entry.path()).with_context(|| {
-                format!("failed to resolve symlink {}", entry.path().display())
-            })?;
+            let target = fs::canonicalize(entry.path())
+                .with_context(|| format!("failed to resolve symlink {}", entry.path().display()))?;
             if !target.starts_with(root) {
                 bail!(
                     "symlink {} escapes the configured account_dir",
@@ -530,11 +530,14 @@ fn validate_directory_permissions(path: &Path) -> Result<()> {
     let metadata = fs::metadata(path)
         .with_context(|| format!("failed to read permissions for {}", path.display()))?;
     if metadata.uid() != Uid::effective().as_raw() {
-        bail!("account_dir {} must be owned by the current user", path.display());
-    }
-    if metadata.permissions().mode() & 0o022 != 0 {
         bail!(
-            "account_dir {} must not be group-writable or world-writable",
+            "account_dir {} must be owned by the current user",
+            path.display()
+        );
+    }
+    if metadata.permissions().mode() & 0o077 != 0 {
+        bail!(
+            "account_dir {} must not grant any group or world permissions",
             path.display()
         );
     }
@@ -831,7 +834,11 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(error.to_string().contains("matching approval_surface and prompt_mode"));
+        assert!(
+            error
+                .to_string()
+                .contains("matching approval_surface and prompt_mode")
+        );
     }
 
     #[test]
@@ -861,6 +868,39 @@ mod tests {
         .unwrap_err();
 
         assert!(error.to_string().contains("prompt_mode = tty_prompt"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_account_dir_rejects_group_or_world_accessible_permissions() {
+        let dir = tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o755)).unwrap();
+        let error = build_phase2_backends(
+            Channel::Development,
+            &[FileWalletBackendConfig {
+                backend_id: "local-main".to_owned(),
+                backend_kind: BackendKind::LocalAccountDir,
+                enabled: true,
+                instance_label: "Local Main".to_owned(),
+                approval_surface: ApprovalSurface::TtyPrompt,
+                allowed_extension_ids: None,
+                native_host_name: None,
+                profile_hint: None,
+                account_dir: Some(dir.path().to_path_buf()),
+                prompt_mode: Some(super::LocalPromptMode::TtyPrompt),
+                chain_id: Some(251),
+                unlock_cache_ttl_seconds: Some(60),
+                allow_read_only_accounts: None,
+                require_strict_permissions: Some(true),
+            }],
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("must not grant any group or world permissions")
+        );
     }
 
     #[test]

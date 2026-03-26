@@ -27,13 +27,12 @@ use starmask_types::{
     BackendUpdateAccountsParams, CancelRequestParams, Channel, CreateSignMessageParams,
     CreateSignTransactionParams, DAEMON_PROTOCOL_VERSION, ExtensionHeartbeatParams,
     ExtensionRegisterParams, ExtensionRegisteredResult, ExtensionUpdateAccountsParams,
-    GENERIC_BACKEND_PROTOCOL_VERSION, GetRequestStatusParams, JsonRpcErrorResponse,
-    JsonRpcRequest, JsonRpcResponse, JsonRpcSuccess, NativeBridgeAccount,
-    RequestHasAvailableParams, RequestPresentedParams, RequestPullNextParams,
-    RequestRejectParams, RequestResolveParams, RequestResult, ResultKind, SharedError,
-    SharedErrorCode, SystemGetInfoParams, SystemPingParams, TimestampMs, WalletAccountRecord,
-    WalletCapability, WalletGetPublicKeyParams, WalletListAccountsParams,
-    WalletListInstancesParams, WalletStatusParams,
+    GENERIC_BACKEND_PROTOCOL_VERSION, GetRequestStatusParams, JsonRpcErrorResponse, JsonRpcRequest,
+    JsonRpcResponse, JsonRpcSuccess, NativeBridgeAccount, RequestHasAvailableParams,
+    RequestPresentedParams, RequestPullNextParams, RequestRejectParams, RequestResolveParams,
+    RequestResult, ResultKind, SharedError, SharedErrorCode, SystemGetInfoParams, SystemPingParams,
+    TimestampMs, WalletAccountRecord, WalletCapability, WalletGetPublicKeyParams,
+    WalletListAccountsParams, WalletListInstancesParams, WalletStatusParams,
 };
 
 use crate::{
@@ -51,7 +50,10 @@ pub struct ServerPolicy {
 }
 
 impl ServerPolicy {
-    fn accepts_extension(&self, extension_id: &str) -> Option<&crate::config::StarmaskExtensionBackendConfig> {
+    fn accepts_extension(
+        &self,
+        extension_id: &str,
+    ) -> Option<&crate::config::StarmaskExtensionBackendConfig> {
         self.wallet_backends
             .iter()
             .filter_map(WalletBackendConfig::as_extension)
@@ -342,44 +344,46 @@ async fn dispatch_request(
             let profile_hint = params.profile_hint.clone().or(config.profile_hint.clone());
             expect_response(
                 handle
-                    .dispatch(CoordinatorCommand::RegisterBackend(RegisterBackendCommand {
-                        wallet_instance_id: wallet_instance_id.clone(),
-                        backend_kind: starmask_types::BackendKind::StarmaskExtension,
-                        transport_kind: starmask_types::TransportKind::NativeMessaging,
-                        approval_surface: starmask_types::ApprovalSurface::BrowserUi,
-                        instance_label: params
-                            .profile_hint
-                            .clone()
-                            .unwrap_or_else(|| config.common.instance_label.clone()),
-                        extension_id: extension_id.clone(),
-                        extension_version: extension_version.clone(),
-                        protocol_version: params.protocol_version,
-                        capabilities: vec![
-                            WalletCapability::GetPublicKey,
-                            WalletCapability::SignMessage,
-                            WalletCapability::SignTransaction,
-                        ],
-                        backend_metadata: serde_json::json!({
-                            "backend_id": config.common.backend_id,
-                            "extension_id": extension_id,
-                            "extension_version": extension_version,
-                            "native_host_name": config.native_host_name,
-                            "profile_hint": profile_hint,
-                        }),
-                        profile_hint,
-                        lock_state,
-                        accounts: params
-                            .accounts_summary
-                            .into_iter()
-                            .map(|account| {
-                                bridge_account_to_wallet_account(
-                                    &wallet_instance_id,
-                                    account,
-                                    lock_state,
-                                )
-                            })
-                            .collect(),
-                    }))
+                    .dispatch(CoordinatorCommand::RegisterBackend(
+                        RegisterBackendCommand {
+                            wallet_instance_id: wallet_instance_id.clone(),
+                            backend_kind: starmask_types::BackendKind::StarmaskExtension,
+                            transport_kind: starmask_types::TransportKind::NativeMessaging,
+                            approval_surface: starmask_types::ApprovalSurface::BrowserUi,
+                            instance_label: params
+                                .profile_hint
+                                .clone()
+                                .unwrap_or_else(|| config.common.instance_label.clone()),
+                            extension_id: extension_id.clone(),
+                            extension_version: extension_version.clone(),
+                            protocol_version: params.protocol_version,
+                            capabilities: vec![
+                                WalletCapability::GetPublicKey,
+                                WalletCapability::SignMessage,
+                                WalletCapability::SignTransaction,
+                            ],
+                            backend_metadata: serde_json::json!({
+                                "backend_id": config.common.backend_id,
+                                "extension_id": extension_id,
+                                "extension_version": extension_version,
+                                "native_host_name": config.native_host_name,
+                                "profile_hint": profile_hint,
+                            }),
+                            profile_hint,
+                            lock_state,
+                            accounts: params
+                                .accounts_summary
+                                .into_iter()
+                                .map(|account| {
+                                    bridge_account_to_wallet_account(
+                                        &wallet_instance_id,
+                                        account,
+                                        lock_state,
+                                    )
+                                })
+                                .collect(),
+                        },
+                    ))
                     .await,
                 |response| match response {
                     CoordinatorResponse::Ack => Ok(()),
@@ -463,30 +467,29 @@ async fn dispatch_request(
             let wallet_instance_id = params.wallet_instance_id.clone();
             expect_response(
                 handle
-                    .dispatch(CoordinatorCommand::RegisterBackend(RegisterBackendCommand {
-                        wallet_instance_id: wallet_instance_id.clone(),
-                        backend_kind: params.backend_kind,
-                        transport_kind: params.transport_kind,
-                        approval_surface: params.approval_surface,
-                        instance_label: params.instance_label,
-                        extension_id: String::new(),
-                        extension_version: String::new(),
-                        protocol_version: params.protocol_version,
-                        capabilities: canonical_capabilities(params.capabilities),
-                        backend_metadata: params.backend_metadata,
-                        profile_hint: None,
-                        lock_state: params.lock_state,
-                        accounts: params
-                            .accounts
-                            .into_iter()
-                            .map(|account| {
-                                backend_account_to_wallet_account(
-                                    &wallet_instance_id,
-                                    account,
-                                )
-                            })
-                            .collect(),
-                    }))
+                    .dispatch(CoordinatorCommand::RegisterBackend(
+                        RegisterBackendCommand {
+                            wallet_instance_id: wallet_instance_id.clone(),
+                            backend_kind: params.backend_kind,
+                            transport_kind: params.transport_kind,
+                            approval_surface: params.approval_surface,
+                            instance_label: params.instance_label,
+                            extension_id: String::new(),
+                            extension_version: String::new(),
+                            protocol_version: params.protocol_version,
+                            capabilities: canonical_capabilities(params.capabilities),
+                            backend_metadata: params.backend_metadata,
+                            profile_hint: None,
+                            lock_state: params.lock_state,
+                            accounts: params
+                                .accounts
+                                .into_iter()
+                                .map(|account| {
+                                    backend_account_to_wallet_account(&wallet_instance_id, account)
+                                })
+                                .collect(),
+                        },
+                    ))
                     .await,
                 |response| match response {
                     CoordinatorResponse::Ack => Ok(()),
@@ -542,10 +545,7 @@ async fn dispatch_request(
                 &request.params,
                 GENERIC_BACKEND_PROTOCOL_VERSION,
             )?;
-            if policy
-                .configured_local_backend(&params.wallet_instance_id)
-                .is_none()
-            {
+            let Some(config) = policy.configured_local_backend(&params.wallet_instance_id) else {
                 return Err(JsonRpcErrorResponse::new(
                     &id,
                     SharedError::new(
@@ -554,13 +554,17 @@ async fn dispatch_request(
                     )
                     .with_retryable(false),
                 ));
-            }
+            };
+            validate_local_backend_capabilities(config, &params.capabilities)
+                .map_err(|error| JsonRpcErrorResponse::new(&id, error))?;
+            let capabilities = canonical_capabilities(params.capabilities);
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::UpdateBackendAccounts(
                         UpdateBackendAccountsCommand {
                             wallet_instance_id: params.wallet_instance_id.clone(),
                             lock_state: params.lock_state,
+                            capabilities,
                             accounts: params
                                 .accounts
                                 .into_iter()
@@ -954,7 +958,12 @@ fn validate_generic_backend_registration(
         .with_retryable(false));
     }
     let metadata_len = serde_json::to_vec(&params.backend_metadata)
-        .map_err(|error| SharedError::new(SharedErrorCode::InvalidBackendRegistration, error.to_string()))?
+        .map_err(|error| {
+            SharedError::new(
+                SharedErrorCode::InvalidBackendRegistration,
+                error.to_string(),
+            )
+        })?
         .len();
     if metadata_len > 4 * 1024 {
         return Err(SharedError::new(
@@ -964,16 +973,17 @@ fn validate_generic_backend_registration(
         .with_retryable(false));
     }
 
-    let requested = canonical_capabilities(params.capabilities.clone());
-    let allowed = config
-        .common
-        .approval_surface;
-    let _ = allowed;
+    validate_local_backend_capabilities(config, &params.capabilities)
+}
+
+fn validate_local_backend_capabilities(
+    config: &LocalAccountDirBackendConfig,
+    capabilities: &[WalletCapability],
+) -> Result<(), SharedError> {
+    let requested = canonical_capabilities(capabilities.to_vec());
+    let allowed = WalletBackendConfig::LocalAccountDir(config.clone()).allowed_capabilities();
     for capability in requested {
-        if !WalletBackendConfig::LocalAccountDir(config.clone())
-            .allowed_capabilities()
-            .contains(&capability)
-        {
+        if !allowed.contains(&capability) {
             return Err(SharedError::new(
                 SharedErrorCode::InvalidBackendRegistration,
                 format!("unsupported capability advertised: {capability:?}"),

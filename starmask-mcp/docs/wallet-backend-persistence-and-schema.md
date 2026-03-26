@@ -84,6 +84,7 @@ Phase-2 storage rules:
 2. `capabilities_json` stores a canonical sorted JSON array
 3. `backend_metadata_json` stores an opaque JSON object
 4. `backend_metadata_json` is not query-critical and must not drive core routing by itself
+5. schema DDL, v2 backfill, and the `user_version` bump must commit in one transaction
 
 Backfill rules for existing extension rows:
 

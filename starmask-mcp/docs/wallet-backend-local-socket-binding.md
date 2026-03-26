@@ -215,11 +215,12 @@ Required params:
 - `protocol_version`
 - `wallet_instance_id`
 - `lock_state`
+- `capabilities`
 - `accounts`
 
 Coordinator rules:
 
-1. replace all stored account rows for that wallet instance in one transaction
+1. replace the stored account and capability snapshot for that wallet instance in one transaction
 2. update routing eligibility immediately after commit
 3. preserve same-instance recovery for already presented requests
 
@@ -259,7 +260,9 @@ Required on first presentation:
 
 Rules:
 
-1. the backend agent sends this only after the local prompt is actually visible and actionable
+1. the backend agent sends this only after the local prompt is actually visible and actionable; for
+   blocking TTY approval flows this means immediately after rendering the prompt and before waiting
+   for approval or password input
 2. the daemon pins the request to that wallet instance for the rest of the presentation lifecycle
 
 ### 9.6 `request.resolve`

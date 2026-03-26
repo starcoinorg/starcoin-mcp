@@ -247,6 +247,7 @@ pub struct BackendUpdateAccountsParams {
     pub protocol_version: u32,
     pub wallet_instance_id: WalletInstanceId,
     pub lock_state: LockState,
+    pub capabilities: Vec<WalletCapability>,
     pub accounts: Vec<BackendAccount>,
 }
 

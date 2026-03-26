@@ -246,18 +246,19 @@ Coordinator behavior:
 
 Purpose:
 
-- replace the visible account snapshot and current lock-state view
+- replace the visible account snapshot, current lock-state view, and advertised capabilities
 
 Required fields:
 
 - `wallet_instance_id`
 - `lock_state`
+- `capabilities`
 - `accounts`
 
 Coordinator behavior:
 
 - replace account rows for that wallet instance atomically
-- update routing eligibility
+- update routing eligibility from the latest lock-state and capability snapshot
 
 ### 9.4 `request.hasAvailable`
 
@@ -334,6 +335,9 @@ Coordinator behavior:
 2. validate delivery or resume context
 3. move the request to `pending_user_approval`
 4. pin the request to that wallet instance for the rest of the presentation lifecycle
+5. blocking local prompt agents should send this immediately after rendering the prompt surface and
+   before waiting on approval or password input so same-instance recovery stays active during the
+   entire prompt
 
 ### 9.7 `request.resolve`
 

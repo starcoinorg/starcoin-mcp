@@ -5,9 +5,9 @@ use serde::{Serialize, de::DeserializeOwned};
 
 use starmask_core::{RepositoryError, RequestRepository, WalletRepository};
 use starmask_types::{
-    ApprovalSurface, BackendKind, ClientRequestId, DeliveryLease, DeliveryLeaseId,
-    PresentationId, RequestId, RequestRecord, TimestampMs, TransportKind, WalletAccountRecord,
-    WalletCapability, WalletInstanceId, WalletInstanceRecord,
+    ApprovalSurface, BackendKind, ClientRequestId, DeliveryLease, DeliveryLeaseId, PresentationId,
+    RequestId, RequestRecord, TimestampMs, TransportKind, WalletAccountRecord, WalletCapability,
+    WalletInstanceId, WalletInstanceRecord,
 };
 
 pub const SCHEMA_VERSION: u32 = 2;
@@ -21,13 +21,13 @@ impl SqliteStore {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent).map_err(io_error)?;
         }
-        let connection = Connection::open(path).map_err(sql_error)?;
+        let mut connection = Connection::open(path).map_err(sql_error)?;
         connection
             .execute_batch(
                 "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA synchronous = NORMAL;",
             )
             .map_err(sql_error)?;
-        apply_migrations(&connection)?;
+        apply_migrations(&mut connection)?;
         Ok(Self { connection })
     }
 
@@ -299,39 +299,41 @@ impl WalletRepository for SqliteStore {
     }
 }
 
-fn apply_migrations(connection: &Connection) -> Result<(), RepositoryError> {
+fn apply_migrations(connection: &mut Connection) -> Result<(), RepositoryError> {
     let current: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(sql_error)?;
     match current {
-        0 => {
-            connection
-                .execute_batch(include_str!("../migrations/0001_initial.sql"))
-                .map_err(sql_error)?;
-            connection
-                .execute_batch(include_str!("../migrations/0002_generic_wallet_backends.sql"))
-                .map_err(sql_error)?;
-            backfill_wallet_instances_v2(connection)?;
-            connection
-                .pragma_update(None, "user_version", i64::from(SCHEMA_VERSION))
-                .map_err(sql_error)?;
-            Ok(())
-        }
-        1 => {
-            connection
-                .execute_batch(include_str!("../migrations/0002_generic_wallet_backends.sql"))
-                .map_err(sql_error)?;
-            backfill_wallet_instances_v2(connection)?;
-            connection
-                .pragma_update(None, "user_version", i64::from(SCHEMA_VERSION))
-                .map_err(sql_error)?;
-            Ok(())
-        }
+        0 => apply_schema_version_2(connection, true),
+        1 => apply_schema_version_2(connection, false),
         value if value == i64::from(SCHEMA_VERSION) => Ok(()),
         other => Err(RepositoryError::Storage(format!(
             "unsupported schema version: {other}"
         ))),
     }
+}
+
+fn apply_schema_version_2(
+    connection: &mut Connection,
+    include_initial_schema: bool,
+) -> Result<(), RepositoryError> {
+    let transaction = connection.transaction().map_err(sql_error)?;
+    if include_initial_schema {
+        transaction
+            .execute_batch(include_str!("../migrations/0001_initial.sql"))
+            .map_err(sql_error)?;
+    }
+    transaction
+        .execute_batch(include_str!(
+            "../migrations/0002_generic_wallet_backends.sql"
+        ))
+        .map_err(sql_error)?;
+    backfill_wallet_instances_v2(&transaction)?;
+    transaction
+        .pragma_update(None, "user_version", i64::from(SCHEMA_VERSION))
+        .map_err(sql_error)?;
+    transaction.commit().map_err(sql_error)?;
+    Ok(())
 }
 
 fn backfill_wallet_instances_v2(connection: &Connection) -> Result<(), RepositoryError> {
@@ -673,4 +675,73 @@ fn from_other<E: std::fmt::Display>(error: E) -> rusqlite::Error {
         rusqlite::types::Type::Text,
         Box::<dyn std::error::Error + Send + Sync>::from(error.to_string()),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+    use rusqlite::{Connection, params};
+    use tempfile::tempdir;
+
+    use super::SqliteStore;
+
+    #[test]
+    fn v2_migration_rolls_back_schema_when_backfill_fails() {
+        let tempdir = tempdir().unwrap();
+        let database_path = tempdir.path().join("starmaskd.sqlite");
+        let connection = Connection::open(&database_path).unwrap();
+        connection
+            .execute_batch(include_str!("../migrations/0001_initial.sql"))
+            .unwrap();
+        connection.pragma_update(None, "user_version", 1).unwrap();
+        connection
+            .execute(
+                "INSERT INTO wallet_instances (
+                    wallet_instance_id, extension_id, extension_version, protocol_version,
+                    profile_hint, lock_state, connected, last_seen_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    "wallet-1",
+                    "ext.test",
+                    "1.0.0",
+                    1,
+                    Option::<String>::None,
+                    "unlocked",
+                    1,
+                    0_i64
+                ],
+            )
+            .unwrap();
+        connection
+            .execute_batch(
+                "CREATE TRIGGER fail_wallet_instance_backfill
+                 BEFORE UPDATE ON wallet_instances
+                 BEGIN
+                   SELECT RAISE(ABORT, 'forced backfill failure');
+                 END;",
+            )
+            .unwrap();
+        drop(connection);
+
+        let error = SqliteStore::open(&database_path)
+            .err()
+            .expect("migration should fail");
+        assert!(error.to_string().contains("forced backfill failure"));
+
+        let connection = Connection::open(&database_path).unwrap();
+        let user_version: i64 = connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .unwrap();
+        assert_eq!(user_version, 1);
+
+        let mut statement = connection
+            .prepare("PRAGMA table_info(wallet_instances)")
+            .unwrap();
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>("name"))
+            .unwrap()
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        assert!(!columns.iter().any(|column| column == "backend_kind"));
+    }
 }
