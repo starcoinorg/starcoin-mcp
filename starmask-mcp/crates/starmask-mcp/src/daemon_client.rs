@@ -1,4 +1,5 @@
 use std::{
+    future::Future,
     path::PathBuf,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -21,6 +22,59 @@ use starmask_types::{
 
 use crate::error_mapping::AdapterError;
 
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WalletListInstancesRequest {
+    pub connected_only: bool,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct WalletListAccountsRequest {
+    pub wallet_instance_id: Option<starmask_types::WalletInstanceId>,
+    pub include_public_key: bool,
+}
+
+pub trait DaemonClient: Clone + Send + Sync + 'static {
+    fn wallet_status(
+        &self,
+    ) -> impl Future<Output = Result<WalletStatusResult, AdapterError>> + Send;
+
+    fn wallet_list_instances(
+        &self,
+        request: WalletListInstancesRequest,
+    ) -> impl Future<Output = Result<WalletListInstancesResult, AdapterError>> + Send;
+
+    fn wallet_list_accounts(
+        &self,
+        request: WalletListAccountsRequest,
+    ) -> impl Future<Output = Result<WalletListAccountsResult, AdapterError>> + Send;
+
+    fn wallet_get_public_key(
+        &self,
+        address: String,
+        wallet_instance_id: Option<starmask_types::WalletInstanceId>,
+    ) -> impl Future<Output = Result<WalletGetPublicKeyResult, AdapterError>> + Send;
+
+    fn create_sign_transaction_request(
+        &self,
+        params: CreateSignTransactionParams,
+    ) -> impl Future<Output = Result<CreateRequestResult, AdapterError>> + Send;
+
+    fn create_sign_message_request(
+        &self,
+        params: CreateSignMessageParams,
+    ) -> impl Future<Output = Result<CreateRequestResult, AdapterError>> + Send;
+
+    fn get_request_status(
+        &self,
+        request_id: starmask_types::RequestId,
+    ) -> impl Future<Output = Result<GetRequestStatusResult, AdapterError>> + Send;
+
+    fn cancel_request(
+        &self,
+        request_id: starmask_types::RequestId,
+    ) -> impl Future<Output = Result<CancelRequestResult, AdapterError>> + Send;
+}
+
 #[derive(Clone, Debug)]
 pub struct LocalDaemonClient {
     socket_path: PathBuf,
@@ -34,8 +88,10 @@ impl LocalDaemonClient {
             timeout,
         }
     }
+}
 
-    pub async fn wallet_status(&self) -> Result<WalletStatusResult, AdapterError> {
+impl DaemonClient for LocalDaemonClient {
+    async fn wallet_status(&self) -> Result<WalletStatusResult, AdapterError> {
         self.call(
             "wallet.status",
             WalletStatusParams {
@@ -45,37 +101,36 @@ impl LocalDaemonClient {
         .await
     }
 
-    pub async fn wallet_list_instances(
+    async fn wallet_list_instances(
         &self,
-        connected_only: bool,
+        request: WalletListInstancesRequest,
     ) -> Result<WalletListInstancesResult, AdapterError> {
         self.call(
             "wallet.listInstances",
             WalletListInstancesParams {
                 protocol_version: starmask_types::DAEMON_PROTOCOL_VERSION,
-                connected_only,
+                connected_only: request.connected_only,
             },
         )
         .await
     }
 
-    pub async fn wallet_list_accounts(
+    async fn wallet_list_accounts(
         &self,
-        wallet_instance_id: Option<starmask_types::WalletInstanceId>,
-        include_public_key: bool,
+        request: WalletListAccountsRequest,
     ) -> Result<WalletListAccountsResult, AdapterError> {
         self.call(
             "wallet.listAccounts",
             WalletListAccountsParams {
                 protocol_version: starmask_types::DAEMON_PROTOCOL_VERSION,
-                wallet_instance_id,
-                include_public_key,
+                wallet_instance_id: request.wallet_instance_id,
+                include_public_key: request.include_public_key,
             },
         )
         .await
     }
 
-    pub async fn wallet_get_public_key(
+    async fn wallet_get_public_key(
         &self,
         address: String,
         wallet_instance_id: Option<starmask_types::WalletInstanceId>,
@@ -91,21 +146,21 @@ impl LocalDaemonClient {
         .await
     }
 
-    pub async fn create_sign_transaction_request(
+    async fn create_sign_transaction_request(
         &self,
         params: CreateSignTransactionParams,
     ) -> Result<CreateRequestResult, AdapterError> {
         self.call("request.createSignTransaction", params).await
     }
 
-    pub async fn create_sign_message_request(
+    async fn create_sign_message_request(
         &self,
         params: CreateSignMessageParams,
     ) -> Result<CreateRequestResult, AdapterError> {
         self.call("request.createSignMessage", params).await
     }
 
-    pub async fn get_request_status(
+    async fn get_request_status(
         &self,
         request_id: starmask_types::RequestId,
     ) -> Result<GetRequestStatusResult, AdapterError> {
@@ -119,7 +174,7 @@ impl LocalDaemonClient {
         .await
     }
 
-    pub async fn cancel_request(
+    async fn cancel_request(
         &self,
         request_id: starmask_types::RequestId,
     ) -> Result<CancelRequestResult, AdapterError> {
@@ -132,7 +187,9 @@ impl LocalDaemonClient {
         )
         .await
     }
+}
 
+impl LocalDaemonClient {
     async fn call<P, R>(&self, method: &str, params: P) -> Result<R, AdapterError>
     where
         P: Serialize,

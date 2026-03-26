@@ -111,6 +111,8 @@ Recommended Rust runtime shape:
 - bounded `tokio::sync::Semaphore` guards should protect watch loops and other expensive request classes from unbounded fan-out
 - tool cancellation should follow the Rust async task boundary so abandoned host requests do not leave orphaned watch loops running indefinitely
 
+For embedded integrations, another Rust binary may own the Tokio runtime and tracing initialization, as long as it reuses the same `AppContext` bootstrap flow and `starcoin-node-mcp-server` adapter instead of reimplementing MCP handler wiring.
+
 The first release should not require a separate Rust daemon or any cross-process coordinator for chain-side state.
 
 ## Startup Model

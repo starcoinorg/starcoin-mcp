@@ -1,13 +1,15 @@
 use std::borrow::Cow;
 
+use anyhow::Result;
 use rmcp::{
-    ErrorData, ServerHandler,
+    ErrorData, ServerHandler, ServiceExt,
     handler::server::tool::{parse_json_object, schema_for_type},
     model::{
         CallToolRequestParams, CallToolResult, Implementation, ListToolsResult, ServerCapabilities,
         ServerInfo, Tool,
     },
     service::RequestContext,
+    transport::stdio,
 };
 
 use starmask_types::{
@@ -15,7 +17,7 @@ use starmask_types::{
 };
 
 use crate::{
-    daemon_client::LocalDaemonClient,
+    daemon_client::{DaemonClient, WalletListAccountsRequest, WalletListInstancesRequest},
     dto::{
         EmptyParams, WalletCancelRequestInput, WalletGetPublicKeyInput,
         WalletGetRequestStatusInput, WalletListAccountsInput, WalletRequestSignTransactionInput,
@@ -24,17 +26,31 @@ use crate::{
     error_mapping::AdapterError,
 };
 
-pub struct StarmaskMcpServer {
-    daemon_client: LocalDaemonClient,
+pub struct StarmaskMcpServer<C> {
+    daemon_client: C,
 }
 
-impl StarmaskMcpServer {
-    pub fn new(daemon_client: LocalDaemonClient) -> Self {
+impl<C> StarmaskMcpServer<C> {
+    pub fn new(daemon_client: C) -> Self {
         Self { daemon_client }
     }
 }
 
-impl ServerHandler for StarmaskMcpServer {
+impl<C> StarmaskMcpServer<C>
+where
+    C: DaemonClient,
+{
+    pub async fn serve_stdio(self) -> Result<()> {
+        let running_service = self.serve(stdio()).await?;
+        let _ = running_service.waiting().await?;
+        Ok(())
+    }
+}
+
+impl<C> ServerHandler for StarmaskMcpServer<C>
+where
+    C: DaemonClient,
+{
     fn get_info(&self) -> ServerInfo {
         ServerInfo::new(ServerCapabilities::builder().enable_tools().build()).with_server_info(
             Implementation::new("starmask-mcp", env!("CARGO_PKG_VERSION"))
@@ -107,13 +123,13 @@ impl ServerHandler for StarmaskMcpServer {
                 let params: WalletListAccountsInput = parse_arguments(request.arguments)?;
                 serde_json::to_value(
                     self.daemon_client
-                        .wallet_list_accounts(
-                            params
+                        .wallet_list_accounts(WalletListAccountsRequest {
+                            wallet_instance_id: params
                                 .wallet_instance_id()
                                 .map_err(AdapterError::from)
                                 .map_err(to_mcp_error)?,
-                            params.include_public_key,
-                        )
+                            include_public_key: params.include_public_key,
+                        })
                         .await
                         .map_err(to_mcp_error)?,
                 )
@@ -226,7 +242,9 @@ impl ServerHandler for StarmaskMcpServer {
                 let _: EmptyParams = parse_arguments(request.arguments)?;
                 serde_json::to_value(
                     self.daemon_client
-                        .wallet_list_instances(false)
+                        .wallet_list_instances(WalletListInstancesRequest {
+                            connected_only: false,
+                        })
                         .await
                         .map_err(to_mcp_error)?,
                 )

@@ -38,6 +38,7 @@ Recommended module layout:
 
 ```text
 starmask-mcp/src/
+  lib.rs
   main.rs
   server.rs
   tools.rs
@@ -120,6 +121,27 @@ Recommended methods:
 
 The first implementation may ship with one concrete local JSON-RPC client.
 
+## Library Packaging
+
+The `starmask-mcp` crate may be packaged as both:
+
+- a standalone binary entrypoint
+- an embeddable Rust library used by another local host binary
+
+Recommended public facade:
+
+- `DaemonClient`
+- `LocalDaemonClient`
+- `StarmaskMcpServer<C>`
+- `serve_stdio(client)`
+- `default_socket_path()`
+
+Packaging rule:
+
+- `main.rs` should remain a thin CLI and tracing wrapper
+- library callers may own Tokio runtime setup and tracing initialization
+- the same server wiring must be reused in both cases
+
 ## Error Mapping
 
 The adapter should centralize error translation.
@@ -174,6 +196,8 @@ Recommended model:
 - daemon client calls over local IPC
 
 Because the adapter does not own mutable lifecycle state, it does not need a coordinator.
+
+If another Rust binary embeds the adapter, that host may own runtime setup and call the same stdio-serving library facade directly.
 
 ## Inspector and Manual Testing
 

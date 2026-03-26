@@ -75,6 +75,7 @@ Recommended responsibilities:
   - `rmcp` integration
   - tool registration
   - process startup and config loading
+  - optional embeddable library entrypoints for host binaries that want to reuse the same MCP adapter in-process
 
 ## Runtime Model
 
@@ -92,6 +93,15 @@ Recommended model:
 3. handlers call typed domain services in `starcoin-node-mcp-core`
 4. core services use trait-based adapters from `starcoin-node-mcp-rpc`
 5. results are mapped back into MCP tool outputs
+
+The standalone binary may continue to own runtime setup and config loading, but the server crate may also expose a small library facade so another Rust binary can bootstrap config, initialize tracing, and call the same stdio MCP adapter without copying handler wiring.
+
+Recommended library-facing surface:
+
+- `AppContext::bootstrap(config)`
+- `StarcoinNodeMcpServer::new(app)`
+- `serve_stdio(app)`
+- optionally `serve_stdio_with_config(config)`
 
 The first implementation does not need a dedicated coordinator task or durable state machine.
 

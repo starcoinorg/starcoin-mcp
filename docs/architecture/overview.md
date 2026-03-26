@@ -37,6 +37,7 @@ Typical contents:
 - overall architecture overview
 - host integration model
 - deployment model
+- library packaging model
 - design closure plan
 - signing architecture
 - trust boundaries
@@ -86,6 +87,7 @@ starcoin-mcp/
     architecture/
       design-closure-plan.md
       deployment-model.md
+      library-packaging.md
       overview.md
       host-integration.md
   shared/

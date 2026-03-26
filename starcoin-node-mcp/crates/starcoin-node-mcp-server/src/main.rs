@@ -4,9 +4,7 @@ use std::io;
 
 use anyhow::Result;
 use clap::Parser;
-use rmcp::{ServiceExt, transport::stdio};
-use starcoin_node_mcp_core::AppContext;
-use starcoin_node_mcp_server::StarcoinNodeMcpServer;
+use starcoin_node_mcp_server::serve_stdio_with_config;
 use starcoin_node_mcp_types::{CliArgs, RuntimeConfig};
 use tracing_subscriber::EnvFilter;
 
@@ -21,9 +19,5 @@ async fn main() -> Result<()> {
         .with_target(false)
         .init();
 
-    let app = AppContext::bootstrap(config).await?;
-    let service = StarcoinNodeMcpServer::new(app);
-    let running_service = service.serve(stdio()).await?;
-    let _ = running_service.waiting().await?;
-    Ok(())
+    serve_stdio_with_config(config).await
 }
