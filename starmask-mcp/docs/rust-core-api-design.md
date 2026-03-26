@@ -1,16 +1,21 @@
 # Starmask Core Rust API Design
 
-## Purpose
+## Status
 
-This document defines the Rust-facing API shape for the first implementation of:
+This document is the authoritative `v1` core API design for the current extension-backed
+implementation.
+
+Future generic backend evolution is tracked in `docs/unified-wallet-coordinator-evolution.md`.
+
+## 1. Purpose
+
+This document defines the Rust-facing API shape for:
 
 - `starmask-types`
 - `starmask-core`
 - the coordinator-facing part of `starmaskd`
 
-It is the missing bridge between the protocol documents and concrete Rust code.
-
-## Design Goal
+## 2. Design Goal
 
 The core API should make the following hard to do incorrectly:
 
@@ -19,17 +24,16 @@ The core API should make the following hard to do incorrectly:
 3. confuse delivery-lease and presentation-lease flows
 4. bypass policy checks when creating or resolving requests
 
-## Crate Roles
+## 3. Crate Roles
 
 ### `starmask-types`
 
 Contains:
 
-- ids
+- IDs
 - enums
 - shared DTOs
 - shared error code enum
-- time wrappers if adopted
 
 Should not contain:
 
@@ -54,57 +58,18 @@ Should not contain:
 - Chrome Native Messaging framing
 - direct SQLite SQL
 
-## Recommended Module Layout
+## 4. Core Types
 
-Recommended first-pass layout:
+### ID newtypes
 
-```text
-starmask-core/src/
-  lib.rs
-  ids.rs
-  errors.rs
-  status.rs
-  policy.rs
-  entities/
-    mod.rs
-    request.rs
-    wallet_instance.rs
-    wallet_account.rs
-  commands.rs
-  services/
-    mod.rs
-    coordinator.rs
-    request_service.rs
-    wallet_service.rs
-  repo/
-    mod.rs
-    request_repo.rs
-    wallet_repo.rs
-  time.rs
-```
+- `RequestId`
+- `ClientRequestId`
+- `WalletInstanceId`
+- `DeliveryLeaseId`
+- `PresentationId`
+- `PayloadHash`
 
-## Core Types
-
-## Id Newtypes
-
-Recommended newtypes:
-
-- `RequestId(String)`
-- `ClientRequestId(String)`
-- `WalletInstanceId(String)`
-- `DeliveryLeaseId(String)`
-- `PresentationId(String)`
-- `PayloadHash(String)`
-
-Rules:
-
-1. derive `Clone`, `Debug`, `Eq`, `Ord`, `PartialEq`, `PartialOrd`, `Hash`
-2. implement `Display`
-3. implement `TryFrom<String>` when validation is needed
-
-## Core Enums
-
-Recommended enums:
+### Core enums
 
 - `RequestKind`
   - `SignTransaction`
@@ -130,16 +95,12 @@ Recommended enums:
   - `Development`
   - `Staging`
   - `Production`
-- `RejectReasonCode`
-  - shared reason codes used by the extension and daemon
 
-## Entities
+## 5. Current Entities
 
 ### `RequestRecord`
 
-Represents canonical persisted request state.
-
-Recommended fields:
+Current fields:
 
 - `request_id`
 - `client_request_id`
@@ -160,40 +121,27 @@ Recommended fields:
 - `result_expires_at`
 - `last_error_code`
 - `last_error_message`
+- `reject_reason_code`
 - `delivery_lease`
 - `presentation`
 
 ### `RequestPayload`
 
-Recommended enum:
+Current variants:
 
 - `SignTransaction(TransactionPayload)`
 - `SignMessage(MessagePayload)`
 
 ### `RequestResult`
 
-Recommended enum:
+Current variants:
 
-- `SignedTransaction { signed_txn_bcs_hex: String }`
-- `SignedMessage { signature: String }`
-
-### `DeliveryLease`
-
-Fields:
-
-- `delivery_lease_id`
-- `delivery_lease_expires_at`
-
-### `PresentationLease`
-
-Fields:
-
-- `presentation_id`
-- `presentation_expires_at`
+- `SignedTransaction { signed_txn_bcs_hex }`
+- `SignedMessage { signature }`
 
 ### `WalletInstanceRecord`
 
-Fields:
+Current fields:
 
 - `wallet_instance_id`
 - `extension_id`
@@ -206,20 +154,19 @@ Fields:
 
 ### `WalletAccountRecord`
 
-Fields:
+Current fields:
 
 - `wallet_instance_id`
 - `address`
 - `label`
 - `public_key`
 - `is_default`
+- `is_locked`
 - `last_seen_at`
 
-## Boundary DTO vs Domain Types
+## 6. Boundary DTO vs Domain Types
 
-Rule:
-
-- transport DTOs are separate from domain entities
+Transport DTOs remain separate from domain entities.
 
 Recommended layering:
 
@@ -229,220 +176,60 @@ Recommended layering:
 4. persisted record
 5. response projection
 
-`starmask-core` should operate on validated command structs and domain entities, not raw JSON DTOs.
+## 7. Current Coordinator Command Surface
 
-## Coordinator Command API
+The current coordinator is extension-oriented. Its command set includes:
 
-The coordinator should receive typed commands.
+- `SystemPing`
+- `GetInfo`
+- `WalletStatus`
+- `ListWalletInstances`
+- `ListWalletAccounts`
+- `GetPublicKey`
+- `CreateSignTransactionRequest`
+- `CreateSignMessageRequest`
+- `GetRequestStatus`
+- `CancelRequest`
+- `RegisterExtension`
+- `HeartbeatExtension`
+- `UpdateExtensionAccounts`
+- `HasAvailableRequest`
+- `PullNextRequest`
+- `MarkRequestPresented`
+- `ResolveRequest`
+- `RejectRequest`
+- `TickMaintenance`
 
-Recommended top-level command enum:
+## 8. Repository Traits
 
-```text
-CoordinatorCommand
-  SystemPing
-  GetInfo
-  WalletStatus
-  ListWalletInstances
-  ListWalletAccounts
-  GetPublicKey
-  CreateSignTransactionRequest
-  CreateSignMessageRequest
-  GetRequestStatus
-  CancelRequest
-  RegisterExtension
-  HeartbeatExtension
-  UpdateExtensionAccounts
-  PullNextRequest
-  MarkRequestPresented
-  ResolveRequest
-  RejectRequest
-  TickMaintenance
-```
+The current repository split remains:
 
-Each command should carry:
+- `RequestRepository`
+- `WalletRepository`
 
-- validated inputs
-- a `oneshot` responder typed to that command's result
+`WalletRepository` is currently extension-centric because wallet-instance records persist extension
+metadata directly.
 
-## Service API
+## 9. Rust Safety Guidance
 
-Recommended services inside `starmask-core`:
+The workspace should default to:
 
-### `RequestService`
+- `#![forbid(unsafe_code)]`
 
-Responsibilities:
+Additional guidance:
 
-- create requests
-- apply request lifecycle transitions
-- enforce idempotency
-- evaluate expiry and result retention
+1. request IDs, lease IDs, and wallet-instance IDs should be distinct newtypes
+2. lifecycle states should be enums, not mutable free-form strings
+3. log redaction helpers should be centralized
 
-Recommended methods:
+## 10. Deliberate `v1` Omissions
 
-- `create_sign_transaction(...)`
-- `create_sign_message(...)`
-- `get_request_status(...)`
-- `cancel_request(...)`
-- `claim_next_request(...)`
-- `mark_presented(...)`
-- `resolve_request(...)`
-- `reject_request(...)`
-- `run_maintenance(...)`
+The current core API does not yet define:
 
-### `WalletService`
+- a generic `BackendKind`
+- backend capability sets
+- unlock request kinds or unlock results
+- backend-generic wallet-instance metadata
 
-Responsibilities:
-
-- register wallet instances
-- update account visibility
-- resolve account-to-wallet routing
-- expose public key lookup
-
-Recommended methods:
-
-- `register_extension(...)`
-- `heartbeat_extension(...)`
-- `update_accounts(...)`
-- `list_instances(...)`
-- `list_accounts(...)`
-- `get_public_key(...)`
-- `resolve_wallet_route(...)`
-
-### `Coordinator`
-
-Responsibilities:
-
-- receive commands
-- call `WalletService` and `RequestService`
-- keep the single mutation path
-
-Recommended entrypoint:
-
-- `async fn run(self, rx: mpsc::Receiver<CoordinatorCommand>)`
-
-## Repository Traits
-
-The repository layer should be trait-based.
-
-### `RequestRepository`
-
-Recommended methods:
-
-- `insert_request`
-- `find_request_by_id`
-- `find_request_by_client_request_id`
-- `update_request`
-- `claim_next_created_request_for_wallet`
-- `list_non_terminal_requests`
-- `list_terminal_requests_for_gc`
-- `evict_result_payload`
-- `delete_terminal_request`
-
-### `WalletRepository`
-
-Recommended methods:
-
-- `upsert_wallet_instance`
-- `mark_wallet_disconnected`
-- `update_wallet_last_seen`
-- `replace_wallet_accounts`
-- `find_wallet_instance`
-- `list_wallet_instances`
-- `find_wallet_accounts`
-- `find_wallets_for_account`
-
-## Policy Interface
-
-Policy should be explicit and injectable.
-
-Recommended trait:
-
-- `PolicyEngine`
-
-Recommended methods:
-
-- `can_list_accounts`
-- `can_get_public_key`
-- `can_create_sign_request`
-- `can_auto_route`
-- `can_resume_presented_request`
-- `is_supported_payload`
-
-The first implementation may ship with one concrete `DefaultPolicyEngine`.
-
-## Time Interface
-
-Time should be injectable for tests.
-
-Recommended trait:
-
-- `Clock`
-
-Recommended methods:
-
-- `now() -> DateTime<Utc>`
-
-This avoids ad hoc direct wall-clock reads inside lifecycle logic.
-
-## ID Generation Interface
-
-Id and lease generation should also be injectable.
-
-Recommended trait:
-
-- `IdGenerator`
-
-Recommended methods:
-
-- `new_request_id`
-- `new_delivery_lease_id`
-- `new_presentation_id`
-
-This makes restart, retry, and snapshot-style tests deterministic.
-
-## Result Projection API
-
-The core should expose projection helpers instead of forcing adapters to reconstruct status payloads manually.
-
-Recommended projectors:
-
-- `RequestStatusView`
-- `WalletStatusView`
-- `WalletAccountsView`
-
-Adapters can serialize these views without needing direct access to internal state.
-
-## Error Boundaries
-
-Recommended error layers:
-
-- `DomainError`
-- `PolicyError`
-- `RepositoryError`
-- `CoordinatorError`
-
-At protocol boundaries, these should be mapped into:
-
-- shared error code
-- user-facing message
-- retryable hint
-
-## First Implementation Freeze
-
-The first implementation should not yet add:
-
-- plugin policy engines
-- multiple repository backends
-- event sourcing
-- streaming callbacks to the MCP host
-
-## Ready-to-Implement Checklist
-
-This document is implementation-ready when:
-
-1. the exact command structs are created
-2. the repository traits are created
-3. the status projector structs are created
-4. the coordinator command loop is created
-
-At that point, `starmask-core` can be implemented without reopening transport or persistence semantics.
+Those additions belong to the planned multi-backend evolution in
+`docs/unified-wallet-coordinator-evolution.md`.

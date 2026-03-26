@@ -1,40 +1,51 @@
 # Starmask MCP Security Model
 
-## Purpose
+## Status
+
+This document is the authoritative `v1` security model for the current extension-backed
+implementation.
+
+Future multi-backend security evolution is tracked separately in:
+
+- `docs/unified-wallet-coordinator-evolution.md`
+- `docs/wallet-backend-security-model.md`
+
+## 1. Purpose
 
 This document defines the security model for the `starmask-mcp` stack.
 
-The stack includes:
+The current stack includes:
 
 - `starmask-mcp`
 - `starmaskd`
 - `starmask-native-host`
-- `Starmask` Chrome extension
+- Starmask Chrome extension
 - the local MCP host
 
-## Security Goal
+## 2. Security Goal
 
 The primary security goal is:
 
-`starmask-mcp` must allow a local MCP host to request wallet actions without granting that host signing authority or private key access.
+`starmask-mcp` must allow a local MCP host to request wallet actions without granting that host
+signing authority or private key access.
 
-## Security Invariants
+## 3. Security Invariants
 
-The following rules must remain true in every implementation phase:
+The following rules must remain true in the current implementation:
 
 1. Private key material never leaves the extension.
 2. The daemon never creates a signature.
 3. The MCP host never becomes the source of truth for what the user is approving.
 4. The extension renders the transaction or message from canonical payload bytes.
-5. Every signing request is explicitly attributable to one local account and one logical wallet instance.
+5. Every signing request is attributable to one local account and one logical wallet instance.
 6. Non-terminal request state is durable across process restarts.
 7. Local transport is restricted to the current OS user.
 
-## Trust Boundaries
+## 4. Trust Boundaries
 
 ### Trusted for signing
 
-- `Starmask` extension
+- Starmask extension
 
 ### Trusted for persistence and routing, but not signing
 
@@ -51,7 +62,7 @@ The following rules must remain true in every implementation phase:
 - `display_hint`
 - any transaction summary not derived by the extension itself
 
-## Assets to Protect
+## 5. Assets to Protect
 
 The design must protect:
 
@@ -60,30 +71,28 @@ The design must protect:
 3. signed transaction results before submission
 4. message signatures
 5. request integrity
-6. wallet instance routing integrity
+6. wallet-instance routing integrity
 7. user intent at approval time
 
-## Threat Model
+## 6. Threat Model
 
-The first implementation should explicitly defend against:
+The current implementation should explicitly defend against:
 
 1. a buggy or overly aggressive MCP host
 2. a local process attempting to connect to daemon transport as the same user
 3. stale or replayed request identifiers
 4. daemon restart during an active signing flow
 5. browser or extension restart during an active signing flow
-6. extension mismatch across dev, staging, and production release channels
+6. extension mismatch across dev, staging, and production channels
 7. misleading host-provided summaries
 
-The first implementation does not attempt to defend against:
+The current implementation does not attempt to defend against:
 
 1. a fully compromised OS user account
 2. a malicious browser runtime with arbitrary extension code execution
-3. malware with the same OS-user privileges and direct access to local wallet runtime
+3. malware with the same OS-user privileges and direct access to the local wallet runtime
 
-Those remain important risks, but they are outside the practical trust model of a local wallet integration.
-
-## Approval Security Rules
+## 7. Approval Security Rules
 
 The extension approval UI is the final decision point.
 
@@ -93,28 +102,26 @@ Rules:
 2. the extension may show `display_hint`, but only as secondary context
 3. the extension must show enough information for an informed decision
 4. unsupported transaction payloads must not fall back to silent blind signing
-5. the initial release requires explicit approval for every sign request
+5. every sign request requires explicit approval
 
-## Required UI Security Fields
-
-For transaction signing, the extension must present:
+### 7.1 Required transaction approval fields
 
 - account address
-- chain id
+- chain ID
 - transaction kind
 - receiver or called function
 - amount where applicable
 - gas budget and gas price
 - expiration
 
-For message signing, the extension must present:
+### 7.2 Required message approval fields
 
 - account address
 - message format
 - message content or a safe canonical preview
-- origin context if known
+- origin context when known
 
-## Request Integrity Rules
+## 8. Request Integrity Rules
 
 Every signing request must have:
 
@@ -130,8 +137,9 @@ The daemon must reject:
 - expired requests
 - requests routed to unknown wallet instances
 - malformed transaction payloads
+- conflicting `client_request_id` replays with a different payload hash
 
-## Result Handling Rules
+## 9. Result Handling Rules
 
 Signed outputs are sensitive even when private keys are not exposed.
 
@@ -142,29 +150,31 @@ Rules:
 3. result retrieval must be keyed by `request_id`
 4. daemon logs must never print full signed payloads by default
 
-## Routing Security
+## 10. Routing Security
 
 Wallet routing must be explicit and deterministic.
 
 Rules:
 
 1. if the caller names `wallet_instance_id`, only that instance may receive the request
-2. if multiple wallet instances match and none is selected, the daemon must fail with `wallet_selection_required`
+2. if multiple wallet instances match and none is selected, the daemon must fail with
+   `wallet_selection_required`
 3. auto-routing is allowed only when exactly one matching instance exists
-4. account identity alone is insufficient when more than one wallet instance exposes the same address
+4. account identity alone is insufficient when more than one wallet instance exposes the same
+   address
 
-## Local Transport Security
+## 11. Local Transport Security
 
 The design assumes local-only transports.
 
 Required properties:
 
 1. socket or pipe permissions limited to the current OS user
-2. no network listener in the first implementation
+2. no network listener
 3. no unauthenticated localhost HTTP bridge
 4. protocol version negotiation on every extension registration
 
-## Release Channel Separation
+## 12. Release Channel Separation
 
 Development, staging, and production channels must remain isolated.
 
@@ -174,7 +184,7 @@ Rules:
 2. each channel uses a distinct Native Messaging manifest
 3. production binaries must not trust development extension IDs
 
-## Rust Implementation Security Notes
+## 13. Rust Implementation Security Notes
 
 The Rust workspace should default to:
 
@@ -188,11 +198,11 @@ If a platform shim requires unsafe code:
 
 Additional Rust guidance:
 
-1. request ids, lease ids, and wallet instance ids should be distinct newtypes
-2. lifecycle states should be represented as enums, not mutable free-form strings
+1. request IDs, lease IDs, and wallet-instance IDs should be distinct newtypes
+2. lifecycle states should be enums, not mutable free-form strings
 3. redaction helpers should be used for sensitive log fields
 
-## Threat Scenarios and Expected Mitigations
+## 14. Threat Scenarios and Expected Mitigations
 
 ### Host provides a misleading description
 
@@ -208,6 +218,7 @@ Mitigation:
 - host persists `request_id`
 - daemon owns terminal state
 - status polling happens before creating a replacement request
+- conflicting `client_request_id` reuse fails with `idempotency_key_conflict`
 
 ### Extension disconnects after UI presentation
 
@@ -225,29 +236,14 @@ Mitigation:
 - strict request validation
 - no privileged signing operation without extension approval
 
-### Dev extension accidentally talks to production daemon
+### Dev extension accidentally talks to a production daemon
 
 Mitigation:
 
 - channel-specific manifest and ID allowlists
 - version compatibility checks at registration time
 
-## Closed First-Release Security Decisions
+## 15. Non-Goals
 
-The first Rust implementation is now closed on these decisions:
-
-1. account listing is not gated by an interactive approval step
-2. signed results use bounded multi-read retention
-3. message signing does not use relaxed approval policy in the first release
-4. unsupported transaction payloads must be rejected rather than blind-signed
-5. after `request.presented`, only the same `wallet_instance_id` may resume the request
-
-## Non-Goals
-
-This security model does not define:
-
-- the exact daemon wire protocol
-- the exact database schema
-- the exact UI layout
-
-Those belong in follow-up documents, but they must comply with the invariants defined here.
+This security model does not define the planned generic signer-backend model. That follow-on work is
+tracked in `docs/unified-wallet-coordinator-evolution.md`.

@@ -1,6 +1,16 @@
 # Starmask MCP Persistence and Recovery
 
-## Purpose
+## Status
+
+This document is the authoritative `v1` persistence and recovery design for the current
+extension-backed implementation.
+
+Future generic wallet-backend persistence changes are tracked in:
+
+- `docs/unified-wallet-coordinator-evolution.md`
+- `docs/wallet-backend-persistence-and-schema.md`
+
+## 1. Purpose
 
 This document defines:
 
@@ -9,7 +19,7 @@ This document defines:
 - how results are retained and evicted
 - how recovery works across restarts and disconnects
 
-## Design Goals
+## 2. Design Goals
 
 Persistence must guarantee:
 
@@ -18,36 +28,21 @@ Persistence must guarantee:
 3. deterministic recovery after browser or extension disconnect
 4. bounded retention of signed outputs
 
-## Canonical Storage Model
+## 3. Canonical Storage Model
 
-The first implementation should use one canonical request table with kind-specific payload and result columns.
+The current implementation uses one canonical request table with kind-specific payload and result
+columns.
 
-This resolves the earlier design question in favor of:
+Current request kinds are:
 
-- one shared request table for `sign_transaction` and `sign_message`
+- `sign_transaction`
+- `sign_message`
 
-## Rust Persistence Guidance
-
-Recommended Rust approach:
-
-1. keep lifecycle logic in a coordinator owned by `starmask-core`
-2. expose persistence through repository traits
-3. keep SQLite access behind one repository implementation
-4. perform lifecycle writes inside explicit SQLite transactions
-
-The first implementation should use `rusqlite` and keep writes on a dedicated blocking path rather than issuing ad hoc SQL from arbitrary async tasks.
-
-Recommended SQLite settings at startup:
-
-- `journal_mode = WAL`
-- `foreign_keys = ON`
-- `busy_timeout` configured
-
-## Required Persistent Entities
+## 4. Required Persistent Entities
 
 ### `requests`
 
-Required fields:
+Current fields:
 
 - `request_id`
 - `client_request_id`
@@ -68,20 +63,15 @@ Required fields:
 - `result_expires_at`
 - `last_error_code`
 - `last_error_message`
+- `reject_reason_code`
 - `delivery_lease_id`
 - `delivery_lease_expires_at`
 - `presentation_id`
 - `presentation_expires_at`
 
-Constraints:
-
-1. `request_id` is globally unique
-2. `client_request_id` is unique within the active retention horizon
-3. `client_request_id` plus mismatched `payload_hash` is invalid
-
 ### `wallet_instances`
 
-Required fields:
+Current fields:
 
 - `wallet_instance_id`
 - `extension_id`
@@ -94,57 +84,48 @@ Required fields:
 
 ### `wallet_accounts`
 
-Required fields:
+Current fields:
 
 - `wallet_instance_id`
 - `address`
 - `label`
 - `public_key`
 - `is_default`
+- `is_locked`
 - `last_seen_at`
 
-## Lease Model
+## 5. Lease Model
 
-The daemon uses two lease types.
+The current daemon uses two lease types.
 
-### Delivery Lease
+### Delivery lease
 
 Purpose:
 
 - protect a request while it is being prepared for presentation
 
-Fields:
-
-- `delivery_lease_id`
-- `delivery_lease_expires_at`
-
 Rules:
 
-1. only valid in `dispatched`
+1. valid only in `dispatched`
 2. expires automatically if `request.presented` is not received in time
 3. expiry returns the request to `created`
 
-### Presentation Lease
+### Presentation lease
 
 Purpose:
 
 - keep a presented request recoverable on the same wallet instance
 
-Fields:
-
-- `presentation_id`
-- `presentation_expires_at`
-
 Rules:
 
 1. begins at `request.presented`
-2. is extended by `extension.heartbeat`
+2. is extended by extension heartbeat
 3. is valid only for the presenting `wallet_instance_id`
-4. after `request.presented`, the request is pinned to that instance
+4. after `request.presented`, the request is pinned to that wallet instance
 
-## Default Timing Rules
+## 6. Current Timing Rules
 
-Initial default values:
+Current defaults:
 
 - `request_ttl_seconds = 300`
 - `delivery_lease_seconds = 30`
@@ -152,153 +133,58 @@ Initial default values:
 - `heartbeat_interval_seconds = 10`
 - `wallet_offline_after_seconds = 25`
 - `result_retention_seconds = 600`
-- `terminal_record_retention_seconds = 86400`
 
-The exact defaults are defined in `configuration.md`.
+## 7. Result Retention Policy
 
-## Result Retention Policy
-
-The first implementation uses bounded multi-read retention.
+The current implementation uses bounded multi-read retention.
 
 Rules:
 
 1. approved results may be read multiple times until `result_expires_at`
-2. after `result_expires_at`, payload result bytes are deleted
-3. terminal metadata remains until terminal record retention expires
-4. after payload eviction, `wallet_get_request_status` still returns:
-   - `status = approved`
-   - `result_kind`
-   - `result_available = false`
-   - `error_code = result_unavailable`
+2. after `result_expires_at`, result payload bytes are deleted
+3. terminal metadata remains queryable after payload eviction
+4. after payload eviction, `request.getStatus` still reports terminal status with
+   `result_available = false`
 
-This resolves the earlier design question in favor of:
-
-- bounded multi-read, not single-read
-
-## Request Creation Recovery
+## 8. Request Creation Recovery
 
 To avoid duplicate requests during transport uncertainty:
 
-1. create methods require `client_request_id`
-2. the daemon persists `client_request_id` before returning success
-3. a retried create call with the same `client_request_id` and `payload_hash` returns the original `request_id`
+1. the daemon must persist the request before returning success
+2. `client_request_id` must be queryable directly
+3. if the client retries after a lost transport response, the daemon returns the original request
+   when `client_request_id` and `payload_hash` match
+4. if the payload differs, the daemon returns `idempotency_key_conflict`
 
-## Request Cancellation Recovery
+## 9. Browser and Extension Recovery
 
-Cancellation rules:
-
-1. cancelling `created`, `dispatched`, or `pending_user_approval` moves the request to `cancelled`
-2. cancellation is persisted before the daemon notifies the extension
-3. late resolve or reject messages for a cancelled request must be ignored
-
-## Restart Recovery
-
-### Daemon Restart
-
-On startup, the daemon must:
-
-1. load all non-terminal requests
-2. clear stale transport session markers
-3. keep delivery leases only if still within expiry
-4. keep presentation leases only if still within expiry
-5. return expired delivery leases to `created`
-6. return requests with expired presentation leases to `created` while keeping their pinned `wallet_instance_id`
-7. keep still-valid `pending_user_approval` requests pinned to their `wallet_instance_id`
-
-### Extension Restart
-
-On reconnect, the extension must:
-
-1. re-register `wallet_instance_id`
-2. refresh account cache
-3. begin heartbeats
-4. call `request.pullNext`
-
-Recovery behavior:
-
-1. if a request was only `dispatched`, it may be claimed again
-2. if a request was `pending_user_approval`, pinned to this instance, and its presentation lease is still active, `request.pullNext` may return it with:
-   - `resume_required = true`
-   - the active `presentation_id`
-
-### Host Restart
-
-The host should:
-
-1. persist `request_id`
-2. resume polling the same request
-3. reuse `client_request_id` only when retrying request creation after an uncertain failure
-
-## Re-Delivery Rules
-
-This section closes the earlier unresolved question about re-delivery after presentation.
-
-### Before Presentation
-
-Requests may be re-delivered if:
-
-- the request is still non-terminal
-- the delivery lease expired
-- the request has not reached `pending_user_approval`
-
-### After Presentation
-
-Requests may only be resumed by the same `wallet_instance_id`.
+The persistence model must tolerate extension disconnects.
 
 Rules:
 
-1. after `request.presented`, the request must never migrate to a different wallet instance
-2. if the same wallet instance reconnects before the presentation lease expires, it may resume
-3. once the presentation lease expires, the daemon returns the request to `created` for the same wallet instance to claim again
-4. if the same wallet instance never reconnects, the request follows normal request lifecycle handling after presentation expiry until the host cancels it or the request itself expires
+1. requests already in `pending_user_approval` remain durable
+2. only the same `wallet_instance_id` may resume a presented request
+3. disconnect alone does not imply rejection
+4. non-presented requests may be re-dispatched after delivery-lease expiry
 
-This resolves the re-delivery policy in favor of:
+## 10. Daemon Restart Recovery
 
-- same-instance resume only
-- no cross-instance re-delivery after presentation
+At startup, `starmaskd` should:
 
-## Expiry Rules
+1. open the database
+2. load all non-terminal requests
+3. expire requests whose `expires_at < now`
+4. clear stale delivery leases
+5. retain presented requests for same-instance recovery
+6. mark wallet instances disconnected until they re-register
 
-Expiry applies regardless of connectivity.
+## 11. Deliberate `v1` Omissions
 
-Rules:
+The current persistence design does not yet define:
 
-1. if `now >= expires_at` and the request is non-terminal, the daemon moves it to `expired`
-2. expiry is terminal
-3. expiry removes any active lease
+- unlock request storage
+- backend-kind metadata
+- generic backend snapshots
 
-## Garbage Collection
-
-The daemon should periodically:
-
-1. evict expired payload results
-2. delete terminal records older than retention
-3. remove disconnected wallet-instance cache entries that exceed the configured stale threshold
-
-Garbage collection must never delete:
-
-- a non-terminal request
-- terminal metadata before its retention period expires
-
-## Observable Recovery Outcomes
-
-The host should be able to distinguish:
-
-- request still pending and recoverable
-- request approved but result evicted
-- request cancelled
-- request expired
-- request failed
-
-This is surfaced through:
-
-- `status`
-- `result_available`
-- `result_expires_at`
-- `error_code`
-
-## Non-Goals
-
-This document does not define SQL statements or a concrete migration tool.
-
-It defines required persistence semantics that any storage implementation must preserve.
+Those changes belong to the planned multi-backend evolution in
+`docs/unified-wallet-coordinator-evolution.md`.

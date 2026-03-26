@@ -1,5 +1,18 @@
 # Starmask Native Messaging Examples
 
+## Status
+
+These examples are canonical for the current `v1` extension-backed Native Messaging contract.
+
+They should be kept consistent with:
+
+- `docs/native-messaging-contract.md`
+- `DAEMON_PROTOCOL_VERSION = 1`
+- `NATIVE_BRIDGE_PROTOCOL_VERSION = 1`
+
+Future generic backend-agent examples should be added separately rather than mutating these `v1`
+extension examples in place.
+
 ## Purpose
 
 This document provides canonical example payloads for the Native Messaging contract.

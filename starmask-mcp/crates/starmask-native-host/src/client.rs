@@ -182,3 +182,137 @@ fn shared_transport_error(error: impl std::fmt::Display) -> SharedError {
         error.to_string(),
     )
 }
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        io::{Read, Write},
+        os::unix::net::UnixListener,
+        sync::mpsc,
+        thread,
+    };
+
+    use tempfile::tempdir;
+
+    use super::*;
+    use starmask_types::{
+        JsonRpcErrorResponse, RequestId, RequestPullNextResult, RequestRejectParams,
+        RequestResolveParams, SharedErrorCode, WalletInstanceId,
+    };
+
+    fn run_server_once(
+        response: Vec<u8>,
+    ) -> (
+        tempfile::TempDir,
+        PathBuf,
+        mpsc::Receiver<Vec<u8>>,
+        thread::JoinHandle<()>,
+    ) {
+        let tempdir = tempdir().unwrap();
+        let socket_path = tempdir.path().join("starmaskd.sock");
+        let listener = UnixListener::bind(&socket_path).unwrap();
+        let (sender, receiver) = mpsc::channel();
+
+        let handle = thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            stream.read_to_end(&mut request).unwrap();
+            sender.send(request).unwrap();
+            stream.write_all(&response).unwrap();
+        });
+
+        (tempdir, socket_path, receiver, handle)
+    }
+
+    #[test]
+    fn request_pull_next_sends_expected_jsonrpc_request() {
+        let response = serde_json::to_vec(&JsonRpcResponse::Success(JsonRpcSuccess::new(
+            "native-host",
+            RequestPullNextResult {
+                wallet_instance_id: WalletInstanceId::new("wallet-1").unwrap(),
+                request: None,
+            },
+        )))
+        .unwrap();
+        let (_tempdir, socket_path, receiver, handle) = run_server_once(response);
+
+        let client = LocalDaemonClient::new(socket_path);
+        let result = client
+            .request_pull_next(RequestPullNextParams {
+                protocol_version: DAEMON_PROTOCOL_VERSION,
+                wallet_instance_id: WalletInstanceId::new("wallet-1").unwrap(),
+            })
+            .unwrap();
+        let request: JsonRpcRequest<serde_json::Value> =
+            serde_json::from_slice(&receiver.recv().unwrap()).unwrap();
+
+        assert_eq!(request.id, "native-host");
+        assert_eq!(request.method, "request.pullNext");
+        assert_eq!(
+            request.params,
+            serde_json::json!({
+                "protocol_version": DAEMON_PROTOCOL_VERSION,
+                "wallet_instance_id": "wallet-1",
+            })
+        );
+        assert!(result.request.is_none());
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn request_reject_maps_daemon_error_response() {
+        let response = serde_json::to_vec(&JsonRpcResponse::<AckResult>::Error(
+            JsonRpcErrorResponse::new(
+                "native-host",
+                SharedError::new(SharedErrorCode::RequestNotFound, "request missing")
+                    .with_retryable(false),
+            ),
+        ))
+        .unwrap();
+        let (_tempdir, socket_path, _receiver, handle) = run_server_once(response);
+
+        let client = LocalDaemonClient::new(socket_path);
+        let error = client
+            .request_reject(RequestRejectParams {
+                protocol_version: DAEMON_PROTOCOL_VERSION,
+                wallet_instance_id: WalletInstanceId::new("wallet-1").unwrap(),
+                request_id: RequestId::new("request-1").unwrap(),
+                presentation_id: None,
+                reason_code: starmask_types::RejectReasonCode::RequestRejected,
+                reason_message: None,
+            })
+            .unwrap_err();
+
+        assert_eq!(error.code, SharedErrorCode::RequestNotFound);
+        assert_eq!(error.message, "request missing");
+        assert_eq!(error.retryable, Some(false));
+        handle.join().unwrap();
+    }
+
+    #[test]
+    fn oversized_daemon_response_is_reported_as_transport_error() {
+        let response = vec![b'x'; usize::try_from(MAX_RESPONSE_BYTES).unwrap() + 1];
+        let (_tempdir, socket_path, _receiver, handle) = run_server_once(response);
+
+        let client = LocalDaemonClient::new(socket_path);
+        let error = client
+            .request_resolve(RequestResolveParams {
+                protocol_version: DAEMON_PROTOCOL_VERSION,
+                wallet_instance_id: WalletInstanceId::new("wallet-1").unwrap(),
+                request_id: RequestId::new("request-1").unwrap(),
+                presentation_id: starmask_types::PresentationId::new("presentation-1").unwrap(),
+                result_kind: starmask_types::ResultKind::SignedMessage,
+                signed_txn_bcs_hex: None,
+                signature: Some("0xsig".to_owned()),
+            })
+            .unwrap_err();
+
+        assert_eq!(error.code, SharedErrorCode::RpcUnavailable);
+        assert!(
+            error
+                .message
+                .contains("daemon response exceeded 1048576 bytes")
+        );
+        handle.join().unwrap();
+    }
+}

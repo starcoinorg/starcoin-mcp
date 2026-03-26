@@ -1,5 +1,14 @@
 # Starmask MCP Rust Implementation Strategy
 
+## Status
+
+This document translates the current `v1` extension-backed design into Rust implementation
+constraints.
+
+It does not yet define the generic multi-backend rollout. That architecture work is tracked in
+`docs/unified-wallet-coordinator-evolution.md` and should only graduate into this document when the
+underlying contracts and phases are accepted.
+
 ## Purpose
 
 This document defines how the first `starmask-mcp` implementation should be structured when Rust is the primary implementation language.

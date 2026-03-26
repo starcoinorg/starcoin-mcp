@@ -1,10 +1,19 @@
 # Starmask MCP RMCP Adapter Design
 
-## Purpose
+## Status
 
-This document defines how `starmask-mcp` should use the Rust MCP SDK `rmcp` without leaking SDK concerns into core wallet logic.
+This document is the authoritative `v1` adapter design for the current MCP surface in this
+repository.
 
-## Design Goal
+It tracks the current tool set and daemon-client contract. Planned multi-backend expansion is
+tracked in `docs/unified-wallet-coordinator-evolution.md`.
+
+## 1. Purpose
+
+This document defines how `starmask-mcp` should use the Rust MCP SDK `rmcp` without leaking SDK
+concerns into core wallet logic.
+
+## 2. Design Goal
 
 The MCP adapter should do only four things:
 
@@ -20,9 +29,7 @@ It should not own:
 - persistence
 - Native Messaging logic
 
-## Layering
-
-Recommended layering inside the `starmask-mcp` crate:
+## 3. Layering
 
 ```text
 main
@@ -32,7 +39,7 @@ main
   -> starmask-core typed views and error mapping
 ```
 
-## Crate Shape
+## 4. Crate Shape
 
 Recommended module layout:
 
@@ -41,39 +48,20 @@ starmask-mcp/src/
   lib.rs
   main.rs
   server.rs
-  tools.rs
   dto.rs
   daemon_client.rs
   error_mapping.rs
 ```
 
-The first implementation may keep a small tool set inside `server.rs` instead of splitting out
-`tools.rs`, as long as:
+The current implementation may keep the tool surface inside `server.rs` as long as the adapter
+remains thin.
 
-1. the MCP adapter remains thin
-2. tool-specific business policy still lives in `starmaskd`
-3. the file is split once tool count or complexity grows materially
+## 5. Current Tool Registration
 
-## RMCP Responsibilities
-
-`rmcp` should own:
-
-- stdio server transport
-- MCP tool registration
-- MCP request dispatch
-
-Project code should own:
-
-- tool argument structs
-- tool-to-daemon mapping
-- daemon client protocol
-- result projection
-
-## Tool Registration
-
-Recommended tools:
+The current adapter exposes:
 
 - `wallet_status`
+- `wallet_list_instances`
 - `wallet_list_accounts`
 - `wallet_get_public_key`
 - `wallet_request_sign_transaction`
@@ -81,30 +69,26 @@ Recommended tools:
 - `wallet_cancel_request`
 - `wallet_sign_message`
 
-These should mirror the design contract exactly and should not introduce MCP-only semantics that the daemon does not understand.
+These tools must mirror the current daemon contract exactly.
 
-## Input Mapping
+## 6. Input Mapping
 
 Recommended flow for each tool:
 
 1. `rmcp` deserializes tool params into a tool DTO
-2. tool DTO validates obvious shape errors
-3. tool DTO converts into daemon-client request struct
-4. daemon client performs local RPC call
-5. daemon response converts into MCP-visible result DTO
+2. the tool DTO validates obvious shape errors
+3. the tool DTO converts into one daemon-client request struct
+4. the daemon client performs one local RPC call
+5. the daemon response converts into one MCP-visible result DTO
 
-Rule:
+Rules:
 
 - keep one conversion step in each direction
 - avoid building JSON by hand in tool handlers
 
-## Daemon Client Boundary
+## 7. Daemon Client Boundary
 
 The adapter should depend on one daemon client abstraction.
-
-Recommended trait:
-
-- `DaemonClient`
 
 Recommended methods:
 
@@ -119,9 +103,40 @@ Recommended methods:
 - `get_request_status`
 - `cancel_request`
 
-The first implementation may ship with one concrete local JSON-RPC client.
+The current adapter does not expose `wallet_request_unlock`, because the daemon and tool surface do
+not yet implement it.
 
-## Library Packaging
+## 8. Output Shape
+
+Tool outputs should preserve structured daemon fields, including:
+
+- `request_id`
+- `client_request_id`
+- `status`
+- `result_kind`
+- `result_available`
+- `result_expires_at`
+- `error_code`
+
+Do not compress these into plain English summaries.
+
+## 9. Error Mapping
+
+The adapter should centralize error translation.
+
+Recommended layers:
+
+1. daemon transport error
+2. daemon protocol error
+3. MCP tool error or result mapping
+
+Mapping rules:
+
+1. shared error codes should remain visible in structured outputs where possible
+2. transport failures should become clear tool failures, not fake domain statuses
+3. input validation errors should map to invalid-request style tool errors
+
+## 10. Library Packaging
 
 The `starmask-mcp` crate may be packaged as both:
 
@@ -136,48 +151,12 @@ Recommended public facade:
 - `serve_stdio(client)`
 - `default_socket_path()`
 
-Packaging rule:
-
-- `main.rs` should remain a thin CLI and tracing wrapper
-- library callers may own Tokio runtime setup and tracing initialization
-- the same server wiring must be reused in both cases
-
-## Error Mapping
-
-The adapter should centralize error translation.
-
-Recommended layers:
-
-1. daemon transport error
-2. daemon protocol error
-3. MCP tool error/result mapping
-
-Mapping rules:
-
-1. shared error codes should remain visible in structured outputs where possible
-2. transport failures should become a clear tool failure, not a fake domain status
-3. retryable hints from the daemon should be preserved
-
-## Output Shape
-
-Tool outputs should preserve:
-
-- `request_id`
-- `client_request_id`
-- `status`
-- `result_kind`
-- `result_available`
-- `result_expires_at`
-- `error_code`
-
-Do not compress these into plain English strings.
-
-## Logging
+## 11. Logging
 
 The MCP adapter should log:
 
 - tool name
-- request id where applicable
+- request ID where applicable
 - shared error code on failure
 
 It should not log:
@@ -185,21 +164,7 @@ It should not log:
 - raw signatures
 - raw signed transaction blobs
 
-## Runtime Model
-
-The first implementation should use a small Tokio runtime.
-
-Recommended model:
-
-- one async main
-- one `rmcp` server
-- daemon client calls over local IPC
-
-Because the adapter does not own mutable lifecycle state, it does not need a coordinator.
-
-If another Rust binary embeds the adapter, that host may own runtime setup and call the same stdio-serving library facade directly.
-
-## Inspector and Manual Testing
+## 12. Inspector and Manual Testing
 
 The adapter should be easy to test with an MCP inspector.
 
@@ -211,26 +176,12 @@ Recommended workflow:
 4. call wallet tools
 5. verify structured results
 
-## Fake Daemon Strategy
+## 13. Deliberate `v1` Omissions
 
-For adapter integration tests, prefer a fake daemon server that speaks the daemon JSON-RPC contract over local transport.
+The current adapter design does not specify:
 
-This allows testing:
+- explicit unlock tools
+- backend-kind-aware tool responses
+- local-account backends
 
-- input validation
-- error mapping
-- result mapping
-- stdio server behavior
-
-without needing a real extension.
-
-## Ready-to-Implement Checklist
-
-This document is implementation-ready when:
-
-1. tool DTO structs exist
-2. daemon client trait exists
-3. one local JSON-RPC daemon client implementation exists
-4. one `rmcp` server wiring module exists
-
-At that point, `starmask-mcp` can be implemented without reopening daemon or wallet semantics.
+Those additions are tracked in `docs/unified-wallet-coordinator-evolution.md`.

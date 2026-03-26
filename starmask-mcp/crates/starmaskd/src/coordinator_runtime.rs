@@ -67,6 +67,15 @@ impl CoordinatorHandle {
     }
 }
 
+#[cfg(test)]
+impl CoordinatorHandle {
+    pub(crate) fn closed_for_tests() -> Self {
+        let (sender, receiver) = mpsc::channel();
+        drop(receiver);
+        Self { sender }
+    }
+}
+
 pub fn spawn_coordinator<S>(store: S, config: CoordinatorConfig) -> CoordinatorHandle
 where
     S: Store + Send + 'static,

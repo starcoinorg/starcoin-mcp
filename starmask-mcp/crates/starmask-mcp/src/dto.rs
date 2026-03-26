@@ -5,7 +5,7 @@ use serde::Deserialize;
 use starmask_types::{DurationSeconds, MessageFormat, WalletInstanceId};
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
-pub struct EmptyParams;
+pub struct EmptyParams {}
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct WalletListAccountsInput {

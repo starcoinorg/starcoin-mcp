@@ -1,6 +1,16 @@
 # Starmask MCP Configuration
 
-## Purpose
+## Status
+
+This document is the authoritative configuration contract for the current `v1` implementation.
+
+`v1` configuration is extension-backed and matches the current Rust code in `crates/starmaskd`.
+Planned multi-backend configuration is tracked separately in:
+
+- `docs/unified-wallet-coordinator-evolution.md`
+- `docs/wallet-backend-configuration.md`
+
+## 1. Purpose
 
 This document defines the configuration surface for:
 
@@ -8,14 +18,14 @@ This document defines the configuration surface for:
 - `starmask-mcp`
 - `starmask-native-host`
 
-## Configuration Principles
+## 2. Configuration Principles
 
 1. secure defaults first
 2. local-only by default
-3. production and development channels must be separable
-4. timing-sensitive behavior must be configurable but bounded
+3. production and development channels remain separable
+4. timing-sensitive behavior is configurable but bounded
 
-## Configuration Sources
+## 3. Configuration Sources
 
 Precedence:
 
@@ -24,23 +34,37 @@ Precedence:
 3. config file
 4. built-in defaults
 
-## Rust Configuration Binding
-
-Recommended Rust approach:
-
-- `clap` for CLI parsing
-- `serde` for config deserialization
-- one normalized runtime config struct after merge and validation
-
 Validation should happen before:
 
 - opening the daemon listener
 - opening the SQLite database
 - starting recovery
 
-## Default Paths
+## 4. Current Runtime Config Shape
 
-### macOS
+The current daemon runtime config is extension-centric and contains:
+
+- `channel`
+- `allowed_extension_ids`
+- `native_host_name`
+- `socket_path`
+- `database_path`
+- `log_level`
+- `maintenance_interval_seconds`
+- `default_request_ttl_seconds`
+- `min_request_ttl_seconds`
+- `max_request_ttl_seconds`
+- `delivery_lease_seconds`
+- `presentation_lease_seconds`
+- `heartbeat_interval_seconds`
+- `wallet_offline_after_seconds`
+- `result_retention_seconds`
+
+There is no `wallet_backends` array in the current codebase.
+
+## 5. Default Paths
+
+### 5.1 macOS
 
 - daemon socket:
   - `$HOME/Library/Application Support/StarcoinMCP/run/starmaskd.sock`
@@ -51,7 +75,7 @@ Validation should happen before:
 - config file:
   - `$HOME/Library/Application Support/StarcoinMCP/config.toml`
 
-### Linux
+### 5.2 Linux
 
 - daemon socket:
   - `$XDG_RUNTIME_DIR/starcoin-mcp/starmaskd.sock`
@@ -66,7 +90,7 @@ Validation should happen before:
   - `$XDG_CONFIG_HOME/starcoin-mcp/config.toml`
   - fallback: `$HOME/.config/starcoin-mcp/config.toml`
 
-### Windows
+### 5.3 Windows
 
 - daemon pipe:
   - `\\\\.\\pipe\\starcoin-mcp-starmaskd`
@@ -77,29 +101,48 @@ Validation should happen before:
 - config file:
   - `%APPDATA%\\StarcoinMCP\\config.toml`
 
-## Required Settings
+## 6. Current Config File Example
 
-### Channel Settings
+```toml
+channel = "development"
+allowed_extension_ids = ["kmheclfnfmpacglnpegeohempmedhiaf"]
+native_host_name = "com.starcoin.starmask.development"
+socket_path = "/Users/alice/Library/Application Support/StarcoinMCP/run/starmaskd.sock"
+database_path = "/Users/alice/Library/Application Support/StarcoinMCP/starmaskd.sqlite3"
+log_level = "info"
+maintenance_interval_seconds = 1
+default_request_ttl_seconds = 300
+min_request_ttl_seconds = 30
+max_request_ttl_seconds = 3600
+delivery_lease_seconds = 30
+presentation_lease_seconds = 45
+heartbeat_interval_seconds = 10
+wallet_offline_after_seconds = 25
+result_retention_seconds = 600
+```
+
+## 7. Required Settings
+
+### 7.1 Channel and extension trust
 
 - `channel`
-  - one of:
-    - `development`
-    - `staging`
-    - `production`
+  - one of `development`, `staging`, `production`
 - `allowed_extension_ids`
 - `native_host_name`
 
-### Transport Settings
+### 7.2 Transport and storage
 
 - `socket_path` or `pipe_name`
-- `socket_permissions`
-
-### Storage Settings
-
 - `database_path`
-- `log_path`
 
-## Timing Defaults
+### 7.3 Operational settings
+
+- `log_level`
+- timing settings listed above
+
+## 8. Timing Defaults
+
+Current defaults:
 
 - `default_request_ttl_seconds = 300`
 - `min_request_ttl_seconds = 30`
@@ -109,47 +152,41 @@ Validation should happen before:
 - `heartbeat_interval_seconds = 10`
 - `wallet_offline_after_seconds = 25`
 - `result_retention_seconds = 600`
-- `terminal_record_retention_seconds = 86400`
 
-## Policy Defaults
+The current code does not expose terminal-record retention as a user-configurable setting.
 
-The first implementation should use these defaults:
+## 9. Policy Defaults
 
-- `require_explicit_wallet_selection_when_ambiguous = true`
-- `allow_auto_route_when_exactly_one_match = true`
-- `allow_account_listing_without_approval = true`
-- `allow_public_key_lookup_without_approval = true`
-- `fail_fast_when_wallet_unavailable = true`
-- `fail_fast_when_wallet_locked = true`
-- `allow_blind_signing = false`
-- `allow_message_sign_policy_exceptions = false`
+The current implementation effectively closes the remaining policy questions in favor of a narrow
+and deterministic design:
 
-These settings close the remaining first-release policy questions in favor of a narrow but deterministic implementation.
+- explicit wallet selection is required when routing is ambiguous
+- auto-route is allowed only when exactly one wallet instance matches
+- account listing does not require an interactive approval step
+- public-key lookup may use cached metadata
+- requests fail fast when the target wallet is unavailable
+- requests fail fast when the target wallet is locked
+- blind signing is not supported
 
-## Result Handling Settings
+## 10. Environment Variable Mapping
 
-- `result_payload_multi_read = true`
-- `result_payload_retention_seconds = 600`
-
-The first release does not support:
-
-- single-read signed results
-- indefinite signed result retention
-
-## Environment Variable Mapping
-
-Suggested environment variable names:
+Suggested environment variable names currently supported by `starmaskd`:
 
 - `STARMASKD_SOCKET_PATH`
 - `STARMASKD_DB_PATH`
-- `STARMASKD_LOG_PATH`
+- `STARMASKD_LOG_LEVEL`
 - `STARMASKD_CHANNEL`
 - `STARMASKD_ALLOWED_EXTENSION_IDS`
+- `STARMASKD_NATIVE_HOST_NAME`
+- `STARMASKD_MAINTENANCE_INTERVAL_SECONDS`
 - `STARMASKD_DEFAULT_REQUEST_TTL_SECONDS`
+- `STARMASKD_MIN_REQUEST_TTL_SECONDS`
+- `STARMASKD_MAX_REQUEST_TTL_SECONDS`
+- `STARMASKD_DELIVERY_LEASE_SECONDS`
+- `STARMASKD_PRESENTATION_LEASE_SECONDS`
+- `STARMASKD_HEARTBEAT_INTERVAL_SECONDS`
+- `STARMASKD_WALLET_OFFLINE_AFTER_SECONDS`
 - `STARMASKD_RESULT_RETENTION_SECONDS`
-- `STARMASKD_LOG_LEVEL`
-
-## MCP Shim Settings
 
 `starmask-mcp` should support:
 
@@ -157,38 +194,37 @@ Suggested environment variable names:
 - RPC timeout override
 - log level override
 
-The MCP shim should not carry policy that diverges from daemon policy.
-
-## Native Host Settings
-
 `starmask-native-host` should support:
 
 - daemon socket or pipe override
 - expected channel name
 - log level override
 
-It should not store wallet state or request state.
-
-## Safe Bounds
+## 11. Safe Bounds
 
 The implementation should clamp unsafe timing values:
 
 1. `request_ttl_seconds` below minimum is raised to minimum
 2. `request_ttl_seconds` above maximum is lowered to maximum
-3. `result_retention_seconds` may not be zero in the first release
+3. `result_retention_seconds` may not be zero
+4. `wallet_offline_after_seconds` must be greater than `heartbeat_interval_seconds`
 
-## Configuration Errors
+## 12. Configuration Errors
 
 Misconfiguration should surface with actionable errors.
 
 Typical cases:
 
 - invalid extension ID allowlist
-- missing native host manifest
+- empty extension ID allowlist
+- missing Native Messaging manifest
 - unsupported channel value
 - unwritable database path
-- insecure socket permissions
+- socket path without a parent directory
+- insecure or unusable runtime directories
 
-## Non-Goals
+## 13. Non-Goals
 
-This document does not define package-manager-specific install commands.
+This document does not define package-manager-specific install commands or the planned multi-backend
+configuration model. Those follow-on changes are tracked in
+`docs/unified-wallet-coordinator-evolution.md`.

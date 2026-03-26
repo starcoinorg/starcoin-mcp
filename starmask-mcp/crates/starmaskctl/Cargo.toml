@@ -13,3 +13,6 @@ serde.workspace = true
 serde_json.workspace = true
 starmaskd = { path = "../starmaskd" }
 starmask-types = { path = "../starmask-types" }
+
+[dev-dependencies]
+tempfile.workspace = true

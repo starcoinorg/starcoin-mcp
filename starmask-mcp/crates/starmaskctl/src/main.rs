@@ -269,7 +269,22 @@ fn inspect_manifest(
     native_host_name: &str,
     allowed_extension_ids: &std::collections::BTreeSet<String>,
 ) -> Result<ManifestDiagnostics> {
-    let manifest_path = native_host_manifest_candidates(native_host_name)
+    inspect_manifest_in_candidates(
+        native_host_name,
+        allowed_extension_ids,
+        native_host_manifest_candidates(native_host_name),
+    )
+}
+
+fn inspect_manifest_in_candidates<I>(
+    native_host_name: &str,
+    allowed_extension_ids: &std::collections::BTreeSet<String>,
+    candidates: I,
+) -> Result<ManifestDiagnostics>
+where
+    I: IntoIterator<Item = PathBuf>,
+{
+    let manifest_path = candidates
         .into_iter()
         .find(|path| path.exists())
         .ok_or_else(|| {
@@ -447,5 +462,95 @@ impl LocalDaemonClient {
                 details: error.error.details,
             })),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{collections::BTreeSet, fs};
+
+    use tempfile::tempdir;
+
+    use super::{inspect_database, inspect_manifest_in_candidates};
+
+    fn extension_ids() -> BTreeSet<String> {
+        BTreeSet::from(["ext.allowed".to_owned()])
+    }
+
+    #[test]
+    fn inspect_database_reports_missing_file() {
+        let tempdir = tempdir().unwrap();
+        let database_path = tempdir.path().join("missing.sqlite3");
+
+        let error = inspect_database(&database_path).unwrap_err();
+
+        assert!(error.to_string().contains("database file is missing"));
+    }
+
+    #[test]
+    fn inspect_manifest_reports_missing_file() {
+        let tempdir = tempdir().unwrap();
+        let manifest_path = tempdir.path().join("missing.json");
+
+        let error =
+            inspect_manifest_in_candidates("com.starcoin.test", &extension_ids(), [manifest_path])
+                .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("native host manifest com.starcoin.test.json was not found")
+        );
+    }
+
+    #[test]
+    fn inspect_manifest_accepts_matching_allowed_origins() {
+        let tempdir = tempdir().unwrap();
+        let manifest_path = tempdir.path().join("com.starcoin.test.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+                "name": "com.starcoin.test",
+                "allowed_origins": ["chrome-extension://ext.allowed/"]
+            }"#,
+        )
+        .unwrap();
+
+        let diagnostics = inspect_manifest_in_candidates(
+            "com.starcoin.test",
+            &extension_ids(),
+            [manifest_path.clone()],
+        )
+        .unwrap();
+
+        assert_eq!(diagnostics.path, manifest_path);
+        assert_eq!(
+            diagnostics.allowed_origins,
+            vec!["chrome-extension://ext.allowed/".to_owned()]
+        );
+    }
+
+    #[test]
+    fn inspect_manifest_reports_missing_allowed_origin() {
+        let tempdir = tempdir().unwrap();
+        let manifest_path = tempdir.path().join("com.starcoin.test.json");
+        fs::write(
+            &manifest_path,
+            r#"{
+                "name": "com.starcoin.test",
+                "allowed_origins": ["chrome-extension://ext.other/"]
+            }"#,
+        )
+        .unwrap();
+
+        let error =
+            inspect_manifest_in_candidates("com.starcoin.test", &extension_ids(), [manifest_path])
+                .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("manifest is missing allowed origin chrome-extension://ext.allowed/")
+        );
     }
 }

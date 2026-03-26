@@ -182,10 +182,13 @@ pub fn shared_error_response(reply_to: Option<String>, error: SharedError) -> Na
 
 #[cfg(test)]
 mod tests {
+    use std::cell::RefCell;
+
     use starmask_types::{
         AckResult, ClientRequestId, GetRequestStatusParams, GetRequestStatusResult, LockState,
         PayloadHash, RequestHasAvailableParams, RequestHasAvailableResult, RequestId, RequestKind,
-        RequestPullNextResult, SharedError, SharedErrorCode, WalletInstanceId,
+        RequestPullNextResult, RequestRejectParams, RequestResolveParams, ResultKind, SharedError,
+        SharedErrorCode, WalletInstanceId,
     };
 
     use super::*;
@@ -193,6 +196,9 @@ mod tests {
     #[derive(Default)]
     struct FakeClient {
         pull_next_result: Option<Result<RequestPullNextResult, SharedError>>,
+        heartbeat_result: Option<Result<AckResult, SharedError>>,
+        resolve_calls: RefCell<Vec<RequestResolveParams>>,
+        reject_calls: RefCell<Vec<RequestRejectParams>>,
     }
 
     impl DaemonRpc for FakeClient {
@@ -211,7 +217,9 @@ mod tests {
             &self,
             _params: ExtensionHeartbeatParams,
         ) -> Result<AckResult, SharedError> {
-            Ok(AckResult { ok: true })
+            self.heartbeat_result
+                .clone()
+                .unwrap_or(Ok(AckResult { ok: true }))
         }
 
         fn extension_update_accounts(
@@ -252,11 +260,13 @@ mod tests {
             Ok(AckResult { ok: true })
         }
 
-        fn request_resolve(&self, _params: RequestResolveParams) -> Result<AckResult, SharedError> {
+        fn request_resolve(&self, params: RequestResolveParams) -> Result<AckResult, SharedError> {
+            self.resolve_calls.borrow_mut().push(params);
             Ok(AckResult { ok: true })
         }
 
-        fn request_reject(&self, _params: RequestRejectParams) -> Result<AckResult, SharedError> {
+        fn request_reject(&self, params: RequestRejectParams) -> Result<AckResult, SharedError> {
+            self.reject_calls.borrow_mut().push(params);
             Ok(AckResult { ok: true })
         }
     }
@@ -314,6 +324,7 @@ mod tests {
                     message_format: None,
                 }),
             })),
+            ..Default::default()
         };
 
         let response = handle_request(
@@ -343,6 +354,145 @@ mod tests {
                 raw_txn_bcs_hex: Some("0xabc".to_owned()),
                 message: None,
                 message_format: None,
+            }
+        );
+    }
+
+    #[test]
+    fn pull_next_without_request_maps_to_request_none() {
+        let wallet_instance_id = WalletInstanceId::new("wallet-1").unwrap();
+        let client = FakeClient {
+            pull_next_result: Some(Ok(RequestPullNextResult {
+                wallet_instance_id: wallet_instance_id.clone(),
+                request: None,
+            })),
+            ..Default::default()
+        };
+
+        let response = handle_request(
+            &client,
+            NativeBridgeRequest::RequestPullNext {
+                message_id: "msg-none".to_owned(),
+                wallet_instance_id: wallet_instance_id.clone(),
+            },
+        );
+
+        assert_eq!(
+            response,
+            NativeBridgeResponse::RequestNone {
+                reply_to: "msg-none".to_owned(),
+                wallet_instance_id,
+            }
+        );
+    }
+
+    #[test]
+    fn daemon_error_is_reported_as_extension_error_with_reply_to() {
+        let client = FakeClient {
+            heartbeat_result: Some(Err(SharedError::new(
+                SharedErrorCode::WalletUnavailable,
+                "wallet offline",
+            )
+            .with_retryable(false))),
+            ..Default::default()
+        };
+
+        let response = handle_request(
+            &client,
+            NativeBridgeRequest::ExtensionHeartbeat {
+                message_id: "msg-heartbeat".to_owned(),
+                wallet_instance_id: WalletInstanceId::new("wallet-1").unwrap(),
+                presented_request_ids: Vec::new(),
+            },
+        );
+
+        assert_eq!(
+            response,
+            NativeBridgeResponse::ExtensionError {
+                reply_to: Some("msg-heartbeat".to_owned()),
+                code: SharedErrorCode::WalletUnavailable,
+                message: "wallet offline".to_owned(),
+                retryable: Some(false),
+            }
+        );
+    }
+
+    #[test]
+    fn request_resolve_forwards_signature_payload_to_daemon() {
+        let client = FakeClient::default();
+        let wallet_instance_id = WalletInstanceId::new("wallet-1").unwrap();
+        let request_id = RequestId::new("request-1").unwrap();
+        let presentation_id = starmask_types::PresentationId::new("presentation-1").unwrap();
+
+        let response = handle_request(
+            &client,
+            NativeBridgeRequest::RequestResolve {
+                message_id: "msg-resolve".to_owned(),
+                wallet_instance_id: wallet_instance_id.clone(),
+                request_id: request_id.clone(),
+                presentation_id: presentation_id.clone(),
+                result_kind: ResultKind::SignedMessage,
+                signed_txn_bcs_hex: None,
+                signature: Some("0xsig".to_owned()),
+            },
+        );
+
+        assert_eq!(
+            response,
+            NativeBridgeResponse::ExtensionAck {
+                reply_to: "msg-resolve".to_owned(),
+            }
+        );
+        assert_eq!(client.resolve_calls.borrow().len(), 1);
+        assert_eq!(
+            client.resolve_calls.borrow()[0],
+            RequestResolveParams {
+                protocol_version: daemon_protocol_version(),
+                wallet_instance_id,
+                request_id,
+                presentation_id,
+                result_kind: ResultKind::SignedMessage,
+                signed_txn_bcs_hex: None,
+                signature: Some("0xsig".to_owned()),
+            }
+        );
+    }
+
+    #[test]
+    fn request_reject_forwards_reason_code_to_daemon() {
+        let client = FakeClient::default();
+        let wallet_instance_id = WalletInstanceId::new("wallet-1").unwrap();
+        let request_id = RequestId::new("request-1").unwrap();
+        let presentation_id = starmask_types::PresentationId::new("presentation-1").unwrap();
+
+        let response = handle_request(
+            &client,
+            NativeBridgeRequest::RequestReject {
+                message_id: "msg-reject".to_owned(),
+                wallet_instance_id: wallet_instance_id.clone(),
+                request_id: request_id.clone(),
+                presentation_id: Some(presentation_id.clone()),
+                reason_code: starmask_types::RejectReasonCode::RequestRejected,
+                reason_message: Some("nope".to_owned()),
+            },
+        );
+
+        assert_eq!(
+            response,
+            NativeBridgeResponse::ExtensionAck {
+                reply_to: "msg-reject".to_owned(),
+            }
+        );
+        assert_eq!(client.reject_calls.borrow().len(), 1);
+        assert_eq!(
+            client.reject_calls.borrow()[0],
+            RequestRejectParams {
+                protocol_version: daemon_protocol_version(),
+                wallet_instance_id,
+                request_id,
+                presentation_id: Some(presentation_id),
+                reason_code: starmask_types::RejectReasonCode::RequestRejected,
+                reason_message: Some("nope".to_owned()),
             }
         );
     }

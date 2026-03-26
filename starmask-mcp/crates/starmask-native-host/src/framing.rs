@@ -51,6 +51,8 @@ where
 mod tests {
     use std::io::Cursor;
 
+    use starmask_types::{NATIVE_BRIDGE_MAX_INBOUND_BYTES, NATIVE_BRIDGE_MAX_OUTBOUND_BYTES};
+
     use super::{read_frame, write_frame};
 
     #[test]
@@ -62,5 +64,41 @@ mod tests {
         let payload = read_frame(&mut cursor).unwrap().unwrap();
         assert_eq!(payload, br#"{"type":"ping"}"#);
         assert_eq!(read_frame(&mut cursor).unwrap(), None);
+    }
+
+    #[test]
+    fn read_frame_rejects_truncated_header() {
+        let mut cursor = Cursor::new(vec![1_u8, 2, 3]);
+        let error = read_frame(&mut cursor).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("native bridge frame header truncated after 3 bytes")
+        );
+    }
+
+    #[test]
+    fn read_frame_rejects_oversized_payload() {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&(NATIVE_BRIDGE_MAX_INBOUND_BYTES + 1).to_ne_bytes());
+        let mut cursor = Cursor::new(bytes);
+        let error = read_frame(&mut cursor).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("native bridge frame exceeds inbound limit")
+        );
+    }
+
+    #[test]
+    fn write_frame_rejects_oversized_payload() {
+        let mut buffer = Vec::new();
+        let payload = vec![0_u8; usize::try_from(NATIVE_BRIDGE_MAX_OUTBOUND_BYTES).unwrap() + 1];
+        let error = write_frame(&mut buffer, &payload).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("native bridge frame exceeds outbound limit")
+        );
     }
 }

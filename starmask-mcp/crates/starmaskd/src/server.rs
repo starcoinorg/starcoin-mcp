@@ -580,6 +580,9 @@ fn unexpected_response(response: CoordinatorResponse) -> JsonRpcErrorResponse {
 }
 
 fn map_runtime_error(error: anyhow::Error) -> JsonRpcErrorResponse {
+    if let Some(shared) = extract_shared_error(&error) {
+        return JsonRpcErrorResponse::new("", shared);
+    }
     JsonRpcErrorResponse::new(
         "",
         SharedError::new(SharedErrorCode::InternalBridgeError, error.to_string()),
@@ -591,6 +594,18 @@ fn error_response(id: Option<&str>, error: impl std::fmt::Display) -> JsonRpcErr
         id.unwrap_or(""),
         SharedError::new(SharedErrorCode::InternalBridgeError, error.to_string()),
     )
+}
+
+fn extract_shared_error(error: &anyhow::Error) -> Option<SharedError> {
+    if let Some(shared) = error.downcast_ref::<SharedError>() {
+        return Some(shared.clone());
+    }
+    if let Some(starmask_core::CoreError::Shared(shared)) =
+        error.downcast_ref::<starmask_core::CoreError>()
+    {
+        return Some(shared.clone());
+    }
+    None
 }
 
 fn request_result_from_params(params: &RequestResolveParams) -> Result<RequestResult> {
@@ -626,5 +641,169 @@ fn bridge_account_to_wallet_account(
         is_default: account.is_default,
         is_locked: lock_state != starmask_types::LockState::Unlocked,
         last_seen_at: TimestampMs::from_millis(0),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use pretty_assertions::assert_eq;
+    use serde_json::{Value, json};
+
+    use super::{ServerPolicy, dispatch_request};
+    use crate::coordinator_runtime::CoordinatorHandle;
+    use starmask_types::{
+        Channel, DAEMON_PROTOCOL_VERSION, ExtensionRegisteredResult, JsonRpcRequest,
+        JsonRpcResponse, JsonRpcSuccess, LockState, SharedErrorCode, WalletInstanceId,
+    };
+
+    fn test_policy(allowed_extension_ids: &[&str]) -> ServerPolicy {
+        ServerPolicy {
+            channel: Channel::Development,
+            allowed_extension_ids: allowed_extension_ids
+                .iter()
+                .map(|extension_id| (*extension_id).to_owned())
+                .collect(),
+            native_host_name: "com.starcoin.test".to_owned(),
+        }
+    }
+
+    fn test_handle() -> CoordinatorHandle {
+        CoordinatorHandle::closed_for_tests()
+    }
+
+    fn wallet_instance_id() -> WalletInstanceId {
+        WalletInstanceId::new("wallet-1").expect("wallet instance id should be valid")
+    }
+
+    fn request(id: &str, method: &str, params: impl Into<Value>) -> JsonRpcRequest<Value> {
+        JsonRpcRequest::new(id, method, params.into())
+    }
+
+    #[tokio::test]
+    async fn rejects_protocol_version_mismatch_before_dispatch() {
+        let error = dispatch_request(
+            request(
+                "req-1",
+                "system.ping",
+                json!({
+                    "protocol_version": DAEMON_PROTOCOL_VERSION + 1,
+                }),
+            ),
+            test_handle(),
+            test_policy(&[]),
+        )
+        .await
+        .expect_err("protocol mismatch should fail before dispatch");
+
+        assert_eq!(error.id, "req-1");
+        assert_eq!(error.error.code, SharedErrorCode::ProtocolVersionMismatch);
+        assert_eq!(error.error.retryable, Some(false));
+        assert_eq!(
+            error.error.message,
+            format!(
+                "Unsupported daemon protocol version {}",
+                DAEMON_PROTOCOL_VERSION + 1
+            )
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_unknown_method_without_dispatch() {
+        let error = dispatch_request(
+            request("req-2", "wallet.notReal", json!({})),
+            test_handle(),
+            test_policy(&[]),
+        )
+        .await
+        .expect_err("unsupported method should fail");
+
+        assert_eq!(error.id, "req-2");
+        assert_eq!(error.error.code, SharedErrorCode::UnsupportedOperation);
+        assert_eq!(error.error.retryable, Some(false));
+        assert_eq!(
+            error.error.message,
+            "Unsupported daemon method: wallet.notReal"
+        );
+    }
+
+    #[tokio::test]
+    async fn rejects_request_resolve_without_required_signature() {
+        let error = dispatch_request(
+            request(
+                "req-3",
+                "request.resolve",
+                json!({
+                    "protocol_version": DAEMON_PROTOCOL_VERSION,
+                    "wallet_instance_id": wallet_instance_id(),
+                    "request_id": "request-1",
+                    "presentation_id": "presentation-1",
+                    "result_kind": "signed_message",
+                }),
+            ),
+            test_handle(),
+            test_policy(&[]),
+        )
+        .await
+        .expect_err("missing signature should fail before dispatch");
+
+        assert_eq!(error.id, "req-3");
+        assert_eq!(error.error.code, SharedErrorCode::InternalBridgeError);
+        assert_eq!(error.error.retryable, Some(true));
+        assert_eq!(
+            error.error.message,
+            "signature is required for signed_message"
+        );
+    }
+
+    #[test]
+    fn runtime_shared_error_preserves_original_code() {
+        let error =
+            super::map_runtime_error(anyhow::Error::from(starmask_core::CoreError::shared(
+                SharedErrorCode::IdempotencyKeyConflict,
+                "duplicate client_request_id",
+            )));
+
+        assert_eq!(error.error.code, SharedErrorCode::IdempotencyKeyConflict);
+        assert_eq!(error.error.message, "duplicate client_request_id");
+        assert_eq!(error.error.retryable, Some(false));
+    }
+
+    #[tokio::test]
+    async fn rejects_extension_registration_outside_allowlist_without_dispatch() {
+        let response = dispatch_request(
+            request(
+                "req-4",
+                "extension.register",
+                json!({
+                    "protocol_version": DAEMON_PROTOCOL_VERSION,
+                    "wallet_instance_id": wallet_instance_id(),
+                    "extension_id": "blocked-extension",
+                    "extension_version": "1.2.3",
+                    "profile_hint": "default",
+                    "lock_state": LockState::Unlocked,
+                    "accounts_summary": [],
+                }),
+            ),
+            test_handle(),
+            test_policy(&["allowed-extension"]),
+        )
+        .await
+        .expect("blocked extension should return accepted=false");
+
+        let JsonRpcResponse::Success(JsonRpcSuccess { id, result, .. }) = response else {
+            panic!("expected success response");
+        };
+        let result: ExtensionRegisteredResult =
+            serde_json::from_value(result).expect("extension register result should decode");
+
+        assert_eq!(id, "req-4");
+        assert_eq!(
+            result,
+            ExtensionRegisteredResult {
+                wallet_instance_id: wallet_instance_id(),
+                daemon_protocol_version: DAEMON_PROTOCOL_VERSION,
+                accepted: false,
+            }
+        );
     }
 }

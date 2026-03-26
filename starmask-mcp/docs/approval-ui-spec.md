@@ -1,5 +1,14 @@
 # Starmask Approval UI Specification
 
+## Status
+
+This document defines the minimum approval UI behavior for the current `v1` Starmask extension
+flow.
+
+It is intentionally extension-specific. If future phases add local unlock prompts or local-account
+approval surfaces, they should be specified in separate documents or clearly versioned follow-on
+sections rather than redefining this `v1` extension UI contract.
+
 ## Purpose
 
 This document defines the minimum approval UI behavior required for secure signing.

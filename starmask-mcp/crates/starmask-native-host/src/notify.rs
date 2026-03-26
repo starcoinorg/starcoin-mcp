@@ -292,4 +292,56 @@ mod tests {
 
         assert!(state.wallets.is_empty());
     }
+
+    #[test]
+    fn presented_request_is_tracked_after_ack() {
+        let mut state = NotificationState::default();
+        let wallet_instance_id = WalletInstanceId::new("wallet-1").unwrap();
+        let request_id = RequestId::new("request-1").unwrap();
+
+        state.observe(
+            &NativeBridgeRequest::RequestPresented {
+                message_id: "msg-1".to_owned(),
+                wallet_instance_id: wallet_instance_id.clone(),
+                request_id: request_id.clone(),
+                delivery_lease_id: starmask_types::DeliveryLeaseId::new("lease-1").unwrap(),
+                presentation_id: PresentationId::new("presentation-1").unwrap(),
+            },
+            &NativeBridgeResponse::ExtensionAck {
+                reply_to: "msg-1".to_owned(),
+            },
+        );
+
+        assert_eq!(
+            state.active_requests.get(request_id.as_str()),
+            Some(&wallet_instance_id)
+        );
+    }
+
+    #[test]
+    fn resolve_ack_removes_tracked_request() {
+        let mut state = NotificationState::default();
+        let wallet_instance_id = WalletInstanceId::new("wallet-1").unwrap();
+        let request_id = RequestId::new("request-1").unwrap();
+
+        state
+            .active_requests
+            .insert(request_id.to_string(), wallet_instance_id.clone());
+        state.observe(
+            &NativeBridgeRequest::RequestResolve {
+                message_id: "msg-2".to_owned(),
+                wallet_instance_id,
+                request_id: request_id.clone(),
+                presentation_id: PresentationId::new("presentation-1").unwrap(),
+                result_kind: starmask_types::ResultKind::SignedMessage,
+                signed_txn_bcs_hex: None,
+                signature: Some("0xsig".to_owned()),
+            },
+            &NativeBridgeResponse::ExtensionAck {
+                reply_to: "msg-2".to_owned(),
+            },
+        );
+
+        assert!(!state.active_requests.contains_key(request_id.as_str()));
+    }
 }
