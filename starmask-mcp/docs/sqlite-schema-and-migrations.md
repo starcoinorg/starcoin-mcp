@@ -40,14 +40,14 @@ At startup, the daemon should apply:
 
 The current implementation uses numbered SQL migrations in source control.
 
-Recommended layout:
+Current layout:
 
 ```text
 starmaskd/migrations/
   0001_initial.sql
-  0002_indexes.sql
-  0003_result_retention.sql
 ```
+
+Future migrations should continue the same append-only numbering scheme.
 
 Rules:
 

@@ -1,5 +1,18 @@
 # Starmask Native Messaging Contract
 
+## Status
+
+This document is the authoritative `v1` contract for the extension-backed Native Messaging bridge.
+
+It is intentionally specific to:
+
+- Starmask extension
+- `starmask-native-host`
+- `starmaskd`
+
+It is not the future generic backend-agent contract. That follow-on design is tracked in
+`docs/unified-wallet-coordinator-evolution.md`.
+
 ## Purpose
 
 This document defines the message contract between:

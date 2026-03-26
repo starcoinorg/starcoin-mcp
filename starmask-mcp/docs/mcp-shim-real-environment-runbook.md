@@ -1,5 +1,16 @@
 # Starmask MCP Real-Environment Runbook
 
+## Status
+
+This runbook covers the current `v1` extension-backed real-environment checks.
+
+It assumes:
+
+- the Starmask browser extension is the signer
+- Native Messaging is the live backend transport
+
+It does not yet cover future `local_account_dir` or generic backend-agent scenarios.
+
 ## Purpose
 
 This runbook describes the `starmask-mcp` checks that should be executed in a real local environment rather than only through fake-daemon tests.

@@ -1,5 +1,14 @@
 # Starmask MCP Test Harness Design
 
+## Status
+
+This document describes the recommended harness structure for the current `v1` extension-backed
+stack.
+
+If phase 2 adds generic backend-agent testing or `local_account_dir` flows, those additions should
+extend this document explicitly after the corresponding protocol and acceptance documents are
+approved.
+
 ## Purpose
 
 This document defines how the first Rust implementation should be tested end to end without requiring every test to launch a real browser extension.
