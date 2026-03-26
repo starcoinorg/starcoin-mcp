@@ -5,8 +5,10 @@
 This document is the authoritative `v1` persistence and recovery design for the current
 extension-backed implementation.
 
-Future generic wallet-backend persistence changes are tracked in
-`docs/unified-wallet-coordinator-evolution.md`.
+Future generic wallet-backend persistence changes are tracked in:
+
+- `docs/unified-wallet-coordinator-evolution.md`
+- `docs/wallet-backend-persistence-and-schema.md`
 
 ## 1. Purpose
 

@@ -481,21 +481,28 @@ Minimum functional requirements:
 4. sign canonical messages through `sign_message`
 5. keep unlock and password entry entirely inside the backend agent
 
-## 16. Open Decisions Before Implementation
+## 16. Phase-2 Decisions Closed by Companion Documents
 
-Before phase 2 implementation starts, the project still needs to close:
+The previously open phase-2 decisions are now closed as follows:
 
-1. the concrete local-socket framing format
-2. the first generic backend contract version number
-3. whether `request.hasAvailable` is mandatory for all transports or optional
-4. the exact shared reason-code set for backend-safe refusal paths
-5. the persistent schema for generic `backend_metadata`
+1. the concrete local-socket binding is defined in `docs/wallet-backend-local-socket-binding.md`
+2. the first generic backend contract ships under daemon protocol `v2`
+3. `request.hasAvailable` remains optional and is not required for the local-socket binding
+4. the shared backend-safe refusal codes are defined in
+   `docs/wallet-backend-local-socket-binding.md`
+5. generic backend metadata persistence is defined in
+   `docs/wallet-backend-persistence-and-schema.md`
 
 ## 17. Relationship to Other Documents
 
 This document should be read together with:
 
 - `docs/unified-wallet-coordinator-evolution.md`
+- `docs/wallet-backend-local-socket-binding.md`
+- `docs/wallet-backend-security-model.md`
+- `docs/wallet-backend-persistence-and-schema.md`
+- `docs/wallet-backend-configuration.md`
+- `docs/wallet-backend-testing-and-acceptance.md`
 - `docs/security-model.md` for current `v1` invariants
 - `docs/native-messaging-contract.md` for the existing concrete transport binding
 

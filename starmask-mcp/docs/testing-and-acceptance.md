@@ -151,4 +151,7 @@ Before a multi-backend release can freeze, the project must add new acceptance c
 4. local-account signing flows
 5. protocol-version migration between current `v1` and any future backend-generic protocol
 
-Those additions are gated by `docs/unified-wallet-coordinator-evolution.md`.
+Those additions are gated by:
+
+- `docs/unified-wallet-coordinator-evolution.md`
+- `docs/wallet-backend-testing-and-acceptance.md`

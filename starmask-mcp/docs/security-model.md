@@ -5,8 +5,10 @@
 This document is the authoritative `v1` security model for the current extension-backed
 implementation.
 
-Future multi-backend security evolution is tracked separately in
-`docs/unified-wallet-coordinator-evolution.md`.
+Future multi-backend security evolution is tracked separately in:
+
+- `docs/unified-wallet-coordinator-evolution.md`
+- `docs/wallet-backend-security-model.md`
 
 ## 1. Purpose
 

@@ -5,8 +5,10 @@
 This document is the authoritative configuration contract for the current `v1` implementation.
 
 `v1` configuration is extension-backed and matches the current Rust code in `crates/starmaskd`.
-Planned multi-backend configuration is tracked separately in
-`docs/unified-wallet-coordinator-evolution.md`.
+Planned multi-backend configuration is tracked separately in:
+
+- `docs/unified-wallet-coordinator-evolution.md`
+- `docs/wallet-backend-configuration.md`
 
 ## 1. Purpose
 

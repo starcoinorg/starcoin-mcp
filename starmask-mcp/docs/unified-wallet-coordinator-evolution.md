@@ -229,15 +229,21 @@ then, the current `v1` config remains authoritative.
 
 Before the project can freeze a multi-backend implementation, it still needs:
 
-1. an approved backend-generic agent contract document
-2. a backend-generic security model update
-3. acceptance tests for local-account permission checks
-4. acceptance tests for backend-local unlock and unlock expiry
-5. clear migration rules for daemon protocol versioning
+1. the generic backend-agent contract
+2. the concrete local-socket transport binding
+3. the multi-backend security model
+4. the multi-backend persistence and schema plan
+5. the multi-backend configuration contract
+6. the phase-2 acceptance matrix
 
-The backend-generic agent contract is now captured in:
+Those prerequisites are now captured in:
 
 - `docs/wallet-backend-agent-contract.md`
+- `docs/wallet-backend-local-socket-binding.md`
+- `docs/wallet-backend-security-model.md`
+- `docs/wallet-backend-persistence-and-schema.md`
+- `docs/wallet-backend-configuration.md`
+- `docs/wallet-backend-testing-and-acceptance.md`
 
 ## 13. Practical Conclusion
 
@@ -246,5 +252,7 @@ The multi-backend design is worth pursuing, but the disciplined path is:
 1. keep current `v1` docs truthful and extension-backed
 2. specify the generic backend model separately
 3. promote pieces from this document into the normative docs only when code and tests actually land
+4. treat the phase-2 companion documents above as the implementation target, not as speculative
+   notes
 
 That separation prevents future-state design from being mistaken for current contract.
