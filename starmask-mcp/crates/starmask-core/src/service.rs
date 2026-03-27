@@ -1067,20 +1067,11 @@ where
     ) -> CoreResult<WalletInstanceId> {
         if let Some(wallet_instance_id) = wallet_instance_id {
             let account = self.store.get_wallet_account(wallet_instance_id, address)?;
-            match account {
-                None => {
-                    return Err(CoreError::shared(
-                        SharedErrorCode::InvalidAccount,
-                        "Account is not exposed by the selected wallet instance",
-                    ));
-                }
-                Some(account) if account.is_read_only => {
-                    return Err(CoreError::shared(
-                        SharedErrorCode::UnsupportedOperation,
-                        "Selected account is read-only and cannot sign",
-                    ));
-                }
-                Some(_) => {}
+            if account.is_none() {
+                return Err(CoreError::shared(
+                    SharedErrorCode::InvalidAccount,
+                    "Account is not exposed by the selected wallet instance",
+                ));
             }
             return Ok(wallet_instance_id.clone());
         }
@@ -1088,7 +1079,7 @@ where
         let accounts = self.store.list_wallet_accounts(None)?;
         let mut matches: Vec<WalletInstanceId> = accounts
             .into_iter()
-            .filter(|account| account.address == address && !account.is_read_only)
+            .filter(|account| account.address == address)
             .map(|account| account.wallet_instance_id)
             .collect();
         matches.sort();
@@ -1775,6 +1766,187 @@ mod tests {
                 },
             ))
             .unwrap();
+    }
+
+    #[test]
+    fn public_key_lookup_allows_read_only_accounts() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-read-only").unwrap();
+
+        coordinator
+            .dispatch(CoordinatorCommand::RegisterExtension(
+                RegisterExtensionCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    extension_id: "ext".to_owned(),
+                    extension_version: "1.0.0".to_owned(),
+                    protocol_version: 1,
+                    profile_hint: None,
+                    lock_state: LockState::Unlocked,
+                    accounts: Vec::new(),
+                },
+            ))
+            .unwrap();
+        coordinator
+            .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
+                UpdateExtensionAccountsCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    lock_state: LockState::Unlocked,
+                    accounts: vec![WalletAccountRecord {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        address: "0x1".to_owned(),
+                        label: None,
+                        public_key: Some("0xpub".to_owned()),
+                        is_default: true,
+                        is_read_only: true,
+                        is_locked: false,
+                        last_seen_at: TimestampMs::from_millis(0),
+                    }],
+                },
+            ))
+            .unwrap();
+
+        let response = coordinator
+            .dispatch(CoordinatorCommand::WalletGetPublicKey {
+                address: "0x1".to_owned(),
+                wallet_instance_id: Some(wallet_instance_id.clone()),
+            })
+            .unwrap();
+
+        let CoordinatorResponse::WalletPublicKey(result) = response else {
+            panic!("unexpected response");
+        };
+        assert_eq!(result.wallet_instance_id, wallet_instance_id);
+        assert_eq!(result.public_key, "0xpub");
+    }
+
+    #[test]
+    fn public_key_lookup_keeps_read_only_accounts_in_ambiguity_resolution() {
+        let mut coordinator = build_coordinator();
+        let writable_wallet_instance_id = WalletInstanceId::new("wallet-writable").unwrap();
+        let read_only_wallet_instance_id = WalletInstanceId::new("wallet-read-only").unwrap();
+
+        for wallet_instance_id in [&writable_wallet_instance_id, &read_only_wallet_instance_id] {
+            coordinator
+                .dispatch(CoordinatorCommand::RegisterExtension(
+                    RegisterExtensionCommand {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        extension_id: "ext".to_owned(),
+                        extension_version: "1.0.0".to_owned(),
+                        protocol_version: 1,
+                        profile_hint: None,
+                        lock_state: LockState::Unlocked,
+                        accounts: Vec::new(),
+                    },
+                ))
+                .unwrap();
+        }
+
+        coordinator
+            .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
+                UpdateExtensionAccountsCommand {
+                    wallet_instance_id: writable_wallet_instance_id.clone(),
+                    lock_state: LockState::Unlocked,
+                    accounts: vec![WalletAccountRecord {
+                        wallet_instance_id: writable_wallet_instance_id.clone(),
+                        address: "0x1".to_owned(),
+                        label: None,
+                        public_key: Some("0xpub-w".to_owned()),
+                        is_default: true,
+                        is_read_only: false,
+                        is_locked: false,
+                        last_seen_at: TimestampMs::from_millis(0),
+                    }],
+                },
+            ))
+            .unwrap();
+        coordinator
+            .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
+                UpdateExtensionAccountsCommand {
+                    wallet_instance_id: read_only_wallet_instance_id.clone(),
+                    lock_state: LockState::Unlocked,
+                    accounts: vec![WalletAccountRecord {
+                        wallet_instance_id: read_only_wallet_instance_id.clone(),
+                        address: "0x1".to_owned(),
+                        label: None,
+                        public_key: Some("0xpub-r".to_owned()),
+                        is_default: true,
+                        is_read_only: true,
+                        is_locked: false,
+                        last_seen_at: TimestampMs::from_millis(0),
+                    }],
+                },
+            ))
+            .unwrap();
+
+        let error = coordinator
+            .dispatch(CoordinatorCommand::WalletGetPublicKey {
+                address: "0x1".to_owned(),
+                wallet_instance_id: None,
+            })
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "wallet_selection_required: Multiple wallet instances expose the requested account"
+        );
+    }
+
+    #[test]
+    fn signing_still_rejects_read_only_accounts_after_shared_resolution() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-read-only-sign").unwrap();
+
+        coordinator
+            .dispatch(CoordinatorCommand::RegisterExtension(
+                RegisterExtensionCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    extension_id: "ext".to_owned(),
+                    extension_version: "1.0.0".to_owned(),
+                    protocol_version: 1,
+                    profile_hint: None,
+                    lock_state: LockState::Unlocked,
+                    accounts: Vec::new(),
+                },
+            ))
+            .unwrap();
+        coordinator
+            .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
+                UpdateExtensionAccountsCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    lock_state: LockState::Unlocked,
+                    accounts: vec![WalletAccountRecord {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        address: "0x1".to_owned(),
+                        label: None,
+                        public_key: Some("0xpub".to_owned()),
+                        is_default: true,
+                        is_read_only: true,
+                        is_locked: false,
+                        last_seen_at: TimestampMs::from_millis(0),
+                    }],
+                },
+            ))
+            .unwrap();
+
+        let error = coordinator
+            .dispatch(CoordinatorCommand::CreateSignMessage(
+                CreateSignMessageCommand {
+                    client_request_id: ClientRequestId::new("client-read-only").unwrap(),
+                    account_address: "0x1".to_owned(),
+                    wallet_instance_id: Some(wallet_instance_id),
+                    message: "hello".to_owned(),
+                    format: MessageFormat::Utf8,
+                    display_hint: None,
+                    client_context: None,
+                    ttl_seconds: None,
+                },
+            ))
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "unsupported_operation: Selected account is read-only and cannot sign"
+        );
     }
 
     #[test]

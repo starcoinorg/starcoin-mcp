@@ -190,6 +190,7 @@ impl LocalAccountAgent {
     fn handle_request(&mut self, request: PulledRequest, snapshot: &Snapshot) -> Result<()> {
         let account_address = AccountAddress::from_str(&request.account_address)
             .with_context(|| format!("invalid account address {}", request.account_address))?;
+        let active_presentation_id = request.presentation_id.as_ref();
         let Some(account_info) = self
             .manager
             .account_info(account_address)
@@ -197,7 +198,7 @@ impl LocalAccountAgent {
         else {
             self.reject_request(
                 &request,
-                None,
+                active_presentation_id,
                 RejectReasonCode::BackendUnavailable,
                 Some("Requested account is no longer available".to_owned()),
             )?;
@@ -207,7 +208,7 @@ impl LocalAccountAgent {
         if account_info.is_readonly {
             self.reject_request(
                 &request,
-                None,
+                active_presentation_id,
                 RejectReasonCode::UnsupportedOperation,
                 Some("Read-only accounts cannot sign".to_owned()),
             )?;
@@ -591,26 +592,52 @@ fn decode_signing_message(
     }
 }
 
+fn sanitize_for_tty(input: &str) -> String {
+    let mut sanitized = String::with_capacity(input.len());
+    for character in input.chars() {
+        match character {
+            '\n' => sanitized.push_str("\\n"),
+            '\r' => sanitized.push_str("\\r"),
+            '\t' => sanitized.push_str("\\t"),
+            character if character.is_control() => {
+                sanitized.push_str(&format!("\\u{{{:x}}}", u32::from(character)));
+            }
+            character => sanitized.push(character),
+        }
+    }
+    sanitized
+}
+
+fn print_tty_field(label: &str, value: &str) {
+    eprintln!("  {label}: {}", sanitize_for_tty(value));
+}
+
+fn print_untrusted_tty_field(label: &str, value: &str) {
+    eprintln!("  {label} (untrusted): {}", sanitize_for_tty(value));
+}
+
 fn print_request_summary(request: &PulledRequest, account_info: &AccountInfo) {
     eprintln!();
     eprintln!("Starmask Local Signing Request");
     eprintln!("  Request ID: {}", request.request_id);
-    eprintln!("  Client Request ID: {}", request.client_request_id);
-    eprintln!("  Account: {}", request.account_address);
+    let client_request_id = request.client_request_id.to_string();
+    print_untrusted_tty_field("Client Request ID", &client_request_id);
+    print_tty_field("Account", &request.account_address);
     eprintln!("  Account Locked: {}", account_info.is_locked);
     eprintln!("  Kind: {}", request_kind_label(request.kind));
-    eprintln!("  Payload Hash: {}", request.payload_hash);
+    let payload_hash = request.payload_hash.to_string();
+    print_tty_field("Payload Hash", &payload_hash);
     if let Some(display_hint) = &request.display_hint {
-        eprintln!("  Display Hint: {display_hint}");
+        print_untrusted_tty_field("Display Hint", display_hint);
     }
     if let Some(client_context) = &request.client_context {
-        eprintln!("  Client Context: {client_context}");
+        print_untrusted_tty_field("Client Context", client_context);
     }
 
     match request.kind {
         RequestKind::SignTransaction => {
             if let Some(raw_txn_bcs_hex) = &request.raw_txn_bcs_hex {
-                eprintln!("  Raw Transaction BCS: {raw_txn_bcs_hex}");
+                print_untrusted_tty_field("Raw Transaction BCS", raw_txn_bcs_hex);
             }
         }
         RequestKind::SignMessage => {
@@ -618,7 +645,7 @@ fn print_request_summary(request: &PulledRequest, account_info: &AccountInfo) {
                 eprintln!("  Message Format: {}", message_format_label(message_format));
             }
             if let Some(message) = &request.message {
-                eprintln!("  Canonical Message: {message}");
+                print_untrusted_tty_field("Canonical Message", message);
             }
         }
     }
@@ -662,7 +689,7 @@ mod tests {
 
     use super::{
         LocalAccountAgent, account_info_to_backend_account, decode_signing_message,
-        ensure_local_unlock_capability,
+        ensure_local_unlock_capability, sanitize_for_tty,
     };
     use starmask_types::{DurationSeconds, LockState, MessageFormat, WalletCapability};
     use starmaskd::config::{CommonBackendConfig, LocalAccountDirBackendConfig, LocalPromptMode};
@@ -764,5 +791,13 @@ mod tests {
             ],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn sanitize_for_tty_escapes_control_sequences_but_preserves_unicode() {
+        assert_eq!(
+            sanitize_for_tty("hi\nthere\x1b[31m\t你好"),
+            "hi\\nthere\\u{1b}[31m\\t你好"
+        );
     }
 }
