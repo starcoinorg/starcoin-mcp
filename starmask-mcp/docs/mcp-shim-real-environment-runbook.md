@@ -9,7 +9,11 @@ It assumes:
 - the Starmask browser extension is the signer
 - Native Messaging is the live backend transport
 
-It does not yet cover future `local_account_dir` or generic backend-agent scenarios.
+It does not cover the current phase-2 `local_account_dir` or generic backend-agent path.
+
+For the current repository-level status of those paths, see:
+
+- `../../docs/testing-coverage-assessment.md`
 
 ## Purpose
 
@@ -49,7 +53,8 @@ Assumptions:
 Build the local binaries first:
 
 ```bash
-cd /Users/simon/starcoin-projects/starcoin-mcp-test-plan-main/starmask-mcp
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT/starmask-mcp"
 cargo build -p starmaskd -p starmask-mcp -p starmask-native-host -p starmaskctl
 ```
 
@@ -72,7 +77,8 @@ export STARMASKD_ALLOWED_EXTENSION_IDS=<your_extension_id>
 Start the daemon:
 
 ```bash
-cd /Users/simon/starcoin-projects/starcoin-mcp-test-plan-main/starmask-mcp
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT/starmask-mcp"
 cargo run -p starmaskd -- serve \
   --socket-path "$STARMASK_TEST_SOCKET" \
   --database-path "$STARMASK_TEST_DB"
@@ -81,7 +87,8 @@ cargo run -p starmaskd -- serve \
 Run basic diagnostics in a second shell:
 
 ```bash
-cd /Users/simon/starcoin-projects/starcoin-mcp-test-plan-main/starmask-mcp
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT/starmask-mcp"
 cargo run -p starmaskctl -- doctor \
   --socket-path "$STARMASK_TEST_SOCKET" \
   --database-path "$STARMASK_TEST_DB"
@@ -96,7 +103,8 @@ Expected result:
 Start the MCP adapter in a third shell:
 
 ```bash
-cd /Users/simon/starcoin-projects/starcoin-mcp-test-plan-main/starmask-mcp
+REPO_ROOT=$(git rev-parse --show-toplevel)
+cd "$REPO_ROOT/starmask-mcp"
 cargo run -p starmask-mcp -- --daemon-socket-path "$STARMASK_TEST_SOCKET"
 ```
 

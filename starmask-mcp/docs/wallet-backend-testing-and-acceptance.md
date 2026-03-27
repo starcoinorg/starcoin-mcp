@@ -8,6 +8,14 @@ The current extension-backed acceptance rules also remain defined by:
 
 - `docs/testing-and-acceptance.md`
 
+Recommended layer ownership for this contract is defined in:
+
+- `docs/test-harness-design.md`
+
+Current repository evidence status is tracked in:
+
+- `../../docs/testing-coverage-assessment.md`
+
 ## 1. Purpose
 
 This document defines the minimum evidence required to freeze implementation of:

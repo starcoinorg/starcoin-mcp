@@ -2,32 +2,39 @@
 
 ## Status
 
-This document describes the recommended harness structure for the current `v1` extension-backed
-stack.
+This document describes the recommended harness structure for the current repository state.
 
-If phase 2 adds generic backend-agent testing or `local_account_dir` flows, those additions should
-extend this document explicitly after the corresponding protocol and acceptance documents are
-approved.
+It covers both:
+
+- the current `v1` extension-backed path
+- the current phase-2 generic-backend and `local_account_dir` path
+
+Current evidence status is tracked separately in:
+
+- `../../docs/testing-coverage-assessment.md`
 
 ## Purpose
 
-This document defines how the first Rust implementation should be tested end to end without requiring every test to launch a real browser extension.
+This document turns the acceptance contracts into concrete test-layer ownership.
 
-It turns the acceptance matrix into concrete test harness shapes.
+Use it together with:
+
+- `docs/testing-and-acceptance.md`
+- `docs/wallet-backend-testing-and-acceptance.md`
+- `../../docs/testing-coverage-assessment.md`
 
 ## Design Goals
 
-The harness should make it easy to test:
+The harness should make it easy to:
 
-1. lifecycle correctness
-2. restart recovery
-3. daemon JSON-RPC behavior
-4. Native Messaging framing
-5. MCP shim result mapping
+1. give each acceptance item one obvious test home
+2. keep `v1` extension-path coverage distinct from phase-2 backend-path coverage
+3. keep migration and compatibility checks explicit
+4. keep browser- and UI-dependent checks out of routine local automation
 
 ## Test Layers
 
-## Layer 1: Pure Core Tests
+### Layer 1: Core Coordinator Tests
 
 Target:
 
@@ -46,28 +53,32 @@ Cover:
 - idempotency
 - expiry rules
 - result retention rules
+- lock-state and capability routing
+- same-instance recovery and non-redelivery rules
 
-## Layer 2: SQLite Repository Tests
+### Layer 2: Repository And Migration Tests
 
 Target:
 
-- SQLite repository implementation
+- SQLite repository implementation in `starmaskd`
 
 Use:
 
 - temporary directories
-- real SQLite file
-- migration bootstrap
+- real SQLite files
+- migration bootstrap from `v1` and `v2` entry states
 
 Cover:
 
 - schema creation
 - unique constraints
-- claim transaction correctness
 - startup recovery queries
 - result eviction
+- positive `v1 -> v2` migration behavior
+- rollback safety when migration backfill fails
+- post-migration compatibility reads
 
-## Layer 3: Daemon RPC Integration Tests
+### Layer 3: Daemon Transport Tests
 
 Target:
 
@@ -77,16 +88,20 @@ Use:
 
 - real daemon process or in-process daemon runtime
 - local socket or pipe
-- test client
+- protocol `v1` and protocol `v2` test clients
 
 Cover:
 
 - JSON-RPC request parsing
-- error mapping
+- shared error mapping
 - command dispatch
 - state persistence across requests
+- `extension.register` and `extension.updateAccounts`
+- `backend.register`, `backend.heartbeat`, and `backend.updateAccounts`
+- `request.pullNext`, `request.presented`, `request.resolve`, and `request.reject`
+- disabled-backend and unknown-instance rejection
 
-## Layer 4: Native Messaging Bridge Tests
+### Layer 4: Extension Bridge Tests
 
 Target:
 
@@ -101,12 +116,12 @@ Use:
 Cover:
 
 - frame parsing
-- maximum length rejection
+- maximum-length rejection
 - stderr/stdout separation
 - reconnect and resume behavior
 - message correlation through `message_id` and `reply_to`
 
-## Layer 5: MCP Shim Tests
+### Layer 5: MCP Shim Tests
 
 Target:
 
@@ -124,78 +139,86 @@ Cover:
 - tool output structure
 - daemon error to MCP result mapping
 
-## Layer 6: End-to-End Local Integration Tests
+### Layer 6: Local Backend Agent Tests
 
 Target:
 
-- full local stack except the real browser extension UI
+- `starmask-local-account-agent`
 
 Use:
 
-- `starmaskd`
-- `starmask-native-host`
-- fake extension runtime
-- `starmask-mcp`
+- temporary account directories
+- prompt stubs
+- fake daemon client when full daemon startup is unnecessary
+
+Cover:
+
+- account discovery and snapshot publication
+- read-only account handling
+- `sign_message`
+- `sign_transaction`
+- unlock success, failure, and cancellation paths
+- heartbeat state tracking
+- no-secret-over-transport rules
+
+### Layer 7: End-To-End Local Stack Tests
+
+Target:
+
+- full local stack without requiring the real browser UI
+
+Split:
+
+- extension-backed path:
+  - `starmaskd`
+  - `starmask-native-host`
+  - fake extension runtime
+  - `starmask-mcp`
+- local-backend path:
+  - `starmaskd`
+  - `starmask-local-account-agent`
+  - temporary account directory
+  - `starmask-mcp` when host-visible behavior matters
 
 Cover:
 
 - request create -> claim -> present -> resolve
 - request create -> claim -> reject
-- cancel while UI open
+- cancel while approval is active
 - restart before presentation
-- restart after presentation and same-instance resume
+- restart after presentation with same-instance resume
+- migration and compatibility smoke paths
 
-## Fake Components
+### Layer 8: Real-Environment Validation
 
-## Fake Clock
+Target:
 
-Needed for:
+- browser-, extension-, and Inspector-dependent checks
 
-- TTL expiry
-- lease expiry
-- result retention eviction
+Cover:
 
-## Fake Id Generator
+- MCP Inspector interoperability
+- real Chrome or Chromium Native Messaging registration
+- approval UI rendering and state transitions
+- live browser reconnect and cancellation behavior
 
-Needed for:
+Current runbook:
 
-- deterministic `request_id`
-- deterministic lease ids
-- deterministic `presentation_id`
+- `docs/mcp-shim-real-environment-runbook.md`
 
-## Fake Extension Runtime
+When phase-2 browser- or prompt-surface checks need dedicated real-environment validation, add a
+separate phase-2 runbook instead of overloading the `v1` extension-backed runbook.
 
-Should simulate:
+## Shared Test Utilities
 
-- register
-- heartbeat
-- account updates
-- `request.pullNext`
-- `request.presented`
-- `request.resolve`
-- `request.reject`
+Reusable utilities should stay explicit and small:
 
-It should not do browser UI work. It only exercises the contract.
-
-## Fake Daemon Backend
-
-Used in MCP shim and native host tests when full daemon startup is unnecessary.
-
-Should simulate:
-
-- successful responses
-- shared error responses
-- transport drops
-- delayed responses
-
-## Restart Simulation
-
-The harness must support:
-
-1. daemon stop and restart using the same SQLite file
-2. native host reconnect
-3. fake extension reconnect with the same `wallet_instance_id`
-4. MCP host restart by preserving and reusing `request_id`
+- fake clock
+- fake id generator
+- fake extension runtime
+- fake daemon backend
+- local prompt stub
+- temporary account-directory builder with permission and symlink helpers
 
 ## Fixture Strategy
 
@@ -211,56 +234,46 @@ Preferred location:
 starmask-mcp/tests/fixtures/
 ```
 
-The canonical Native Messaging examples from:
+The canonical payload examples from:
 
 - `docs/native-messaging-examples.md`
 
-should seed those fixtures.
+should seed those fixtures when fixture coverage is a better fit than handwritten assertions.
 
 ## Acceptance Traceability
 
 Each acceptance item from:
 
 - `docs/testing-and-acceptance.md`
+- `docs/wallet-backend-testing-and-acceptance.md`
 
-should map to at least one test id or harness scenario.
+should map to at least one automated test layer or one explicit real-environment runbook step.
 
-Recommended approach:
+The repository-level assessment in:
 
-- maintain a small matrix file in tests or docs linking:
-  - acceptance item
-  - test module
-  - scenario id
+- `../../docs/testing-coverage-assessment.md`
 
-## Inspector and Manual Validation
+records current evidence status. This document defines where missing coverage should live.
 
-Some checks should remain manual in early phases:
+## Recommended Sequence
 
-- MCP Inspector tool behavior
-- approval UI visual behavior
-- real Chrome Native Messaging registration
+Implement or expand tests in this order:
 
-Those should still have scripted preparation steps so they are reproducible.
+1. keep `v1` extension-backed regression coverage green
+2. add positive `v1 -> v2` migration and compatibility tests
+3. add local-account sign-message and sign-transaction integration tests
+4. add `backend.heartbeat`, `backend.updateAccounts`, and backend-path recovery tests
+5. add dedicated phase-2 end-to-end local stack scenarios
+6. add a separate phase-2 real-environment runbook only when local automation no longer answers the release question
 
-## Recommended First Test Sequence
+## Harness Readiness Checklist
 
-Implement tests in this order:
+This harness plan is ready to implement when:
 
-1. pure lifecycle unit tests
-2. SQLite schema and repository tests
-3. daemon JSON-RPC tests
-4. Native Messaging framing tests
-5. MCP shim integration tests
-6. restart and resume end-to-end tests
-
-## Ready-to-Implement Checklist
-
-This document is implementation-ready when:
-
-1. fake clock interface exists
-2. fake id generator exists
-3. fake extension runtime contract exists
-4. temp-directory SQLite test bootstrap exists
-5. one end-to-end local integration harness exists
+1. a fake clock interface exists
+2. a fake id generator exists
+3. a fake extension runtime contract exists
+4. temp-directory SQLite bootstrap exists
+5. at least one end-to-end local integration harness exists
 
 At that point, implementation can move directly toward integration and acceptance instead of inventing test strategy ad hoc.

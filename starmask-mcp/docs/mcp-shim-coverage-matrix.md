@@ -7,6 +7,11 @@ This note tracks coverage for the current `v1` `starmask-mcp` adapter layer only
 It is intentionally narrower than the full project acceptance matrix in
 `docs/testing-and-acceptance.md`.
 
+For the current repository-level assessment that also considers the implemented phase-2 code paths,
+see:
+
+- `../../docs/testing-coverage-assessment.md`
+
 ## Scope
 
 Use this note to answer:
