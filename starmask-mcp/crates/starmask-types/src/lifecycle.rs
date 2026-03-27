@@ -66,6 +66,39 @@ pub enum LockState {
     Unknown,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[serde(rename_all = "snake_case")]
+pub enum BackendKind {
+    StarmaskExtension,
+    LocalAccountDir,
+    PrivateKeyDev,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[serde(rename_all = "snake_case")]
+pub enum TransportKind {
+    NativeMessaging,
+    LocalSocket,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[serde(rename_all = "snake_case")]
+pub enum ApprovalSurface {
+    BrowserUi,
+    TtyPrompt,
+    DesktopPrompt,
+    None,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq, Hash, Ord, PartialOrd)]
+#[serde(rename_all = "snake_case")]
+pub enum WalletCapability {
+    Unlock,
+    GetPublicKey,
+    SignMessage,
+    SignTransaction,
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq, Hash)]
 #[serde(rename_all = "snake_case")]
 pub enum Channel {
@@ -82,6 +115,9 @@ pub enum RejectReasonCode {
     RequestExpired,
     UnsupportedOperation,
     InvalidTransactionPayload,
+    InvalidMessagePayload,
+    BackendUnavailable,
+    BackendPolicyBlocked,
     InternalError,
 }
 

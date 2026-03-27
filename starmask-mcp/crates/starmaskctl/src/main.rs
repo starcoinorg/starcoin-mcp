@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::{
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     io::{Read, Write},
     os::unix::net::UnixStream,
@@ -20,7 +21,7 @@ use starmask_types::{
     SystemGetInfoParams, SystemGetInfoResult, SystemPingParams, SystemPingResult,
     WalletListAccountsParams, WalletListAccountsResult, WalletStatusParams, WalletStatusResult,
 };
-use starmaskd::config::{RuntimeConfig, ServeArgs};
+use starmaskd::config::{RuntimeConfig, ServeArgs, WalletBackendConfig};
 
 #[derive(Debug, Parser)]
 #[command(name = "starmaskctl")]
@@ -57,6 +58,12 @@ struct DatabaseDiagnostics {
 struct ManifestDiagnostics {
     path: PathBuf,
     allowed_origins: Vec<String>,
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct ManifestTarget {
+    native_host_name: String,
+    allowed_extension_ids: BTreeSet<String>,
 }
 
 #[derive(Default)]
@@ -97,13 +104,24 @@ fn run_doctor(args: DoctorArgs) -> Result<()> {
         log_level: None,
     }) {
         Ok(config) => {
+            let extension_backends = config
+                .wallet_backends
+                .iter()
+                .filter(|backend| backend.as_extension().is_some())
+                .count();
+            let local_backends = config
+                .wallet_backends
+                .iter()
+                .filter(|backend| backend.as_local_account_dir().is_some())
+                .count();
             report.ok(
                 "config",
                 format!(
-                    "channel={:?} native_host_name={} allowlist_entries={} socket={} db={}",
+                    "channel={:?} wallet_backends={} extension_backends={} local_backends={} socket={} db={}",
                     config.channel,
-                    config.native_host_name,
-                    config.allowed_extension_ids.len(),
+                    config.wallet_backends.len(),
+                    extension_backends,
+                    local_backends,
                     config.socket_path.display(),
                     config.database_path.display(),
                 ),
@@ -130,16 +148,27 @@ fn run_doctor(args: DoctorArgs) -> Result<()> {
         Err(error) => report.fail("database", error.to_string()),
     }
 
-    match inspect_manifest(&config.native_host_name, &config.allowed_extension_ids) {
-        Ok(manifest) => report.ok(
+    let manifest_targets = collect_manifest_targets(&config.wallet_backends);
+    if manifest_targets.is_empty() {
+        report.ok(
             "native-host-manifest",
-            format!(
-                "{} origins={}",
-                manifest.path.display(),
-                manifest.allowed_origins.join(","),
-            ),
-        ),
-        Err(error) => report.fail("native-host-manifest", error.to_string()),
+            "skipped: no starmask_extension backends configured",
+        );
+    } else {
+        for target in manifest_targets {
+            let label = format!("native-host-manifest {}", target.native_host_name);
+            match inspect_manifest(&target.native_host_name, &target.allowed_extension_ids) {
+                Ok(manifest) => report.ok(
+                    &label,
+                    format!(
+                        "{} origins={}",
+                        manifest.path.display(),
+                        manifest.allowed_origins.join(","),
+                    ),
+                ),
+                Err(error) => report.fail(&label, error.to_string()),
+            }
+        }
     }
 
     let daemon_client = LocalDaemonClient::new(config.socket_path.clone());
@@ -265,9 +294,31 @@ where
     u64::try_from(count).context("count query returned a negative value")
 }
 
+fn collect_manifest_targets(wallet_backends: &[WalletBackendConfig]) -> Vec<ManifestTarget> {
+    let mut grouped = BTreeMap::<String, BTreeSet<String>>::new();
+
+    for backend in wallet_backends {
+        let Some(extension) = backend.as_extension() else {
+            continue;
+        };
+        grouped
+            .entry(extension.native_host_name.clone())
+            .or_default()
+            .extend(extension.allowed_extension_ids.iter().cloned());
+    }
+
+    grouped
+        .into_iter()
+        .map(|(native_host_name, allowed_extension_ids)| ManifestTarget {
+            native_host_name,
+            allowed_extension_ids,
+        })
+        .collect()
+}
+
 fn inspect_manifest(
     native_host_name: &str,
-    allowed_extension_ids: &std::collections::BTreeSet<String>,
+    allowed_extension_ids: &BTreeSet<String>,
 ) -> Result<ManifestDiagnostics> {
     inspect_manifest_in_candidates(
         native_host_name,
@@ -278,7 +329,7 @@ fn inspect_manifest(
 
 fn inspect_manifest_in_candidates<I>(
     native_host_name: &str,
-    allowed_extension_ids: &std::collections::BTreeSet<String>,
+    allowed_extension_ids: &BTreeSet<String>,
     candidates: I,
 ) -> Result<ManifestDiagnostics>
 where
@@ -467,11 +518,17 @@ impl LocalDaemonClient {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::BTreeSet, fs};
+    use std::{collections::BTreeSet, fs, path::PathBuf};
 
     use tempfile::tempdir;
 
-    use super::{inspect_database, inspect_manifest_in_candidates};
+    use starmask_types::{ApprovalSurface, DurationSeconds};
+    use starmaskd::config::{
+        CommonBackendConfig, LocalAccountDirBackendConfig, LocalPromptMode,
+        StarmaskExtensionBackendConfig, WalletBackendConfig,
+    };
+
+    use super::{collect_manifest_targets, inspect_database, inspect_manifest_in_candidates};
 
     fn extension_ids() -> BTreeSet<String> {
         BTreeSet::from(["ext.allowed".to_owned()])
@@ -551,6 +608,58 @@ mod tests {
             error
                 .to_string()
                 .contains("manifest is missing allowed origin chrome-extension://ext.allowed/")
+        );
+    }
+
+    #[test]
+    fn collect_manifest_targets_unions_extension_ids_by_host_name() {
+        let backends = vec![
+            WalletBackendConfig::StarmaskExtension(StarmaskExtensionBackendConfig {
+                common: CommonBackendConfig {
+                    backend_id: "ext-1".to_owned(),
+                    instance_label: "Extension 1".to_owned(),
+                    approval_surface: ApprovalSurface::BrowserUi,
+                },
+                allowed_extension_ids: BTreeSet::from(["ext.allowed.1".to_owned()]),
+                native_host_name: "com.starcoin.test".to_owned(),
+                profile_hint: None,
+            }),
+            WalletBackendConfig::StarmaskExtension(StarmaskExtensionBackendConfig {
+                common: CommonBackendConfig {
+                    backend_id: "ext-2".to_owned(),
+                    instance_label: "Extension 2".to_owned(),
+                    approval_surface: ApprovalSurface::BrowserUi,
+                },
+                allowed_extension_ids: BTreeSet::from(["ext.allowed.2".to_owned()]),
+                native_host_name: "com.starcoin.test".to_owned(),
+                profile_hint: None,
+            }),
+            WalletBackendConfig::LocalAccountDir(LocalAccountDirBackendConfig {
+                common: CommonBackendConfig {
+                    backend_id: "local-main".to_owned(),
+                    instance_label: "Local Main".to_owned(),
+                    approval_surface: ApprovalSurface::TtyPrompt,
+                },
+                account_dir: PathBuf::from("/tmp/local-main"),
+                prompt_mode: LocalPromptMode::TtyPrompt,
+                chain_id: 251,
+                unlock_cache_ttl: DurationSeconds::new(60),
+                allow_read_only_accounts: false,
+                require_strict_permissions: true,
+            }),
+        ];
+
+        let targets = collect_manifest_targets(&backends);
+
+        assert_eq!(
+            targets,
+            vec![super::ManifestTarget {
+                native_host_name: "com.starcoin.test".to_owned(),
+                allowed_extension_ids: BTreeSet::from([
+                    "ext.allowed.1".to_owned(),
+                    "ext.allowed.2".to_owned(),
+                ]),
+            }]
         );
     }
 }

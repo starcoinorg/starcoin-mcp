@@ -3,21 +3,22 @@ use std::collections::BTreeMap;
 use tracing::debug;
 
 use starmask_types::{
-    CancelRequestResult, ClientRequestId, CreateRequestResult, Curve, DAEMON_PROTOCOL_VERSION,
-    DeliveryLease, DurationSeconds, GetRequestStatusResult, LockState, PayloadHash,
-    PresentationLease, PulledRequest, RejectReasonCode, RequestHasAvailableResult, RequestId,
-    RequestKind, RequestPayload, RequestPullNextResult as DaemonPullNextRequestResult,
+    ApprovalSurface, BackendKind, CancelRequestResult, ClientRequestId, CreateRequestResult, Curve,
+    DAEMON_PROTOCOL_VERSION, DeliveryLease, DurationSeconds, GetRequestStatusResult, LockState,
+    PayloadHash, PresentationLease, PulledRequest, RejectReasonCode, RequestHasAvailableResult,
+    RequestId, RequestKind, RequestPayload, RequestPullNextResult as DaemonPullNextRequestResult,
     RequestRecord, RequestResult, RequestStatus, ResultKind, SharedErrorCode, SystemGetInfoResult,
-    SystemPingResult, TimestampMs, TransactionPayload, WalletAccountGroup,
-    WalletGetPublicKeyResult, WalletInstanceId, WalletInstanceRecord, WalletListAccountsResult,
-    WalletListInstancesResult, WalletStatusResult,
+    SystemPingResult, TimestampMs, TransactionPayload, TransportKind, WalletAccountGroup,
+    WalletCapability, WalletGetPublicKeyResult, WalletInstanceId, WalletInstanceRecord,
+    WalletListAccountsResult, WalletListInstancesResult, WalletStatusResult,
 };
 
 use crate::{
     commands::{
         CoordinatorCommand, CreateSignMessageCommand, CreateSignTransactionCommand,
-        HeartbeatExtensionCommand, MarkRequestPresentedCommand, RegisterExtensionCommand,
-        RejectRequestCommand, ResolveRequestCommand, UpdateExtensionAccountsCommand,
+        HeartbeatBackendCommand, HeartbeatExtensionCommand, MarkRequestPresentedCommand,
+        RegisterBackendCommand, RegisterExtensionCommand, RejectRequestCommand,
+        ResolveRequestCommand, UpdateBackendAccountsCommand, UpdateExtensionAccountsCommand,
     },
     error::{CoreError, CoreResult},
     policy::PolicyEngine,
@@ -43,7 +44,7 @@ impl Default for CoordinatorConfig {
         Self {
             daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
             socket_scope: "local-user".to_owned(),
-            db_schema_version: 1,
+            db_schema_version: 2,
             default_request_ttl: DurationSeconds::new(300),
             min_request_ttl: DurationSeconds::new(30),
             max_request_ttl: DurationSeconds::new(3600),
@@ -186,12 +187,24 @@ where
                 self.register_extension(command)?;
                 Ok(CoordinatorResponse::Ack)
             }
+            CoordinatorCommand::RegisterBackend(command) => {
+                self.register_backend(command)?;
+                Ok(CoordinatorResponse::Ack)
+            }
             CoordinatorCommand::HeartbeatExtension(command) => {
                 self.heartbeat_extension(command)?;
                 Ok(CoordinatorResponse::Ack)
             }
+            CoordinatorCommand::HeartbeatBackend(command) => {
+                self.heartbeat_backend(command)?;
+                Ok(CoordinatorResponse::Ack)
+            }
             CoordinatorCommand::UpdateExtensionAccounts(command) => {
                 self.update_extension_accounts(command)?;
+                Ok(CoordinatorResponse::Ack)
+            }
+            CoordinatorCommand::UpdateBackendAccounts(command) => {
+                self.update_backend_accounts(command)?;
                 Ok(CoordinatorResponse::Ack)
             }
             CoordinatorCommand::PullNextRequest { wallet_instance_id } => Ok(
@@ -423,7 +436,7 @@ where
         }
 
         let selected_wallet_instance_id =
-            self.resolve_wallet_for_signing(&account_address, wallet_instance_id.as_ref())?;
+            self.resolve_wallet_for_signing(kind, &account_address, wallet_instance_id.as_ref())?;
         let now = self.clock.now();
         let ttl = self.clamp_ttl(ttl_seconds);
         let expires_at = now.checked_add_seconds(ttl).ok_or_else(|| {
@@ -510,18 +523,85 @@ where
     }
 
     fn register_extension(&mut self, command: RegisterExtensionCommand) -> CoreResult<()> {
+        let mut backend_metadata = serde_json::Map::new();
+        backend_metadata.insert(
+            "extension_id".to_owned(),
+            serde_json::Value::String(command.extension_id.clone()),
+        );
+        backend_metadata.insert(
+            "extension_version".to_owned(),
+            serde_json::Value::String(command.extension_version.clone()),
+        );
+        if let Some(profile_hint) = command.profile_hint.clone() {
+            backend_metadata.insert(
+                "profile_hint".to_owned(),
+                serde_json::Value::String(profile_hint.clone()),
+            );
+        }
+
+        self.register_backend(RegisterBackendCommand {
+            wallet_instance_id: command.wallet_instance_id.clone(),
+            backend_kind: BackendKind::StarmaskExtension,
+            transport_kind: TransportKind::NativeMessaging,
+            approval_surface: ApprovalSurface::BrowserUi,
+            instance_label: command
+                .profile_hint
+                .clone()
+                .unwrap_or_else(|| command.wallet_instance_id.to_string()),
+            extension_id: command.extension_id,
+            extension_version: command.extension_version,
+            protocol_version: command.protocol_version,
+            capabilities: vec![
+                WalletCapability::GetPublicKey,
+                WalletCapability::SignMessage,
+                WalletCapability::SignTransaction,
+            ],
+            backend_metadata: serde_json::Value::Object(backend_metadata),
+            profile_hint: command.profile_hint,
+            lock_state: command.lock_state,
+            accounts: command.accounts,
+        })
+    }
+
+    fn heartbeat_extension(&mut self, command: HeartbeatExtensionCommand) -> CoreResult<()> {
+        self.heartbeat_backend(HeartbeatBackendCommand {
+            wallet_instance_id: command.wallet_instance_id,
+            presented_request_ids: command.presented_request_ids,
+            lock_state: None,
+        })
+    }
+
+    fn register_backend(&mut self, command: RegisterBackendCommand) -> CoreResult<()> {
+        if let Some(existing) = self
+            .store
+            .get_wallet_instance(&command.wallet_instance_id)?
+            && existing.backend_kind != command.backend_kind
+        {
+            return Err(CoreError::shared(
+                SharedErrorCode::InvalidBackendRegistration,
+                "wallet_instance_id is already registered for a different backend kind",
+            ));
+        }
+
         let now = self.clock.now();
         let wallet_instance_id = command.wallet_instance_id.clone();
         self.store.upsert_wallet_instance(WalletInstanceRecord {
             wallet_instance_id,
+            backend_kind: command.backend_kind,
+            transport_kind: command.transport_kind,
+            approval_surface: command.approval_surface,
+            instance_label: command.instance_label,
             extension_id: command.extension_id,
             extension_version: command.extension_version,
             protocol_version: command.protocol_version,
+            capabilities: canonical_capabilities(command.capabilities),
+            backend_metadata: command.backend_metadata,
             profile_hint: command.profile_hint,
             lock_state: command.lock_state,
             connected: true,
             last_seen_at: now,
         })?;
+
         let accounts = command
             .accounts
             .into_iter()
@@ -535,11 +615,14 @@ where
         Ok(())
     }
 
-    fn heartbeat_extension(&mut self, command: HeartbeatExtensionCommand) -> CoreResult<()> {
+    fn heartbeat_backend(&mut self, command: HeartbeatBackendCommand) -> CoreResult<()> {
         let mut instance = self.require_wallet_instance(&command.wallet_instance_id)?;
         instance.connected = true;
         let now = self.clock.now();
         instance.last_seen_at = now;
+        if let Some(lock_state) = command.lock_state {
+            instance.lock_state = lock_state;
+        }
         self.store.upsert_wallet_instance(instance)?;
 
         if command.presented_request_ids.is_empty() {
@@ -575,10 +658,24 @@ where
         &mut self,
         command: UpdateExtensionAccountsCommand,
     ) -> CoreResult<()> {
+        self.update_backend_accounts(UpdateBackendAccountsCommand {
+            wallet_instance_id: command.wallet_instance_id,
+            lock_state: command.lock_state,
+            capabilities: vec![
+                WalletCapability::GetPublicKey,
+                WalletCapability::SignMessage,
+                WalletCapability::SignTransaction,
+            ],
+            accounts: command.accounts,
+        })
+    }
+
+    fn update_backend_accounts(&mut self, command: UpdateBackendAccountsCommand) -> CoreResult<()> {
         let now = self.clock.now();
         let mut instance = self.require_wallet_instance(&command.wallet_instance_id)?;
         instance.connected = true;
         instance.lock_state = command.lock_state;
+        instance.capabilities = canonical_capabilities(command.capabilities);
         instance.last_seen_at = now;
         self.store.upsert_wallet_instance(instance)?;
 
@@ -647,23 +744,50 @@ where
         let now = self.clock.now();
         let mut request =
             self.require_owned_request(&command.request_id, &command.wallet_instance_id)?;
-        if request.status != RequestStatus::Dispatched {
-            return Err(CoreError::InvalidStateTransition {
-                from: request.status,
-                to: RequestStatus::PendingUserApproval,
-            });
+        match request.status {
+            RequestStatus::Dispatched => {
+                let delivery_lease_id = command.delivery_lease_id.as_ref().ok_or_else(|| {
+                    CoreError::shared(
+                        SharedErrorCode::LeaseMismatch,
+                        "delivery_lease_id is required for the first presentation",
+                    )
+                })?;
+                validate_delivery_lease(&request, delivery_lease_id, now)?;
+                transition_request(&mut request, RequestStatus::PendingUserApproval, now)?;
+                request.presentation = Some(PresentationLease {
+                    presentation_id: command.presentation_id,
+                    presentation_expires_at: now
+                        .checked_add_seconds(self.config.presentation_lease_ttl)
+                        .ok_or_else(|| {
+                            CoreError::Invariant("presentation lease timestamp overflow".to_owned())
+                        })?,
+                });
+                request.delivery_lease = None;
+            }
+            RequestStatus::PendingUserApproval => {
+                if command.delivery_lease_id.is_some() {
+                    return Err(CoreError::shared(
+                        SharedErrorCode::LeaseMismatch,
+                        "delivery_lease_id is not valid when resuming an existing presentation",
+                    ));
+                }
+                validate_presentation(&request, &command.presentation_id, now)?;
+                if let Some(presentation) = request.presentation.as_mut() {
+                    presentation.presentation_expires_at = now
+                        .checked_add_seconds(self.config.presentation_lease_ttl)
+                        .ok_or_else(|| {
+                            CoreError::Invariant("presentation lease timestamp overflow".to_owned())
+                        })?;
+                }
+                request.updated_at = now;
+            }
+            other => {
+                return Err(CoreError::InvalidStateTransition {
+                    from: other,
+                    to: RequestStatus::PendingUserApproval,
+                });
+            }
         }
-        validate_delivery_lease(&request, &command.delivery_lease_id, now)?;
-        transition_request(&mut request, RequestStatus::PendingUserApproval, now)?;
-        request.presentation = Some(PresentationLease {
-            presentation_id: command.presentation_id,
-            presentation_expires_at: now
-                .checked_add_seconds(self.config.presentation_lease_ttl)
-                .ok_or_else(|| {
-                    CoreError::Invariant("presentation lease timestamp overflow".to_owned())
-                })?,
-        });
-        request.delivery_lease = None;
         request = self.store.update_request(request)?;
         Ok(RequestPresentedResult {
             request_id: request.request_id,
@@ -710,7 +834,7 @@ where
             RequestStatus::PendingUserApproval => {
                 let presentation_id = command.presentation_id.as_ref().ok_or_else(|| {
                     CoreError::shared(
-                        SharedErrorCode::PermissionDenied,
+                        SharedErrorCode::LeaseMismatch,
                         "presentation_id is required after request presentation",
                     )
                 })?;
@@ -719,7 +843,7 @@ where
             RequestStatus::Dispatched => {
                 if command.presentation_id.is_some() {
                     return Err(CoreError::shared(
-                        SharedErrorCode::PermissionDenied,
+                        SharedErrorCode::LeaseMismatch,
                         "presentation_id is not valid before request presentation",
                     ));
                 }
@@ -868,8 +992,8 @@ where
         })?;
         if request.wallet_instance_id != *wallet_instance_id {
             return Err(CoreError::shared(
-                SharedErrorCode::WalletInstanceNotFound,
-                "Wallet instance does not own this request",
+                SharedErrorCode::RequestNotOwned,
+                "wallet instance does not own this request",
             ));
         }
         Ok(request)
@@ -891,21 +1015,46 @@ where
 
     fn resolve_wallet_for_signing(
         &mut self,
+        kind: RequestKind,
         address: &str,
         wallet_instance_id: Option<&WalletInstanceId>,
     ) -> CoreResult<WalletInstanceId> {
         let selected = self.resolve_wallet_instance_for_account(address, wallet_instance_id)?;
         let wallet = self.require_wallet_instance(&selected)?;
+        let capability = capability_for_request(kind);
+        if !wallet.capabilities.contains(&capability) {
+            return Err(CoreError::shared(
+                SharedErrorCode::UnsupportedOperation,
+                format!("Selected wallet instance does not support {capability:?}"),
+            ));
+        }
         if !wallet.connected {
             return Err(CoreError::shared(
                 SharedErrorCode::WalletUnavailable,
                 "Selected wallet instance is not connected",
             ));
         }
-        if wallet.lock_state != LockState::Unlocked {
+        if wallet.lock_state != LockState::Unlocked
+            && !wallet.capabilities.contains(&WalletCapability::Unlock)
+        {
             return Err(CoreError::shared(
                 SharedErrorCode::WalletLocked,
                 "Selected wallet instance is locked",
+            ));
+        }
+        let account = self
+            .store
+            .get_wallet_account(&selected, address)?
+            .ok_or_else(|| {
+                CoreError::shared(
+                    SharedErrorCode::InvalidAccount,
+                    "Account is not exposed by the selected wallet instance",
+                )
+            })?;
+        if account.is_read_only {
+            return Err(CoreError::shared(
+                SharedErrorCode::UnsupportedOperation,
+                "Selected account is read-only and cannot sign",
             ));
         }
         Ok(selected)
@@ -974,6 +1123,19 @@ fn is_wallet_stale(
         .and_then(|value| i64::try_from(value).ok())
         .unwrap_or(i64::MAX);
     now.as_millis().saturating_sub(last_seen_at.as_millis()) >= threshold_millis
+}
+
+fn capability_for_request(kind: RequestKind) -> WalletCapability {
+    match kind {
+        RequestKind::SignTransaction => WalletCapability::SignTransaction,
+        RequestKind::SignMessage => WalletCapability::SignMessage,
+    }
+}
+
+fn canonical_capabilities(mut capabilities: Vec<WalletCapability>) -> Vec<WalletCapability> {
+    capabilities.sort();
+    capabilities.dedup();
+    capabilities
 }
 
 fn project_request_summary(request: &RequestRecord) -> CreateRequestResult {
@@ -1083,19 +1245,19 @@ fn validate_delivery_lease(
 ) -> CoreResult<()> {
     let Some(lease) = request.delivery_lease.as_ref() else {
         return Err(CoreError::shared(
-            SharedErrorCode::PermissionDenied,
+            SharedErrorCode::LeaseMismatch,
             "request does not have an active delivery lease",
         ));
     };
     if lease.delivery_lease_id != *delivery_lease_id {
         return Err(CoreError::shared(
-            SharedErrorCode::PermissionDenied,
+            SharedErrorCode::LeaseMismatch,
             "delivery lease does not match the active claim",
         ));
     }
     if lease.delivery_lease_expires_at <= now {
         return Err(CoreError::shared(
-            SharedErrorCode::PermissionDenied,
+            SharedErrorCode::LeaseMismatch,
             "delivery lease already expired",
         ));
     }
@@ -1115,19 +1277,19 @@ fn validate_presentation(
     }
     let Some(presentation) = request.presentation.as_ref() else {
         return Err(CoreError::shared(
-            SharedErrorCode::PermissionDenied,
+            SharedErrorCode::LeaseMismatch,
             "request does not have an active presentation lease",
         ));
     };
     if presentation.presentation_id != *presentation_id {
         return Err(CoreError::shared(
-            SharedErrorCode::PermissionDenied,
+            SharedErrorCode::LeaseMismatch,
             "presentation id does not match the active request presentation",
         ));
     }
     if presentation.presentation_expires_at <= now {
         return Err(CoreError::shared(
-            SharedErrorCode::PermissionDenied,
+            SharedErrorCode::LeaseMismatch,
             "presentation lease already expired",
         ));
     }
@@ -1172,6 +1334,21 @@ fn map_reject_reason(reason: RejectReasonCode) -> (RequestStatus, SharedErrorCod
             SharedErrorCode::InvalidTransactionPayload,
             "Wallet rejected an invalid transaction payload",
         ),
+        RejectReasonCode::InvalidMessagePayload => (
+            RequestStatus::Failed,
+            SharedErrorCode::InvalidMessagePayload,
+            "Wallet rejected an invalid message payload",
+        ),
+        RejectReasonCode::BackendUnavailable => (
+            RequestStatus::Failed,
+            SharedErrorCode::BackendUnavailable,
+            "Backend became unavailable before signing completed",
+        ),
+        RejectReasonCode::BackendPolicyBlocked => (
+            RequestStatus::Failed,
+            SharedErrorCode::BackendPolicyBlocked,
+            "Backend policy blocked the request",
+        ),
         RejectReasonCode::InternalError => (
             RequestStatus::Failed,
             SharedErrorCode::InternalBridgeError,
@@ -1212,17 +1389,19 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use starmask_types::{
-        ClientRequestId, DeliveryLease, DeliveryLeaseId, DurationSeconds, LockState, MessageFormat,
-        PresentationId, RejectReasonCode, RequestPayload, RequestRecord, RequestStatus,
-        SharedErrorCode, TimestampMs, TransactionPayload, WalletAccountRecord, WalletInstanceId,
+        ApprovalSurface, BackendKind, ClientRequestId, DeliveryLease, DeliveryLeaseId,
+        DurationSeconds, LockState, MessageFormat, PresentationId, RejectReasonCode,
+        RequestPayload, RequestRecord, RequestStatus, SharedErrorCode, TimestampMs,
+        TransactionPayload, TransportKind, WalletAccountRecord, WalletCapability, WalletInstanceId,
         WalletInstanceRecord,
     };
 
     use crate::{
         commands::{
             CoordinatorCommand, CreateSignMessageCommand, CreateSignTransactionCommand,
-            MarkRequestPresentedCommand, RegisterExtensionCommand, RejectRequestCommand,
-            ResolveRequestCommand, UpdateExtensionAccountsCommand,
+            MarkRequestPresentedCommand, RegisterBackendCommand, RegisterExtensionCommand,
+            RejectRequestCommand, ResolveRequestCommand, UpdateBackendAccountsCommand,
+            UpdateExtensionAccountsCommand,
         },
         policy::AllowAllPolicy,
         repo::{RepositoryError, RequestRepository, WalletRepository},
@@ -1464,6 +1643,7 @@ mod tests {
             label: None,
             public_key: None,
             is_default,
+            is_read_only: false,
             is_locked: false,
             last_seen_at: TimestampMs::from_millis(0),
         }
@@ -1581,11 +1761,192 @@ mod tests {
                 MarkRequestPresentedCommand {
                     request_id: request_id.clone(),
                     wallet_instance_id: wallet_instance_id.clone(),
-                    delivery_lease_id,
+                    delivery_lease_id: Some(delivery_lease_id),
                     presentation_id,
                 },
             ))
             .unwrap();
+    }
+
+    #[test]
+    fn public_key_lookup_allows_read_only_accounts() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-read-only").unwrap();
+
+        coordinator
+            .dispatch(CoordinatorCommand::RegisterExtension(
+                RegisterExtensionCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    extension_id: "ext".to_owned(),
+                    extension_version: "1.0.0".to_owned(),
+                    protocol_version: 1,
+                    profile_hint: None,
+                    lock_state: LockState::Unlocked,
+                    accounts: Vec::new(),
+                },
+            ))
+            .unwrap();
+        coordinator
+            .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
+                UpdateExtensionAccountsCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    lock_state: LockState::Unlocked,
+                    accounts: vec![WalletAccountRecord {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        address: "0x1".to_owned(),
+                        label: None,
+                        public_key: Some("0xpub".to_owned()),
+                        is_default: true,
+                        is_read_only: true,
+                        is_locked: false,
+                        last_seen_at: TimestampMs::from_millis(0),
+                    }],
+                },
+            ))
+            .unwrap();
+
+        let response = coordinator
+            .dispatch(CoordinatorCommand::WalletGetPublicKey {
+                address: "0x1".to_owned(),
+                wallet_instance_id: Some(wallet_instance_id.clone()),
+            })
+            .unwrap();
+
+        let CoordinatorResponse::WalletPublicKey(result) = response else {
+            panic!("unexpected response");
+        };
+        assert_eq!(result.wallet_instance_id, wallet_instance_id);
+        assert_eq!(result.public_key, "0xpub");
+    }
+
+    #[test]
+    fn public_key_lookup_keeps_read_only_accounts_in_ambiguity_resolution() {
+        let mut coordinator = build_coordinator();
+        let writable_wallet_instance_id = WalletInstanceId::new("wallet-writable").unwrap();
+        let read_only_wallet_instance_id = WalletInstanceId::new("wallet-read-only").unwrap();
+
+        for wallet_instance_id in [&writable_wallet_instance_id, &read_only_wallet_instance_id] {
+            coordinator
+                .dispatch(CoordinatorCommand::RegisterExtension(
+                    RegisterExtensionCommand {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        extension_id: "ext".to_owned(),
+                        extension_version: "1.0.0".to_owned(),
+                        protocol_version: 1,
+                        profile_hint: None,
+                        lock_state: LockState::Unlocked,
+                        accounts: Vec::new(),
+                    },
+                ))
+                .unwrap();
+        }
+
+        coordinator
+            .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
+                UpdateExtensionAccountsCommand {
+                    wallet_instance_id: writable_wallet_instance_id.clone(),
+                    lock_state: LockState::Unlocked,
+                    accounts: vec![WalletAccountRecord {
+                        wallet_instance_id: writable_wallet_instance_id.clone(),
+                        address: "0x1".to_owned(),
+                        label: None,
+                        public_key: Some("0xpub-w".to_owned()),
+                        is_default: true,
+                        is_read_only: false,
+                        is_locked: false,
+                        last_seen_at: TimestampMs::from_millis(0),
+                    }],
+                },
+            ))
+            .unwrap();
+        coordinator
+            .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
+                UpdateExtensionAccountsCommand {
+                    wallet_instance_id: read_only_wallet_instance_id.clone(),
+                    lock_state: LockState::Unlocked,
+                    accounts: vec![WalletAccountRecord {
+                        wallet_instance_id: read_only_wallet_instance_id.clone(),
+                        address: "0x1".to_owned(),
+                        label: None,
+                        public_key: Some("0xpub-r".to_owned()),
+                        is_default: true,
+                        is_read_only: true,
+                        is_locked: false,
+                        last_seen_at: TimestampMs::from_millis(0),
+                    }],
+                },
+            ))
+            .unwrap();
+
+        let error = coordinator
+            .dispatch(CoordinatorCommand::WalletGetPublicKey {
+                address: "0x1".to_owned(),
+                wallet_instance_id: None,
+            })
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "wallet_selection_required: Multiple wallet instances expose the requested account"
+        );
+    }
+
+    #[test]
+    fn signing_still_rejects_read_only_accounts_after_shared_resolution() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-read-only-sign").unwrap();
+
+        coordinator
+            .dispatch(CoordinatorCommand::RegisterExtension(
+                RegisterExtensionCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    extension_id: "ext".to_owned(),
+                    extension_version: "1.0.0".to_owned(),
+                    protocol_version: 1,
+                    profile_hint: None,
+                    lock_state: LockState::Unlocked,
+                    accounts: Vec::new(),
+                },
+            ))
+            .unwrap();
+        coordinator
+            .dispatch(CoordinatorCommand::UpdateExtensionAccounts(
+                UpdateExtensionAccountsCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    lock_state: LockState::Unlocked,
+                    accounts: vec![WalletAccountRecord {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        address: "0x1".to_owned(),
+                        label: None,
+                        public_key: Some("0xpub".to_owned()),
+                        is_default: true,
+                        is_read_only: true,
+                        is_locked: false,
+                        last_seen_at: TimestampMs::from_millis(0),
+                    }],
+                },
+            ))
+            .unwrap();
+
+        let error = coordinator
+            .dispatch(CoordinatorCommand::CreateSignMessage(
+                CreateSignMessageCommand {
+                    client_request_id: ClientRequestId::new("client-read-only").unwrap(),
+                    account_address: "0x1".to_owned(),
+                    wallet_instance_id: Some(wallet_instance_id),
+                    message: "hello".to_owned(),
+                    format: MessageFormat::Utf8,
+                    display_hint: None,
+                    client_context: None,
+                    ttl_seconds: None,
+                },
+            ))
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "unsupported_operation: Selected account is read-only and cannot sign"
+        );
     }
 
     #[test]
@@ -1617,6 +1978,7 @@ mod tests {
                         label: Some("Primary".to_owned()),
                         public_key: Some("0xpub".to_owned()),
                         is_default: true,
+                        is_read_only: false,
                         is_locked: false,
                         last_seen_at: TimestampMs::from_millis(0),
                     }],
@@ -1682,6 +2044,7 @@ mod tests {
                         label: None,
                         public_key: None,
                         is_default: true,
+                        is_read_only: false,
                         is_locked: false,
                         last_seen_at: TimestampMs::from_millis(0),
                     }],
@@ -1723,7 +2086,9 @@ mod tests {
                 MarkRequestPresentedCommand {
                     request_id: request_id.clone(),
                     wallet_instance_id: wallet_instance_id.clone(),
-                    delivery_lease_id: starmask_types::DeliveryLeaseId::new("lease-2").unwrap(),
+                    delivery_lease_id: Some(
+                        starmask_types::DeliveryLeaseId::new("lease-2").unwrap(),
+                    ),
                     presentation_id: presentation_id.clone(),
                 },
             ))
@@ -1787,6 +2152,7 @@ mod tests {
                             label: None,
                             public_key: None,
                             is_default: true,
+                            is_read_only: false,
                             is_locked: false,
                             last_seen_at: TimestampMs::from_millis(0),
                         }],
@@ -1872,6 +2238,7 @@ mod tests {
                         label: None,
                         public_key: None,
                         is_default: true,
+                        is_read_only: false,
                         is_locked: false,
                         last_seen_at: TimestampMs::from_millis(0),
                     }],
@@ -1909,7 +2276,7 @@ mod tests {
                 MarkRequestPresentedCommand {
                     request_id: request_id.clone(),
                     wallet_instance_id: wallet_instance_id.clone(),
-                    delivery_lease_id: delivery_lease_id.clone(),
+                    delivery_lease_id: Some(delivery_lease_id.clone()),
                     presentation_id: presentation_id.clone(),
                 },
             ))
@@ -1962,6 +2329,7 @@ mod tests {
                         label: None,
                         public_key: None,
                         is_default: true,
+                        is_read_only: false,
                         is_locked: false,
                         last_seen_at: TimestampMs::from_millis(0),
                     }],
@@ -1999,7 +2367,7 @@ mod tests {
                 MarkRequestPresentedCommand {
                     request_id: request_id.clone(),
                     wallet_instance_id: wallet_instance_id.clone(),
-                    delivery_lease_id,
+                    delivery_lease_id: Some(delivery_lease_id),
                     presentation_id: presentation_id.clone(),
                 },
             ))
@@ -2028,6 +2396,142 @@ mod tests {
         };
         assert_eq!(status.status, RequestStatus::Failed);
         assert_eq!(status.error_code, Some(SharedErrorCode::WalletLocked));
+    }
+
+    #[test]
+    fn locked_wallet_with_unlock_capability_can_create_sign_request() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-local").unwrap();
+
+        coordinator
+            .dispatch(CoordinatorCommand::RegisterBackend(
+                RegisterBackendCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    backend_kind: BackendKind::LocalAccountDir,
+                    transport_kind: TransportKind::LocalSocket,
+                    approval_surface: ApprovalSurface::TtyPrompt,
+                    instance_label: "Local Main".to_owned(),
+                    extension_id: String::new(),
+                    extension_version: String::new(),
+                    protocol_version: 2,
+                    capabilities: vec![
+                        WalletCapability::Unlock,
+                        WalletCapability::GetPublicKey,
+                        WalletCapability::SignMessage,
+                        WalletCapability::SignTransaction,
+                    ],
+                    backend_metadata: serde_json::json!({}),
+                    profile_hint: None,
+                    lock_state: LockState::Locked,
+                    accounts: vec![WalletAccountRecord {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        address: "0x1".to_owned(),
+                        label: None,
+                        public_key: None,
+                        is_default: true,
+                        is_read_only: false,
+                        is_locked: true,
+                        last_seen_at: TimestampMs::from_millis(0),
+                    }],
+                },
+            ))
+            .unwrap();
+
+        let created = coordinator
+            .dispatch(CoordinatorCommand::CreateSignMessage(
+                CreateSignMessageCommand {
+                    client_request_id: ClientRequestId::new("client-locked-local").unwrap(),
+                    account_address: "0x1".to_owned(),
+                    wallet_instance_id: Some(wallet_instance_id.clone()),
+                    message: "hello".to_owned(),
+                    format: starmask_types::MessageFormat::Utf8,
+                    display_hint: None,
+                    client_context: None,
+                    ttl_seconds: None,
+                },
+            ))
+            .unwrap();
+
+        let CoordinatorResponse::RequestCreated(created) = created else {
+            panic!("unexpected response");
+        };
+        assert_eq!(created.wallet_instance_id, wallet_instance_id);
+        assert_eq!(created.status, RequestStatus::Created);
+    }
+
+    #[test]
+    fn backend_account_updates_refresh_unlock_capabilities_for_routing() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-local-updated").unwrap();
+
+        coordinator
+            .dispatch(CoordinatorCommand::RegisterBackend(
+                RegisterBackendCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    backend_kind: BackendKind::LocalAccountDir,
+                    transport_kind: TransportKind::LocalSocket,
+                    approval_surface: ApprovalSurface::TtyPrompt,
+                    instance_label: "Local Main".to_owned(),
+                    extension_id: String::new(),
+                    extension_version: String::new(),
+                    protocol_version: 2,
+                    capabilities: vec![
+                        WalletCapability::Unlock,
+                        WalletCapability::GetPublicKey,
+                        WalletCapability::SignMessage,
+                        WalletCapability::SignTransaction,
+                    ],
+                    backend_metadata: serde_json::json!({}),
+                    profile_hint: None,
+                    lock_state: LockState::Unlocked,
+                    accounts: vec![wallet_account(&wallet_instance_id, "0x1", true)],
+                },
+            ))
+            .unwrap();
+
+        coordinator
+            .dispatch(CoordinatorCommand::UpdateBackendAccounts(
+                UpdateBackendAccountsCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    lock_state: LockState::Locked,
+                    capabilities: vec![
+                        WalletCapability::GetPublicKey,
+                        WalletCapability::SignMessage,
+                        WalletCapability::SignTransaction,
+                    ],
+                    accounts: vec![WalletAccountRecord {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        address: "0x1".to_owned(),
+                        label: None,
+                        public_key: None,
+                        is_default: true,
+                        is_read_only: false,
+                        is_locked: true,
+                        last_seen_at: TimestampMs::from_millis(0),
+                    }],
+                },
+            ))
+            .unwrap();
+
+        let error = coordinator
+            .dispatch(CoordinatorCommand::CreateSignMessage(
+                CreateSignMessageCommand {
+                    client_request_id: ClientRequestId::new("client-updated-local").unwrap(),
+                    account_address: "0x1".to_owned(),
+                    wallet_instance_id: Some(wallet_instance_id),
+                    message: "hello".to_owned(),
+                    format: starmask_types::MessageFormat::Utf8,
+                    display_hint: None,
+                    client_context: None,
+                    ttl_seconds: None,
+                },
+            ))
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "wallet_locked: Selected wallet instance is locked"
+        );
     }
 
     #[test]
@@ -2096,6 +2600,7 @@ mod tests {
                             label: None,
                             public_key: None,
                             is_default: true,
+                            is_read_only: false,
                             is_locked: false,
                             last_seen_at: TimestampMs::from_millis(0),
                         },
@@ -2105,6 +2610,7 @@ mod tests {
                             label: None,
                             public_key: None,
                             is_default: false,
+                            is_read_only: false,
                             is_locked: false,
                             last_seen_at: TimestampMs::from_millis(0),
                         },
@@ -2178,6 +2684,7 @@ mod tests {
                         label: None,
                         public_key: None,
                         is_default: true,
+                        is_read_only: false,
                         is_locked: false,
                         last_seen_at: TimestampMs::from_millis(0),
                     }],
@@ -2242,6 +2749,7 @@ mod tests {
                         label: None,
                         public_key: None,
                         is_default: true,
+                        is_read_only: false,
                         is_locked: false,
                         last_seen_at: TimestampMs::from_millis(0),
                     }],
@@ -2279,7 +2787,7 @@ mod tests {
                 MarkRequestPresentedCommand {
                     request_id: request_id.clone(),
                     wallet_instance_id: wallet_instance_id.clone(),
-                    delivery_lease_id,
+                    delivery_lease_id: Some(delivery_lease_id),
                     presentation_id: presentation_id.clone(),
                 },
             ))
@@ -2299,7 +2807,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             error.to_string(),
-            "permission_denied: presentation lease already expired"
+            "lease_mismatch: presentation lease already expired"
         );
 
         let pulled = coordinator

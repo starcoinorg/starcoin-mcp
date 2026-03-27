@@ -54,8 +54,7 @@ async fn main() -> Result<()> {
     });
     let server_policy = ServerPolicy {
         channel: config.channel,
-        allowed_extension_ids: config.allowed_extension_ids.clone(),
-        native_host_name: config.native_host_name.clone(),
+        wallet_backends: config.wallet_backends.clone(),
     };
 
     #[cfg(unix)]

@@ -1,6 +1,5 @@
 mod support;
 
-use std::collections::BTreeSet;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
@@ -12,6 +11,10 @@ use tokio::task::JoinHandle;
 use starmask_core::CoordinatorConfig;
 use starmask_types::{Channel, JsonRpcResponse};
 use starmaskd::{
+    config::{
+        CommonBackendConfig, LocalAccountDirBackendConfig, LocalPromptMode,
+        StarmaskExtensionBackendConfig, WalletBackendConfig,
+    },
     coordinator_runtime::spawn_coordinator,
     server::{ServerPolicy, run_unix_server},
     sqlite_store::SqliteStore,
@@ -32,8 +35,59 @@ async fn spawn_test_server() -> (tempfile::TempDir, std::path::PathBuf, JoinHand
             handle,
             ServerPolicy {
                 channel: Channel::Development,
-                allowed_extension_ids: BTreeSet::from(["ext.allowed".to_owned()]),
-                native_host_name: "com.starcoin.test".to_owned(),
+                wallet_backends: vec![WalletBackendConfig::StarmaskExtension(
+                    StarmaskExtensionBackendConfig {
+                        common: CommonBackendConfig {
+                            backend_id: "browser-default".to_owned(),
+                            instance_label: "Browser Default".to_owned(),
+                            approval_surface: starmask_types::ApprovalSurface::BrowserUi,
+                        },
+                        allowed_extension_ids: ["ext.allowed".to_owned()].into_iter().collect(),
+                        native_host_name: "com.starcoin.test".to_owned(),
+                        profile_hint: None,
+                    },
+                )],
+            },
+        )
+        .await
+        .unwrap();
+    });
+    wait_for_socket(&socket_path).await;
+    (tempdir, socket_path, server)
+}
+
+async fn spawn_local_backend_server() -> (tempfile::TempDir, std::path::PathBuf, JoinHandle<()>) {
+    let tempdir = tempdir().unwrap();
+    let socket_path = tempdir.path().join("starmaskd.sock");
+    let database_path = tempdir.path().join("starmaskd.sqlite3");
+    let store = SqliteStore::open(&database_path).unwrap();
+    let handle = spawn_coordinator(store, CoordinatorConfig::default());
+    let socket_path_for_server = socket_path.clone();
+    let account_dir = tempdir.path().join("account");
+    std::fs::create_dir_all(&account_dir).unwrap();
+    #[cfg(unix)]
+    std::fs::set_permissions(&account_dir, std::fs::Permissions::from_mode(0o700)).unwrap();
+    let server = tokio::spawn(async move {
+        run_unix_server(
+            &socket_path_for_server,
+            handle,
+            ServerPolicy {
+                channel: Channel::Development,
+                wallet_backends: vec![WalletBackendConfig::LocalAccountDir(
+                    LocalAccountDirBackendConfig {
+                        common: CommonBackendConfig {
+                            backend_id: "local-main".to_owned(),
+                            instance_label: "Local Main".to_owned(),
+                            approval_surface: starmask_types::ApprovalSurface::TtyPrompt,
+                        },
+                        account_dir,
+                        prompt_mode: LocalPromptMode::TtyPrompt,
+                        chain_id: 251,
+                        unlock_cache_ttl: starmask_types::DurationSeconds::new(30),
+                        allow_read_only_accounts: true,
+                        require_strict_permissions: false,
+                    },
+                )],
             },
         )
         .await
@@ -212,6 +266,142 @@ async fn unix_server_reports_idempotency_conflict_for_changed_payload() {
 }
 
 #[tokio::test]
+async fn unix_server_round_trips_generic_backend_register_and_resolve() {
+    let (_tempdir, socket_path, server) = spawn_local_backend_server().await;
+
+    let registered = call_daemon(
+        &socket_path,
+        "req-register-local",
+        "backend.register",
+        json!({
+            "protocol_version": 2,
+            "wallet_instance_id": "local-main",
+            "backend_kind": "local_account_dir",
+            "transport_kind": "local_socket",
+            "approval_surface": "tty_prompt",
+            "instance_label": "Local Main",
+            "lock_state": "unlocked",
+            "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction"],
+            "backend_metadata": {
+                "account_provider_kind": "local",
+                "prompt_mode": "tty_prompt"
+            },
+            "accounts": [{
+                "address": "0x1",
+                "label": null,
+                "public_key": "0xabc",
+                "is_default": true,
+                "is_read_only": false,
+                "is_locked": false
+            }],
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(registered) = registered else {
+        panic!("expected register success");
+    };
+    assert_eq!(registered.result["accepted"], json!(true));
+
+    let created = call_daemon(
+        &socket_path,
+        "req-create-local",
+        "request.createSignMessage",
+        json!({
+            "protocol_version": 1,
+            "client_request_id": "client-local-sign",
+            "account_address": "0x1",
+            "wallet_instance_id": "local-main",
+            "message": "hello",
+            "format": "utf8",
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(created) = created else {
+        panic!("expected create success");
+    };
+    let request_id = created.result["request_id"].as_str().unwrap();
+
+    let pulled = call_daemon(
+        &socket_path,
+        "req-pull-local",
+        "request.pullNext",
+        json!({
+            "protocol_version": 2,
+            "wallet_instance_id": "local-main",
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(pulled) = pulled else {
+        panic!("expected pull success");
+    };
+    let request = pulled.result["request"].clone();
+    assert_eq!(request["request_id"], json!(request_id));
+    let delivery_lease_id = request["delivery_lease_id"].as_str().unwrap();
+
+    let presented = call_daemon(
+        &socket_path,
+        "req-presented-local",
+        "request.presented",
+        json!({
+            "protocol_version": 2,
+            "wallet_instance_id": "local-main",
+            "request_id": request_id,
+            "delivery_lease_id": delivery_lease_id,
+            "presentation_id": "presentation-1",
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(presented) = presented else {
+        panic!("expected presented success");
+    };
+    assert_eq!(presented.result["ok"], json!(true));
+
+    let resolved = call_daemon(
+        &socket_path,
+        "req-resolve-local",
+        "request.resolve",
+        json!({
+            "protocol_version": 2,
+            "wallet_instance_id": "local-main",
+            "request_id": request_id,
+            "presentation_id": "presentation-1",
+            "result_kind": "signed_message",
+            "signature": "0xsigned-message",
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(resolved) = resolved else {
+        panic!("expected resolve success");
+    };
+    assert_eq!(resolved.result["ok"], json!(true));
+
+    let status = call_daemon(
+        &socket_path,
+        "req-status-local",
+        "request.getStatus",
+        json!({
+            "protocol_version": 1,
+            "request_id": request_id,
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(status) = status else {
+        panic!("expected status success");
+    };
+    assert_eq!(status.result["status"], json!("approved"));
+    assert_eq!(
+        status.result["result"],
+        json!({
+            "kind": "signed_message",
+            "signature": "0xsigned-message"
+        })
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
 async fn unix_server_rejects_disallowed_extension_over_transport() {
     let (_tempdir, socket_path, server) = spawn_test_server().await;
 
@@ -245,7 +435,11 @@ async fn unix_server_rejects_disallowed_extension_over_transport() {
 async fn unix_server_locks_down_socket_permissions() {
     let (_tempdir, socket_path, server) = spawn_test_server().await;
 
-    let socket_mode = std::fs::metadata(&socket_path).unwrap().permissions().mode() & 0o777;
+    let socket_mode = std::fs::metadata(&socket_path)
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
     let parent_mode = std::fs::metadata(socket_path.parent().unwrap())
         .unwrap()
         .permissions()

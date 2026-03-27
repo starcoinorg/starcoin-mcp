@@ -62,7 +62,8 @@ pub enum NativeBridgeRequest {
         message_id: String,
         wallet_instance_id: WalletInstanceId,
         request_id: RequestId,
-        delivery_lease_id: DeliveryLeaseId,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        delivery_lease_id: Option<DeliveryLeaseId>,
         presentation_id: PresentationId,
     },
     #[serde(rename = "request.resolve")]

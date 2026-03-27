@@ -70,6 +70,8 @@ This is a project-wide layering rule, not a special exception for this subprojec
 
 - Default to `#![forbid(unsafe_code)]`.
 - If platform-specific unsafe code is unavoidable, isolate it in the smallest possible module.
+- If a task requires `unsafe`, treat it as a blocking safety item: finish isolating, reviewing,
+  and testing that unsafe code before continuing unrelated code generation in the surrounding area.
 - Never log:
   - private keys
   - raw signed transaction payloads
@@ -77,6 +79,9 @@ This is a project-wide layering rule, not a special exception for this subprojec
 
 ## Commit and Push Discipline
 
+- For each new `starmask-mcp` task branch, prefer a dedicated git worktree based on the latest `main`.
+- Reuse the current worktree only when the user explicitly requests it or when the task is to continue an already-dirty in-place branch.
+- If continuing in a dirty worktree, explain why that is safer than creating a fresh worktree before making substantial edits.
 - After a `starmask-mcp` change reaches a verified milestone, commit it promptly.
 - Push promptly when the user asks, when the branch has reached a reviewable checkpoint, or when the remote branch should preserve current progress.
 - Do not push partially integrated protocol, lifecycle, or persistence changes before they have passed the relevant tests and smoke checks.

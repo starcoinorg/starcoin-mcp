@@ -2,10 +2,10 @@
 
 ## Status
 
-This document is the phase-2 configuration contract for the planned multi-backend implementation.
+This document is the phase-2 configuration contract for the current multi-backend
+implementation.
 
-It is not part of the current `v1` configuration contract. The current extension-backed `v1`
-configuration remains defined by:
+Legacy extension-backed `v1` compatibility remains defined by:
 
 - `docs/configuration.md`
 
@@ -16,7 +16,7 @@ This document defines the configuration model needed to implement:
 - generic backend registration
 - `local_account_dir` integration
 
-The goal is to make multi-backend runtime wiring deterministic before coding starts.
+The goal is to keep multi-backend runtime wiring deterministic and verifiable.
 
 ## 2. Configuration Model
 
@@ -103,7 +103,9 @@ Supported `approval_surface` values in phase 2:
 
 - `browser_ui`
 - `tty_prompt`
-- `desktop_prompt`
+
+`desktop_prompt` remains reserved in shared enums but is not yet accepted by the current
+`local_account_dir` runtime.
 
 ## 6. `starmask_extension` Backend Entry
 
@@ -138,6 +140,7 @@ Required fields:
 - `approval_surface`
 - `account_dir`
 - `prompt_mode`
+- `chain_id`
 - `unlock_cache_ttl_seconds`
 
 Optional fields:
@@ -147,11 +150,12 @@ Optional fields:
 
 Rules:
 
-1. `approval_surface` must be `tty_prompt` or `desktop_prompt`
-2. `prompt_mode` must match `approval_surface`
+1. the current implementation requires `approval_surface = "tty_prompt"`
+2. the current implementation requires `prompt_mode = "tty_prompt"`
 3. `account_dir` must resolve to one canonical local directory
-4. `unlock_cache_ttl_seconds` must be positive and bounded
-5. if `require_strict_permissions = true`, startup fails on insecure filesystem ownership or mode
+4. `chain_id` must be configured explicitly for local message signing
+5. `unlock_cache_ttl_seconds` must be positive and bounded
+6. if `require_strict_permissions = true`, startup fails on insecure filesystem ownership or mode
 
 ## 8. Reserved Future Backend Kind
 
@@ -196,6 +200,7 @@ instance_label = "Local Main"
 approval_surface = "tty_prompt"
 prompt_mode = "tty_prompt"
 account_dir = "/Users/alice/.starcoin/account"
+chain_id = 251
 unlock_cache_ttl_seconds = 300
 allow_read_only_accounts = true
 require_strict_permissions = true
@@ -213,6 +218,8 @@ Phase-2 configuration loading must fail fast when:
 6. `starmask_extension` omits extension allowlist or host name
 7. a reserved future backend kind such as `private_key_dev` is configured during phase 2
 8. `wallet_offline_after_seconds <= heartbeat_interval_seconds`
+9. `local_account_dir` omits `chain_id`
+10. `local_account_dir` uses `desktop_prompt` before that prompt surface is implemented
 
 ## 11. Compatibility Mode
 
@@ -239,6 +246,7 @@ Runtime rules:
 3. the agent connects to the daemon socket from the global config
 4. the agent must refuse to start if the selected backend entry is disabled or has the wrong
    `backend_kind`
+5. the current `local-account-agent` implementation supports only `prompt_mode = "tty_prompt"`
 
 ## 13. Performance and Operations Notes
 
@@ -250,6 +258,9 @@ Required properties:
 2. result retention must be finite
 3. polling and heartbeat timings must remain configurable but bounded
 4. backend entries must be explicit rather than discovered from arbitrary local directories
+
+In the current phase-2 runtime, `unlock_cache_ttl_seconds` is used only for backend-local password
+entry during a sign flow. It does not imply a separate unlock request type.
 
 ## 14. Relationship to Other Documents
 

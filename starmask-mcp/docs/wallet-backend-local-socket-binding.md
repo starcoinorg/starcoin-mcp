@@ -5,8 +5,8 @@
 This document is the phase-2 implementation contract for the first generic backend-agent transport
 binding.
 
-It is not part of the current `v1` release contract. It becomes normative only when the
-multi-backend implementation lands.
+It now describes the normative local-socket path used by the current `local_account_dir`
+implementation.
 
 ## 1. Purpose
 
@@ -139,7 +139,7 @@ Example:
     "approval_surface": "tty_prompt",
     "instance_label": "Local Main",
     "lock_state": "locked",
-    "capabilities": ["get_public_key", "sign_message", "sign_transaction"],
+    "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction"],
     "backend_metadata": {
       "account_provider_kind": "local",
       "prompt_mode": "tty_prompt"
@@ -215,11 +215,12 @@ Required params:
 - `protocol_version`
 - `wallet_instance_id`
 - `lock_state`
+- `capabilities`
 - `accounts`
 
 Coordinator rules:
 
-1. replace all stored account rows for that wallet instance in one transaction
+1. replace the stored account and capability snapshot for that wallet instance in one transaction
 2. update routing eligibility immediately after commit
 3. preserve same-instance recovery for already presented requests
 
@@ -259,7 +260,9 @@ Required on first presentation:
 
 Rules:
 
-1. the backend agent sends this only after the local prompt is actually visible and actionable
+1. the backend agent sends this only after the local prompt is actually visible and actionable; for
+   blocking TTY approval flows this means immediately after rendering the prompt and before waiting
+   for approval or password input
 2. the daemon pins the request to that wallet instance for the rest of the presentation lifecycle
 
 ### 9.6 `request.resolve`
@@ -356,7 +359,9 @@ For `local_account_dir`, the concrete agent should:
 2. register with `wallet_instance_id = backend_id`
 3. expose accounts from Starcoin `AccountProvider`
 4. keep unlock and password entry fully inside the agent process
-5. use `tty_prompt` or `desktop_prompt`, never `none`
+5. in the current implementation, use `tty_prompt`
+6. if the target account is locked, perform any password entry only inside the local prompt flow
+   and reject with `wallet_locked` when unlock fails
 
 ## 14. Relationship to Other Documents
 
@@ -366,4 +371,3 @@ This document should be read with:
 - `docs/wallet-backend-configuration.md`
 - `docs/wallet-backend-security-model.md`
 - `docs/wallet-backend-persistence-and-schema.md`
-

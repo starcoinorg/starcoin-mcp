@@ -1,10 +1,12 @@
 # Starmask MCP
 
-This subproject contains the interface design draft for `starmask-mcp` under the following assumptions:
+This subproject contains the current Starmask MCP implementation and its companion design
+documents under the following assumptions:
 
 - `starmask-mcp` is a local MCP server exposed to MCP hosts such as Claude Code and Codex.
 - `starmaskd` is a long-lived local daemon.
-- Starmask is implemented as a Chrome extension and acts as the signing backend and approval UI.
+- Starmask can be reached either through the Chrome extension path or through a local
+  `local_account_dir` backend agent.
 - The MCP host entrypoint is `starmask-mcp`, not the Chrome extension directly.
 - The first Rust implementation should prefer the official MCP Rust SDK `rmcp` only at the MCP shim layer.
 
@@ -30,4 +32,6 @@ This subproject contains the interface design draft for `starmask-mcp` under the
 
 ## Status
 
-Design is now closed far enough to begin Phase 1 Rust implementation, local integration work, and acceptance-oriented test scaffolding.
+Phase 2 is now implemented for the daemon-side generic backend contract and the first
+`local_account_dir` agent over the local-socket binding. The extension-backed `v1` path remains
+supported for compatibility.

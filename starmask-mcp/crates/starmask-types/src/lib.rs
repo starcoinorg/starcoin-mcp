@@ -20,8 +20,8 @@ pub use jsonrpc::{
     JsonRpcSuccess,
 };
 pub use lifecycle::{
-    Channel, Curve, LockState, MessageFormat, RejectReasonCode, RequestKind, RequestStatus,
-    ResultKind,
+    ApprovalSurface, BackendKind, Channel, Curve, LockState, MessageFormat, RejectReasonCode,
+    RequestKind, RequestStatus, ResultKind, TransportKind, WalletCapability,
 };
 pub use native_bridge::{
     NATIVE_BRIDGE_MAX_INBOUND_BYTES, NATIVE_BRIDGE_MAX_OUTBOUND_BYTES,

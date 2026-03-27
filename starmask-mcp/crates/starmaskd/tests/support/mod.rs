@@ -88,6 +88,7 @@ pub fn wallet_account(
         label: None,
         public_key: None,
         is_default,
+        is_read_only: false,
         is_locked: false,
         last_seen_at: TimestampMs::from_millis(0),
     }
@@ -185,7 +186,7 @@ pub fn mark_presented(
             MarkRequestPresentedCommand {
                 request_id: request_id.clone(),
                 wallet_instance_id: wallet_instance_id.clone(),
-                delivery_lease_id,
+                delivery_lease_id: Some(delivery_lease_id),
                 presentation_id,
             },
         ))

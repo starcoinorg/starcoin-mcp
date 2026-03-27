@@ -2,18 +2,22 @@
 
 ## Status
 
-This document is the authoritative contract for the current `v1` implementation in this
+This document is the authoritative MCP-facing contract for the current implementation in this
 repository.
 
-Current `v1` scope is:
+Current scope is:
 
 - `starmask-mcp`
 - `starmaskd`
 - `starmask-native-host`
 - Starmask Chrome extension
+- optional `local-account-agent`
 
-Planned multi-backend evolution, including `local_account_dir`, explicit unlock requests, and a
-generic signer-backend model, is tracked separately in
+The MCP tool surface remains the stable `v1` set, while `starmaskd` can now route to either the
+extension backend or a configured `local_account_dir` backend.
+
+Further evolution, including explicit unlock requests, richer backend metadata in MCP responses,
+and development-only backends, is tracked separately in
 `docs/unified-wallet-coordinator-evolution.md`.
 
 ## 1. Purpose
@@ -24,24 +28,26 @@ runtime topology:
 - MCP host: Codex, Claude Code, or another local MCP-capable host
 - MCP entrypoint: `starmask-mcp`
 - local daemon: `starmaskd`
-- browser integration: Starmask Chrome extension
-- Chrome bridge: `starmask-native-host`
+- browser integration: Starmask Chrome extension through `starmask-native-host`
+- optional local backend: `local-account-agent`
 
 The design goal is to provide a safe local signing entrypoint to MCP hosts without exposing private
-key material outside the Starmask extension.
+key material outside the selected wallet backend.
 
 ## 2. Design Principles
 
 1. `starmask-mcp` never holds private keys.
 2. `starmaskd` never signs transactions.
-3. The Chrome extension is the only signing authority in `v1`.
+3. The selected wallet backend is the only signing authority.
 4. Every signing request requires explicit wallet approval.
 5. MCP hosts interact only with `starmask-mcp`.
 6. All non-MCP transports are local-only.
 7. Requests are asynchronous by default and identified by `request_id`.
 8. Request creation is idempotent through `client_request_id`.
-9. The daemon fails fast when no connected unlocked wallet instance can satisfy a signing request.
-10. Protocol strings stay at the boundary; typed enums and newtypes stay in core Rust types.
+9. The daemon fails fast when no connected wallet instance can satisfy a signing request.
+10. Locked backends remain eligible for signing only when they advertise backend-local `unlock`
+    capability.
+11. Protocol strings stay at the boundary; typed enums and newtypes stay in core Rust types.
 
 ## 3. Runtime Topology
 
@@ -50,7 +56,9 @@ flowchart LR
     H["MCP Host"] --> M["starmask-mcp"]
     M --> D["starmaskd"]
     D --> N["starmask-native-host"]
+    D --> L["local-account-agent"]
     N --> E["Starmask Chrome Extension"]
+    L --> A["Starcoin local account storage"]
 ```
 
 ### 3.1 Component responsibilities
@@ -65,8 +73,8 @@ flowchart LR
 #### `starmaskd`
 
 - maintains local request store and state machine
-- tracks wallet availability and extension registrations
-- routes requests between MCP clients and extension sessions
+- tracks wallet availability and backend registrations
+- routes requests between MCP clients and backend sessions
 - enforces TTL and recovery rules
 - persists state required for retries and polling
 
@@ -75,6 +83,12 @@ flowchart LR
 - is a Native Messaging shim launched by Chrome
 - bridges extension messages to `starmaskd`
 - does not implement wallet logic
+
+#### `local-account-agent`
+
+- loads the configured Starcoin account directory backend
+- presents local approval and password prompts
+- signs only after local approval inside that backend process
 
 #### Starmask Chrome extension
 
@@ -117,7 +131,7 @@ The `v1` tool surface is intentionally narrow and matches the current Rust imple
 
 Purpose:
 
-- return current wallet availability and extension connectivity
+- return current wallet availability and backend connectivity
 
 Input:
 
@@ -134,6 +148,9 @@ Output:
   - `lock_state`
   - `profile_hint`
   - `last_seen_at`
+
+`extension_connected` is the legacy field name preserved for compatibility. It indicates whether the
+wallet instance is currently connected to `starmaskd`, including non-extension backends.
 
 ### 5.2 `wallet_list_instances`
 
@@ -158,7 +175,7 @@ Output:
 
 Purpose:
 
-- list accounts currently exposed by Starmask to the local daemon
+- list accounts currently exposed by configured wallet backends to the local daemon
 
 Input:
 
@@ -237,7 +254,8 @@ Output:
 
 Creation policy:
 
-- the selected wallet instance must be connected and unlocked
+- the selected wallet instance must be connected
+- if that instance is locked, it must advertise backend-local `unlock` capability for signing
 - the current implementation fails fast instead of queueing for later reconnect
 
 ### 5.6 `wallet_sign_message`
@@ -352,8 +370,7 @@ tool contract itself.
 
 The current implementation does not define:
 
-- a generic multi-backend signer model
-- `local_account_dir` support
+- backend-kind metadata in MCP tool responses
 - `private_key_dev` support
 - `wallet_request_unlock`
 - blind signing

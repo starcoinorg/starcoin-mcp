@@ -2,10 +2,15 @@
 
 ## Status
 
-This document is the authoritative daemon protocol contract for the current `v1` implementation.
+This document is the authoritative client-facing daemon protocol contract for the current runtime.
 
-It matches the current JSON-RPC methods and `DAEMON_PROTOCOL_VERSION = 1` in `starmask-types`.
-Planned protocol evolution is tracked separately in `docs/unified-wallet-coordinator-evolution.md`.
+It matches the stable JSON-RPC methods used by `starmask-mcp` and `starmask-native-host`, where
+`DAEMON_PROTOCOL_VERSION = 1` in `starmask-types`.
+
+The daemon also implements the generic backend-agent binding described in
+`docs/wallet-backend-local-socket-binding.md`. Those backend methods use
+`GENERIC_BACKEND_PROTOCOL_VERSION = 2` and are referenced here only where they affect
+client-visible routing.
 
 ## 1. Purpose
 
@@ -47,9 +52,13 @@ Persistent local connections may be added later without changing the request or 
 
 ## 4. Protocol Version
 
-Current daemon protocol version:
+Current client-facing daemon protocol version:
 
 - `1`
+
+Generic backend-agent methods use:
+
+- `2`
 
 Every client request must include:
 
@@ -133,6 +142,9 @@ Result fields per instance:
 - `lock_state`
 - `profile_hint`
 - `last_seen_at`
+
+`extension_connected` is the legacy field name retained for compatibility. It indicates whether the
+wallet instance is currently connected to `starmaskd`, including generic backend agents.
 
 ### `wallet.listAccounts`
 
@@ -355,7 +367,10 @@ These methods drive the extension-side approval lifecycle and are further constr
    daemon may auto-route
 3. if multiple wallet instances match, the daemon must fail with `wallet_selection_required`
 4. if the target wallet is offline, the daemon returns `wallet_unavailable`
-5. if the target wallet is locked for a signing request, the daemon returns `wallet_locked`
+5. if the target wallet is locked and cannot perform backend-local unlock for the requested signing
+   flow, the daemon returns `wallet_locked`
+6. if the target wallet is locked but advertises backend-local `unlock` capability, the daemon may
+   still create the signing request and the backend performs approval and password entry locally
 
 ## 11. Error Codes
 
@@ -375,11 +390,11 @@ Transport failures remain transport failures and must not be projected as fake r
 
 ## 12. Deliberate `v1` Omissions
 
-The current daemon protocol does not define:
+This client-facing `v1` surface still does not define:
 
 - `request.createUnlock`
-- generic signer-backend registration
-- backend-kind metadata in wallet responses
+- any password-bearing daemon method
+- backend-kind metadata in `wallet.status` or `wallet.listInstances`
 
-Those changes belong to the planned multi-backend evolution and are tracked separately in
-`docs/unified-wallet-coordinator-evolution.md`.
+Generic backend registration and backend-agent request lifecycle methods are defined separately in
+`docs/wallet-backend-local-socket-binding.md`.
