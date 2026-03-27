@@ -2,6 +2,7 @@ mod support;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
+use std::time::{Duration, Instant};
 
 use pretty_assertions::assert_eq;
 use serde_json::json;
@@ -197,6 +198,23 @@ async fn list_wallet_accounts(
     .await;
     let JsonRpcResponse::Success(response) = response else {
         panic!("expected wallet.listAccounts success");
+    };
+    response.result
+}
+
+async fn has_available(socket_path: &std::path::Path, wallet_instance_id: &str) -> serde_json::Value {
+    let response = call_daemon(
+        socket_path,
+        "req-has-available",
+        "request.hasAvailable",
+        json!({
+            "protocol_version": 2,
+            "wallet_instance_id": wallet_instance_id,
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(response) = response else {
+        panic!("expected request.hasAvailable success");
     };
     response.result
 }
@@ -451,6 +469,297 @@ async fn unix_server_round_trips_generic_backend_register_and_resolve() {
             "kind": "signed_message",
             "signature": "0xsigned-message"
         })
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn unix_server_round_trips_generic_backend_reject() {
+    let (_tempdir, socket_path, server) = spawn_local_backend_server().await;
+
+    register_local_backend(
+        &socket_path,
+        "unlocked",
+        vec![local_backend_account("0x1", "0xabc", true, false)],
+    )
+    .await;
+
+    let created = call_daemon(
+        &socket_path,
+        "req-create-local-reject",
+        "request.createSignMessage",
+        json!({
+            "protocol_version": 1,
+            "client_request_id": "client-local-reject",
+            "account_address": "0x1",
+            "wallet_instance_id": "local-main",
+            "message": "hello",
+            "format": "utf8",
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(created) = created else {
+        panic!("expected create success");
+    };
+    let request_id = created.result["request_id"].as_str().unwrap();
+
+    let pulled = call_daemon(
+        &socket_path,
+        "req-pull-local-reject",
+        "request.pullNext",
+        json!({
+            "protocol_version": 2,
+            "wallet_instance_id": "local-main",
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(pulled) = pulled else {
+        panic!("expected pull success");
+    };
+    let delivery_lease_id = pulled.result["request"]["delivery_lease_id"].as_str().unwrap();
+
+    let presented = call_daemon(
+        &socket_path,
+        "req-presented-local-reject",
+        "request.presented",
+        json!({
+            "protocol_version": 2,
+            "wallet_instance_id": "local-main",
+            "request_id": request_id,
+            "delivery_lease_id": delivery_lease_id,
+            "presentation_id": "presentation-reject",
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(presented) = presented else {
+        panic!("expected presented success");
+    };
+    assert_eq!(presented.result["ok"], json!(true));
+
+    let rejected = call_daemon(
+        &socket_path,
+        "req-reject-local",
+        "request.reject",
+        json!({
+            "protocol_version": 2,
+            "wallet_instance_id": "local-main",
+            "request_id": request_id,
+            "presentation_id": "presentation-reject",
+            "reason_code": "request_rejected",
+            "reason_message": "User rejected the signing request",
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(rejected) = rejected else {
+        panic!("expected reject success");
+    };
+    assert_eq!(rejected.result["ok"], json!(true));
+
+    let status = call_daemon(
+        &socket_path,
+        "req-status-local-reject",
+        "request.getStatus",
+        json!({
+            "protocol_version": 1,
+            "request_id": request_id,
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(status) = status else {
+        panic!("expected status success");
+    };
+    assert_eq!(status.result["status"], json!("rejected"));
+    assert_eq!(status.result["error_code"], json!("request_rejected"));
+    assert_eq!(
+        status.result["error_message"],
+        json!("User rejected the signing request")
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn unix_server_reports_request_has_available_for_local_backend() {
+    let (_tempdir, socket_path, server) = spawn_local_backend_server().await;
+
+    register_local_backend(
+        &socket_path,
+        "unlocked",
+        vec![local_backend_account("0x1", "0xabc", true, false)],
+    )
+    .await;
+
+    let available = has_available(&socket_path, "local-main").await;
+    assert_eq!(available["available"], json!(false));
+
+    let created = call_daemon(
+        &socket_path,
+        "req-create-available",
+        "request.createSignMessage",
+        json!({
+            "protocol_version": 1,
+            "client_request_id": "client-has-available",
+            "account_address": "0x1",
+            "wallet_instance_id": "local-main",
+            "message": "hello",
+            "format": "utf8",
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(created) = created else {
+        panic!("expected create success");
+    };
+    assert_eq!(created.result["status"], json!("created"));
+
+    let available = has_available(&socket_path, "local-main").await;
+    assert_eq!(available["available"], json!(true));
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn unix_server_repeated_empty_pull_next_remains_stable_for_local_backend() {
+    let (_tempdir, socket_path, server) = spawn_local_backend_server().await;
+
+    register_local_backend(
+        &socket_path,
+        "unlocked",
+        vec![local_backend_account("0x1", "0xabc", true, false)],
+    )
+    .await;
+
+    let start = Instant::now();
+    for attempt in 0..32 {
+        let pulled = call_daemon(
+            &socket_path,
+            &format!("req-pull-empty-{attempt}"),
+            "request.pullNext",
+            json!({
+                "protocol_version": 2,
+                "wallet_instance_id": "local-main",
+            }),
+        )
+        .await;
+        let JsonRpcResponse::Success(pulled) = pulled else {
+            panic!("expected pull success");
+        };
+        assert!(pulled.result["request"].is_null());
+    }
+    assert!(start.elapsed() < Duration::from_secs(2));
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn unix_server_rejects_unknown_local_backend_registration() {
+    let (_tempdir, socket_path, server) = spawn_local_backend_server().await;
+
+    let response = call_daemon(
+        &socket_path,
+        "req-register-unknown-local",
+        "backend.register",
+        json!({
+            "protocol_version": 2,
+            "wallet_instance_id": "local-unknown",
+            "backend_kind": "local_account_dir",
+            "transport_kind": "local_socket",
+            "approval_surface": "tty_prompt",
+            "instance_label": "Local Unknown",
+            "lock_state": "unlocked",
+            "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction"],
+            "backend_metadata": {
+                "account_provider_kind": "local",
+                "prompt_mode": "tty_prompt"
+            },
+            "accounts": [],
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Error(response) = response else {
+        panic!("expected backend registration failure");
+    };
+    assert_eq!(
+        response.error.code,
+        starmask_types::SharedErrorCode::BackendNotAllowed
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn unix_server_rejects_generic_backend_registration_over_v1_protocol() {
+    let (_tempdir, socket_path, server) = spawn_local_backend_server().await;
+
+    let response = call_daemon(
+        &socket_path,
+        "req-register-local-v1",
+        "backend.register",
+        json!({
+            "protocol_version": 1,
+            "wallet_instance_id": "local-main",
+            "backend_kind": "local_account_dir",
+            "transport_kind": "local_socket",
+            "approval_surface": "tty_prompt",
+            "instance_label": "Local Main",
+            "lock_state": "unlocked",
+            "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction"],
+            "backend_metadata": {
+                "account_provider_kind": "local",
+                "prompt_mode": "tty_prompt"
+            },
+            "accounts": [],
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Error(response) = response else {
+        panic!("expected backend registration failure");
+    };
+    assert_eq!(
+        response.error.code,
+        starmask_types::SharedErrorCode::ProtocolVersionMismatch
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn unix_server_rejects_local_backend_registration_when_backend_is_not_enabled() {
+    let (_tempdir, socket_path, server) = spawn_test_server().await;
+
+    let response = call_daemon(
+        &socket_path,
+        "req-register-disabled-local",
+        "backend.register",
+        json!({
+            "protocol_version": 2,
+            "wallet_instance_id": "local-main",
+            "backend_kind": "local_account_dir",
+            "transport_kind": "local_socket",
+            "approval_surface": "tty_prompt",
+            "instance_label": "Local Main",
+            "lock_state": "unlocked",
+            "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction"],
+            "backend_metadata": {
+                "account_provider_kind": "local",
+                "prompt_mode": "tty_prompt"
+            },
+            "accounts": [],
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Error(response) = response else {
+        panic!("expected backend registration failure");
+    };
+    assert_eq!(
+        response.error.code,
+        starmask_types::SharedErrorCode::BackendNotAllowed
     );
 
     server.abort();

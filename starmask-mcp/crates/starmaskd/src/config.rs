@@ -922,6 +922,23 @@ mod tests {
     }
 
     #[test]
+    fn legacy_extension_settings_translate_to_one_implicit_backend() {
+        let config = FileConfig {
+            allowed_extension_ids: Some(vec!["ext.allowed".to_owned()]),
+            native_host_name: Some("com.starcoin.test".to_owned()),
+            ..Default::default()
+        };
+
+        let backends = super::build_wallet_backends(Channel::Development, &config).unwrap();
+        assert_eq!(backends.len(), 1);
+        let backend = backends[0].as_extension().unwrap();
+        assert_eq!(backend.common.backend_id, "browser-default");
+        assert_eq!(backend.common.instance_label, "Browser Default");
+        assert!(backend.allowed_extension_ids.contains("ext.allowed"));
+        assert_eq!(backend.native_host_name, "com.starcoin.test");
+    }
+
+    #[test]
     fn phase2_backend_ids_must_be_unique() {
         let error = build_phase2_backends(
             Channel::Development,
@@ -1095,6 +1112,67 @@ mod tests {
                 .to_string()
                 .contains("escapes the configured account_dir")
         );
+    }
+
+    #[test]
+    fn local_account_dir_rejects_missing_path() {
+        let dir = tempdir().unwrap();
+        let missing = dir.path().join("missing");
+        let error = build_phase2_backends(
+            Channel::Development,
+            &[FileWalletBackendConfig {
+                backend_id: "local-main".to_owned(),
+                backend_kind: BackendKind::LocalAccountDir,
+                enabled: true,
+                instance_label: "Local Main".to_owned(),
+                approval_surface: ApprovalSurface::TtyPrompt,
+                allowed_extension_ids: None,
+                native_host_name: None,
+                profile_hint: None,
+                account_dir: Some(missing.clone()),
+                prompt_mode: Some(super::LocalPromptMode::TtyPrompt),
+                chain_id: Some(251),
+                unlock_cache_ttl_seconds: Some(60),
+                allow_read_only_accounts: None,
+                require_strict_permissions: Some(false),
+            }],
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains(&format!("failed to canonicalize account_dir {}", missing.display()))
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn local_account_dir_requires_chain_id() {
+        let dir = tempdir().unwrap();
+        fs::set_permissions(dir.path(), fs::Permissions::from_mode(0o700)).unwrap();
+        let error = build_phase2_backends(
+            Channel::Development,
+            &[FileWalletBackendConfig {
+                backend_id: "local-main".to_owned(),
+                backend_kind: BackendKind::LocalAccountDir,
+                enabled: true,
+                instance_label: "Local Main".to_owned(),
+                approval_surface: ApprovalSurface::TtyPrompt,
+                allowed_extension_ids: None,
+                native_host_name: None,
+                profile_hint: None,
+                account_dir: Some(dir.path().to_path_buf()),
+                prompt_mode: Some(super::LocalPromptMode::TtyPrompt),
+                chain_id: None,
+                unlock_cache_ttl_seconds: Some(60),
+                allow_read_only_accounts: None,
+                require_strict_permissions: Some(false),
+            }],
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("must configure chain_id"));
     }
 
     #[test]

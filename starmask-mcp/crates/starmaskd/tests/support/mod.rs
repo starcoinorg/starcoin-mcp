@@ -13,14 +13,14 @@ use starmask_core::{
     AllowAllPolicy, Clock, Coordinator, CoordinatorCommand, CoordinatorConfig, CoordinatorResponse,
     CoreResult, IdGenerator,
     commands::{
-        CreateSignTransactionCommand, MarkRequestPresentedCommand, RegisterExtensionCommand,
-        ResolveRequestCommand, UpdateExtensionAccountsCommand,
+        CreateSignTransactionCommand, MarkRequestPresentedCommand, RegisterBackendCommand,
+        RegisterExtensionCommand, ResolveRequestCommand, UpdateExtensionAccountsCommand,
     },
 };
 use starmask_types::{
-    ClientRequestId, DeliveryLeaseId, JsonRpcRequest, JsonRpcResponse, LockState,
-    NativeBridgeAccount, PresentationId, RequestId, RequestResult, TimestampMs,
-    WalletAccountRecord, WalletInstanceId,
+    ApprovalSurface, BackendKind, ClientRequestId, DeliveryLeaseId, JsonRpcRequest,
+    JsonRpcResponse, LockState, NativeBridgeAccount, PresentationId, RequestId, RequestResult,
+    TimestampMs, TransportKind, WalletAccountRecord, WalletCapability, WalletInstanceId,
 };
 use starmaskd::sqlite_store::SqliteStore;
 
@@ -131,6 +131,39 @@ pub fn register_wallet(
             },
         ))
         .expect("wallet account update should succeed");
+}
+
+pub fn register_local_backend(
+    coordinator: &mut Coordinator<SqliteStore, AllowAllPolicy, FixedClock, SequentialIds>,
+    wallet_instance_id: &WalletInstanceId,
+    lock_state: LockState,
+    accounts: Vec<WalletAccountRecord>,
+) {
+    coordinator
+        .dispatch(CoordinatorCommand::RegisterBackend(RegisterBackendCommand {
+            wallet_instance_id: wallet_instance_id.clone(),
+            backend_kind: BackendKind::LocalAccountDir,
+            transport_kind: TransportKind::LocalSocket,
+            approval_surface: ApprovalSurface::TtyPrompt,
+            instance_label: "Local Main".to_owned(),
+            extension_id: String::new(),
+            extension_version: String::new(),
+            protocol_version: 2,
+            capabilities: vec![
+                WalletCapability::Unlock,
+                WalletCapability::GetPublicKey,
+                WalletCapability::SignMessage,
+                WalletCapability::SignTransaction,
+            ],
+            backend_metadata: serde_json::json!({
+                "account_provider_kind": "local",
+                "prompt_mode": "tty_prompt",
+            }),
+            profile_hint: None,
+            lock_state,
+            accounts,
+        }))
+        .expect("local backend registration should succeed");
 }
 
 pub fn create_sign_transaction(
