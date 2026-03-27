@@ -127,12 +127,12 @@ Current evidence:
 | `local_account_dir` capability and helper behavior | `strong` | `crates/starmask-local-account-agent/src/agent.rs` covers locked-account capability advertisement, public-key formatting, decode helpers, snapshot sync, heartbeat payload reporting, read-only account listing, and read-only signing rejection. | No obvious helper-layer acceptance gap remains. |
 | `local_account_dir` signing flows | `strong` | `crates/starmask-local-account-agent/src/agent.rs` proves `sign_message` and `sign_transaction`; `crates/starmask-local-account-agent/src/agent/stack_tests.rs` proves both flows again through a real daemon plus local agent over the local-socket path. | No major automated gap remains in signing-flow correctness. |
 | Backend-local unlock behavior | `strong` | `crates/starmask-local-account-agent/src/agent.rs` covers unlock success, wrong-password rejection, cancellation rejection, fail-closed behavior without `unlock`, user rejection for both request kinds, and an explicit proof that the unlock password does not appear in the daemon RPC transcript. | This now covers the backend-local unlock contract. |
-| Filesystem and security checks | `partial` | `crates/starmaskd/src/config.rs` covers insecure-permission rejection and symlink-escape rejection; `crates/starmask-local-account-agent/src/prompt.rs` covers canonical payload rendering and keeps host-provided display fields labeled as untrusted; `crates/starmask-local-account-agent/src/agent.rs` proves the unlock password does not cross the daemon RPC boundary. | The main remaining gap is default log-redaction evidence for sensitive signing material. The repository still does not contain an explicit automated or manual verification record for that release-gate item. |
+| Filesystem and security checks | `strong` | `crates/starmaskd/src/config.rs` covers insecure-permission rejection and symlink-escape rejection; `crates/starmask-local-account-agent/src/prompt.rs` covers canonical payload rendering and keeps host-provided display fields labeled as untrusted; `crates/starmask-local-account-agent/src/agent.rs` proves the unlock password does not cross the daemon RPC boundary; `crates/starmask-local-account-agent/src/agent/stack_tests.rs` now captures daemon logs during unlock plus signing flows and proves default logs omit the unlock password, exported private key bytes, canonical message text, and raw transaction payload bytes. | No major automated security-evidence gap remains in the repository. |
 | Phase-2 recovery | `strong` | `crates/starmaskd/tests/local_backend_recovery.rs` now covers restart with a generic backend registration record present, plus `created`, `dispatched`, and `pending_user_approval` local-backend requests; `crates/starmask-local-account-agent/src/agent/stack_tests.rs` covers backend restart before and after `request.presented`, including same-instance resume. | No major automated gap remains in phase-2 recovery. |
 | Migration and compatibility | `strong` | `crates/starmaskd/src/sqlite_store.rs` covers positive `v1 -> v2` backfill/readability and rollback safety; `crates/starmaskd/tests/migration_compatibility.rs` proves migrated extension-backed rows still route requests and still respect result retention; `crates/starmaskd/tests/transport.rs` proves `protocol_version = 1` clients are rejected rather than silently treated as generic `v2` clients. | No major automated compatibility gap remains. |
 | Configuration acceptance | `strong` | `crates/starmaskd/src/config.rs` now explicitly covers legacy implicit-backend translation, legacy-field conflicts, duplicate backend IDs, prompt-mode validation, invalid local-account paths, missing `chain_id`, strict permissions, and symlink escape rejection. | No major automated gap remains in config validation. |
 | Performance and boundedness | `strong` | `crates/starmaskd/tests/transport.rs` proves repeated empty `request.pullNext` stays stable, `crates/starmaskd/tests/transport.rs` proves account snapshot replacement is atomic, `crates/starmaskd/tests/migration_compatibility.rs` proves result retention remains bounded after migration, and `crates/starmaskd/tests/local_backend_recovery.rs` proves one backend cannot resume another backend's presented request. | No major automated boundedness gap remains. |
-| Phase-2 release gate | `close, but not complete` | Most phase-2 acceptance areas now have direct automated evidence in one obvious test layer. | The remaining release-gate gap is security evidence for default logging behavior around sensitive signing material. That still needs either an explicit automated test or a manual verification record. |
+| Phase-2 release gate | `strong` | Phase-2 acceptance areas now have direct automated evidence in one obvious test layer, including explicit default-log redaction coverage for sensitive signing material. | No major automated release-gate gap remains inside this repository. |
 
 Conclusion:
 
@@ -141,15 +141,15 @@ Conclusion:
 - This branch adds the missing structural layers that were previously absent: phase-2 backend-path
   recovery tests, full daemon-plus-agent local-stack tests, migration compatibility smoke tests,
   and explicit boundedness checks.
-- The main remaining gap is no longer functional correctness. It is release evidence for default
-  log redaction around sensitive signing material.
+- The remaining release work is now mostly external or environment-specific validation rather than
+  core phase-2 correctness or security evidence inside this repository.
 
 ## Repository-Level Conclusion
 
 1. `starcoin-node-mcp` has a useful and reasonably well-structured automated baseline, but it is
    still short of its own release-gate standard.
-2. `starmask-mcp` now has strong automated coverage for both its `v1` contract and almost all of
-   its phase-2 contract.
+2. `starmask-mcp` now has strong automated coverage for both its `v1` contract and its documented
+   phase-2 contract inside the repository.
 3. The highest-value remaining testing work is now concentrated in two places:
    - `starcoin-node-mcp`: resource-governance and live transaction end-to-end coverage
-   - `starmask-mcp`: explicit release evidence for default security logging behavior
+   - `starmask-mcp`: external/manual environment validation beyond repo-local automation

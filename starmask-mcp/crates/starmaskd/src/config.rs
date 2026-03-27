@@ -487,9 +487,20 @@ fn build_wallet_backends(
     channel: Channel,
     file_config: &FileConfig,
 ) -> Result<Vec<WalletBackendConfig>> {
-    let legacy_allowed_extension_ids_env = env::var("STARMASKD_ALLOWED_EXTENSION_IDS").ok();
-    let legacy_native_host_name_env = env::var("STARMASKD_NATIVE_HOST_NAME").ok();
+    build_wallet_backends_with_legacy_env(
+        channel,
+        file_config,
+        env::var("STARMASKD_ALLOWED_EXTENSION_IDS").ok(),
+        env::var("STARMASKD_NATIVE_HOST_NAME").ok(),
+    )
+}
 
+fn build_wallet_backends_with_legacy_env(
+    channel: Channel,
+    file_config: &FileConfig,
+    legacy_allowed_extension_ids_env: Option<String>,
+    legacy_native_host_name_env: Option<String>,
+) -> Result<Vec<WalletBackendConfig>> {
     if let Some(file_backends) = &file_config.wallet_backends {
         if file_config.allowed_extension_ids.is_some()
             || file_config.native_host_name.is_some()
@@ -929,7 +940,9 @@ mod tests {
             ..Default::default()
         };
 
-        let backends = super::build_wallet_backends(Channel::Development, &config).unwrap();
+        let backends =
+            super::build_wallet_backends_with_legacy_env(Channel::Development, &config, None, None)
+                .unwrap();
         assert_eq!(backends.len(), 1);
         let backend = backends[0].as_extension().unwrap();
         assert_eq!(backend.common.backend_id, "browser-default");
@@ -1139,11 +1152,10 @@ mod tests {
         )
         .unwrap_err();
 
-        assert!(
-            error
-                .to_string()
-                .contains(&format!("failed to canonicalize account_dir {}", missing.display()))
-        );
+        assert!(error.to_string().contains(&format!(
+            "failed to canonicalize account_dir {}",
+            missing.display()
+        )));
     }
 
     #[cfg(unix)]

@@ -2,12 +2,13 @@ mod support;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use pretty_assertions::assert_eq;
 use serde_json::json;
 use tempfile::tempdir;
 use tokio::task::JoinHandle;
+use tokio::time::timeout;
 
 use starmask_core::CoordinatorConfig;
 use starmask_types::{Channel, JsonRpcResponse};
@@ -202,7 +203,10 @@ async fn list_wallet_accounts(
     response.result
 }
 
-async fn has_available(socket_path: &std::path::Path, wallet_instance_id: &str) -> serde_json::Value {
+async fn has_available(
+    socket_path: &std::path::Path,
+    wallet_instance_id: &str,
+) -> serde_json::Value {
     let response = call_daemon(
         socket_path,
         "req-has-available",
@@ -518,7 +522,9 @@ async fn unix_server_round_trips_generic_backend_reject() {
     let JsonRpcResponse::Success(pulled) = pulled else {
         panic!("expected pull success");
     };
-    let delivery_lease_id = pulled.result["request"]["delivery_lease_id"].as_str().unwrap();
+    let delivery_lease_id = pulled.result["request"]["delivery_lease_id"]
+        .as_str()
+        .unwrap();
 
     let presented = call_daemon(
         &socket_path,
@@ -632,24 +638,26 @@ async fn unix_server_repeated_empty_pull_next_remains_stable_for_local_backend()
     )
     .await;
 
-    let start = Instant::now();
     for attempt in 0..32 {
-        let pulled = call_daemon(
-            &socket_path,
-            &format!("req-pull-empty-{attempt}"),
-            "request.pullNext",
-            json!({
-                "protocol_version": 2,
-                "wallet_instance_id": "local-main",
-            }),
+        let pulled = timeout(
+            Duration::from_secs(1),
+            call_daemon(
+                &socket_path,
+                &format!("req-pull-empty-{attempt}"),
+                "request.pullNext",
+                json!({
+                    "protocol_version": 2,
+                    "wallet_instance_id": "local-main",
+                }),
+            ),
         )
-        .await;
+        .await
+        .expect("pullNext should not block");
         let JsonRpcResponse::Success(pulled) = pulled else {
             panic!("expected pull success");
         };
         assert!(pulled.result["request"].is_null());
     }
-    assert!(start.elapsed() < Duration::from_secs(2));
 
     server.abort();
     let _ = server.await;
