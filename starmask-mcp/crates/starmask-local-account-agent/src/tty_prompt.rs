@@ -1,16 +1,28 @@
 #![forbid(unsafe_code)]
 
-use std::io::{self, Write};
+use std::{
+    fmt::Write as _,
+    io::{self, Write},
+};
 
 use starcoin_account_api::AccountInfo;
 use starmask_types::{MessageFormat, PulledRequest, RequestKind, WalletCapability};
 
 use crate::request_support::{RequestRejection, ensure_local_unlock_capability};
 
-#[derive(Clone, Debug)]
+pub(crate) trait ApprovalPrompt: Send + Sync {
+    fn prompt_for_request(
+        &self,
+        request: &PulledRequest,
+        account_info: &AccountInfo,
+        capabilities: &[WalletCapability],
+    ) -> std::result::Result<PromptApproval, RequestRejection>;
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct PromptApproval {
-    approved: bool,
-    password: Option<String>,
+    pub(crate) approved: bool,
+    pub(crate) password: Option<String>,
 }
 
 impl PromptApproval {
@@ -23,46 +35,76 @@ impl PromptApproval {
     }
 }
 
-pub(crate) fn prompt_for_request(
-    request: &PulledRequest,
-    account_info: &AccountInfo,
-    capabilities: &[WalletCapability],
-) -> std::result::Result<PromptApproval, RequestRejection> {
-    ensure_local_unlock_capability(account_info.is_locked, capabilities)?;
-    print_request_summary(request, account_info);
+#[derive(Default)]
+pub(crate) struct TtyApprovalPrompt;
 
-    let approved = prompt_yes_no("Approve request? [y/N]: ").map_err(|error| RequestRejection {
-        reason_code: starmask_types::RejectReasonCode::BackendUnavailable,
-        message: Some(format!("Failed to read local approval input: {error}")),
-    })?;
-    if !approved {
-        return Ok(PromptApproval {
-            approved: false,
-            password: None,
-        });
-    }
+impl ApprovalPrompt for TtyApprovalPrompt {
+    fn prompt_for_request(
+        &self,
+        request: &PulledRequest,
+        account_info: &AccountInfo,
+        capabilities: &[WalletCapability],
+    ) -> std::result::Result<PromptApproval, RequestRejection> {
+        ensure_local_unlock_capability(account_info.is_locked, capabilities)?;
+        print_request_summary(request, account_info);
 
-    let password = if account_info.is_locked {
-        let password =
-            rpassword::prompt_password("Account password: ").map_err(|error| RequestRejection {
+        let approved =
+            prompt_yes_no("Approve request? [y/N]: ").map_err(|error| RequestRejection {
                 reason_code: starmask_types::RejectReasonCode::BackendUnavailable,
-                message: Some(format!("Failed to read account password: {error}")),
+                message: Some(format!("Failed to read local approval input: {error}")),
             })?;
-        if password.is_empty() {
-            return Err(RequestRejection {
-                reason_code: starmask_types::RejectReasonCode::WalletLocked,
-                message: Some("Password entry was cancelled".to_owned()),
+        if !approved {
+            return Ok(PromptApproval {
+                approved: false,
+                password: None,
             });
         }
-        Some(password)
-    } else {
-        None
-    };
 
-    Ok(PromptApproval {
-        approved: true,
-        password,
-    })
+        let password = if account_info.is_locked {
+            let password = rpassword::prompt_password("Account password: ").map_err(|error| {
+                RequestRejection {
+                    reason_code: starmask_types::RejectReasonCode::BackendUnavailable,
+                    message: Some(format!("Failed to read account password: {error}")),
+                }
+            })?;
+            if password.is_empty() {
+                return Err(RequestRejection {
+                    reason_code: starmask_types::RejectReasonCode::WalletLocked,
+                    message: Some("Password entry was cancelled".to_owned()),
+                });
+            }
+            Some(password)
+        } else {
+            None
+        };
+
+        Ok(PromptApproval {
+            approved: true,
+            password,
+        })
+    }
+}
+
+fn prompt_yes_no(prompt: &str) -> io::Result<bool> {
+    let mut stderr = io::stderr().lock();
+    stderr.write_all(prompt.as_bytes())?;
+    stderr.flush()?;
+
+    let mut line = String::new();
+    let bytes_read = io::stdin().read_line(&mut line)?;
+    parse_prompt_yes_no(bytes_read, &line)
+}
+
+fn parse_prompt_yes_no(bytes_read: usize, line: &str) -> io::Result<bool> {
+    if bytes_read == 0 {
+        return Err(io::Error::new(
+            io::ErrorKind::UnexpectedEof,
+            "approval prompt stdin is closed",
+        ));
+    }
+
+    let normalized = line.trim().to_ascii_lowercase();
+    Ok(matches!(normalized.as_str(), "y" | "yes"))
 }
 
 fn sanitize_for_tty(input: &str) -> String {
@@ -108,48 +150,59 @@ fn is_unicode_format_character(character: char) -> bool {
     )
 }
 
-fn print_tty_field(label: &str, value: &str) {
-    eprintln!("  {label}: {}", sanitize_for_tty(value));
+fn write_tty_field(output: &mut String, label: &str, value: &str) {
+    writeln!(output, "  {label}: {}", sanitize_for_tty(value)).unwrap();
 }
 
-fn print_untrusted_tty_field(label: &str, value: &str) {
-    eprintln!("  {label} (untrusted): {}", sanitize_for_tty(value));
+fn write_untrusted_tty_field(output: &mut String, label: &str, value: &str) {
+    writeln!(output, "  {label} (untrusted): {}", sanitize_for_tty(value)).unwrap();
 }
 
 fn print_request_summary(request: &PulledRequest, account_info: &AccountInfo) {
-    eprintln!();
-    eprintln!("Starmask Local Signing Request");
-    eprintln!("  Request ID: {}", request.request_id);
+    eprint!("{}", render_request_summary(request, account_info));
+}
+
+fn render_request_summary(request: &PulledRequest, account_info: &AccountInfo) -> String {
+    let mut output = String::new();
+    output.push('\n');
+    writeln!(output, "Starmask Local Signing Request").unwrap();
+    writeln!(output, "  Request ID: {}", request.request_id).unwrap();
     let client_request_id = request.client_request_id.to_string();
-    print_untrusted_tty_field("Client Request ID", &client_request_id);
-    print_tty_field("Account", &request.account_address);
-    eprintln!("  Account Locked: {}", account_info.is_locked);
-    eprintln!("  Kind: {}", request_kind_label(request.kind));
+    write_untrusted_tty_field(&mut output, "Client Request ID", &client_request_id);
+    write_tty_field(&mut output, "Account", &request.account_address);
+    writeln!(output, "  Account Locked: {}", account_info.is_locked).unwrap();
+    writeln!(output, "  Kind: {}", request_kind_label(request.kind)).unwrap();
     let payload_hash = request.payload_hash.to_string();
-    print_tty_field("Payload Hash", &payload_hash);
+    write_tty_field(&mut output, "Payload Hash", &payload_hash);
     if let Some(display_hint) = &request.display_hint {
-        print_untrusted_tty_field("Display Hint", display_hint);
+        write_untrusted_tty_field(&mut output, "Display Hint", display_hint);
     }
     if let Some(client_context) = &request.client_context {
-        print_untrusted_tty_field("Client Context", client_context);
+        write_untrusted_tty_field(&mut output, "Client Context", client_context);
     }
 
     match request.kind {
         RequestKind::SignTransaction => {
             if let Some(raw_txn_bcs_hex) = &request.raw_txn_bcs_hex {
-                print_untrusted_tty_field("Raw Transaction BCS", raw_txn_bcs_hex);
+                write_untrusted_tty_field(&mut output, "Raw Transaction BCS", raw_txn_bcs_hex);
             }
         }
         RequestKind::SignMessage => {
             if let Some(message_format) = request.message_format {
-                eprintln!("  Message Format: {}", message_format_label(message_format));
+                writeln!(
+                    output,
+                    "  Message Format: {}",
+                    message_format_label(message_format)
+                )
+                .unwrap();
             }
             if let Some(message) = &request.message {
-                print_untrusted_tty_field("Canonical Message", message);
+                write_untrusted_tty_field(&mut output, "Canonical Message", message);
             }
         }
     }
-    eprintln!();
+    output.push('\n');
+    output
 }
 
 fn request_kind_label(kind: RequestKind) -> &'static str {
@@ -166,22 +219,18 @@ fn message_format_label(format: MessageFormat) -> &'static str {
     }
 }
 
-fn prompt_yes_no(prompt: &str) -> io::Result<bool> {
-    let mut stderr = io::stderr().lock();
-    stderr.write_all(prompt.as_bytes())?;
-    stderr.flush()?;
-
-    let mut line = String::new();
-    io::stdin().read_line(&mut line)?;
-    let normalized = line.trim().to_ascii_lowercase();
-    Ok(matches!(normalized.as_str(), "y" | "yes"))
-}
-
 #[cfg(test)]
 mod tests {
-    use pretty_assertions::assert_eq;
+    use std::io;
 
-    use super::sanitize_for_tty;
+    use pretty_assertions::assert_eq;
+    use starcoin_account_api::AccountInfo;
+    use starmask_types::{
+        ClientRequestId, DeliveryLeaseId, MessageFormat, PayloadHash, PulledRequest, RequestId,
+        RequestKind,
+    };
+
+    use super::{parse_prompt_yes_no, render_request_summary, sanitize_for_tty};
 
     #[test]
     fn sanitize_for_tty_escapes_control_and_format_sequences_but_preserves_unicode() {
@@ -189,5 +238,84 @@ mod tests {
             sanitize_for_tty("hi\nthere\x1b[31m\t\u{202e}你好\u{2066}"),
             "hi\\nthere\\u{1b}[31m\\t\\u{202e}你好\\u{2066}"
         );
+    }
+
+    #[test]
+    fn parse_prompt_yes_no_rejects_closed_stdin() {
+        let error = parse_prompt_yes_no(0, "").unwrap_err();
+
+        assert_eq!(error.kind(), io::ErrorKind::UnexpectedEof);
+        assert_eq!(error.to_string(), "approval prompt stdin is closed");
+    }
+
+    #[test]
+    fn parse_prompt_yes_no_accepts_only_affirmative_answers() {
+        assert!(parse_prompt_yes_no(2, "y\n").unwrap());
+        assert!(parse_prompt_yes_no(4, "YeS\n").unwrap());
+        assert!(!parse_prompt_yes_no(2, "n\n").unwrap());
+        assert!(!parse_prompt_yes_no(1, "\n").unwrap());
+    }
+
+    fn sample_account_info(locked: bool) -> AccountInfo {
+        let mut account = AccountInfo::random();
+        account.is_locked = locked;
+        account
+    }
+
+    #[test]
+    fn render_request_summary_marks_host_fields_untrusted_but_keeps_canonical_message() {
+        let request = PulledRequest {
+            request_id: RequestId::new("req-sign-message").unwrap(),
+            client_request_id: ClientRequestId::new("client-sign-message").unwrap(),
+            kind: RequestKind::SignMessage,
+            account_address: "0x1".to_owned(),
+            payload_hash: PayloadHash::new("payload-sign-message").unwrap(),
+            display_hint: Some("Friendly summary".to_owned()),
+            client_context: Some("phase2-test".to_owned()),
+            resume_required: false,
+            delivery_lease_id: Some(DeliveryLeaseId::new("lease-sign-message").unwrap()),
+            lease_expires_at: None,
+            presentation_id: None,
+            presentation_expires_at: None,
+            raw_txn_bcs_hex: None,
+            message: Some("0xdeadbeef".to_owned()),
+            message_format: Some(MessageFormat::Hex),
+        };
+
+        let rendered = render_request_summary(&request, &sample_account_info(true));
+
+        assert!(rendered.contains("Display Hint (untrusted): Friendly summary"));
+        assert!(rendered.contains("Client Context (untrusted): phase2-test"));
+        assert!(rendered.contains("Canonical Message (untrusted): 0xdeadbeef"));
+        assert!(rendered.contains("Message Format: hex"));
+        assert!(rendered.contains("Account Locked: true"));
+    }
+
+    #[test]
+    fn render_request_summary_includes_raw_transaction_bytes_for_sign_transaction() {
+        let request = PulledRequest {
+            request_id: RequestId::new("req-sign-transaction").unwrap(),
+            client_request_id: ClientRequestId::new("client-sign-transaction").unwrap(),
+            kind: RequestKind::SignTransaction,
+            account_address: "0x1".to_owned(),
+            payload_hash: PayloadHash::new("payload-sign-transaction").unwrap(),
+            display_hint: Some("Transfer".to_owned()),
+            client_context: Some("phase2-test".to_owned()),
+            resume_required: false,
+            delivery_lease_id: Some(DeliveryLeaseId::new("lease-sign-transaction").unwrap()),
+            lease_expires_at: None,
+            presentation_id: None,
+            presentation_expires_at: None,
+            raw_txn_bcs_hex: Some("0xabc123".to_owned()),
+            message: None,
+            message_format: None,
+        };
+
+        let rendered = render_request_summary(&request, &sample_account_info(false));
+
+        assert!(rendered.contains("Kind: sign_transaction"));
+        assert!(rendered.contains("Raw Transaction BCS (untrusted): 0xabc123"));
+        assert!(rendered.contains("Display Hint (untrusted): Transfer"));
+        assert!(rendered.contains("Account Locked: false"));
     }
 }

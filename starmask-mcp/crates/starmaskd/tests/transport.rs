@@ -115,6 +115,92 @@ async fn register_wallet(socket_path: &std::path::Path, wallet_instance_id: &str
     assert_eq!(response.result["accepted"], json!(true));
 }
 
+fn local_backend_account(
+    address: &str,
+    public_key: &str,
+    is_default: bool,
+    is_locked: bool,
+) -> serde_json::Value {
+    json!({
+        "address": address,
+        "label": null,
+        "public_key": public_key,
+        "is_default": is_default,
+        "is_read_only": false,
+        "is_locked": is_locked,
+    })
+}
+
+async fn register_local_backend(
+    socket_path: &std::path::Path,
+    lock_state: &str,
+    accounts: Vec<serde_json::Value>,
+) {
+    let registered = call_daemon(
+        socket_path,
+        "req-register-local",
+        "backend.register",
+        json!({
+            "protocol_version": 2,
+            "wallet_instance_id": "local-main",
+            "backend_kind": "local_account_dir",
+            "transport_kind": "local_socket",
+            "approval_surface": "tty_prompt",
+            "instance_label": "Local Main",
+            "lock_state": lock_state,
+            "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction"],
+            "backend_metadata": {
+                "account_provider_kind": "local",
+                "prompt_mode": "tty_prompt"
+            },
+            "accounts": accounts,
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(registered) = registered else {
+        panic!("expected register success");
+    };
+    assert_eq!(registered.result["accepted"], json!(true));
+}
+
+async fn list_wallet_instances(socket_path: &std::path::Path) -> serde_json::Value {
+    let response = call_daemon(
+        socket_path,
+        "req-list-instances",
+        "wallet.listInstances",
+        json!({
+            "protocol_version": 1,
+            "connected_only": true,
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(response) = response else {
+        panic!("expected wallet.listInstances success");
+    };
+    response.result
+}
+
+async fn list_wallet_accounts(
+    socket_path: &std::path::Path,
+    wallet_instance_id: &str,
+) -> serde_json::Value {
+    let response = call_daemon(
+        socket_path,
+        "req-list-accounts",
+        "wallet.listAccounts",
+        json!({
+            "protocol_version": 1,
+            "wallet_instance_id": wallet_instance_id,
+            "include_public_key": true,
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(response) = response else {
+        panic!("expected wallet.listAccounts success");
+    };
+    response.result
+}
+
 #[tokio::test]
 async fn unix_server_round_trips_extension_register_create_and_status() {
     let (_tempdir, socket_path, server) = spawn_test_server().await;
@@ -265,38 +351,12 @@ async fn unix_server_reports_idempotency_conflict_for_changed_payload() {
 async fn unix_server_round_trips_generic_backend_register_and_resolve() {
     let (_tempdir, socket_path, server) = spawn_local_backend_server().await;
 
-    let registered = call_daemon(
+    register_local_backend(
         &socket_path,
-        "req-register-local",
-        "backend.register",
-        json!({
-            "protocol_version": 2,
-            "wallet_instance_id": "local-main",
-            "backend_kind": "local_account_dir",
-            "transport_kind": "local_socket",
-            "approval_surface": "tty_prompt",
-            "instance_label": "Local Main",
-            "lock_state": "unlocked",
-            "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction"],
-            "backend_metadata": {
-                "account_provider_kind": "local",
-                "prompt_mode": "tty_prompt"
-            },
-            "accounts": [{
-                "address": "0x1",
-                "label": null,
-                "public_key": "0xabc",
-                "is_default": true,
-                "is_read_only": false,
-                "is_locked": false
-            }],
-        }),
+        "unlocked",
+        vec![local_backend_account("0x1", "0xabc", true, false)],
     )
     .await;
-    let JsonRpcResponse::Success(registered) = registered else {
-        panic!("expected register success");
-    };
-    assert_eq!(registered.result["accepted"], json!(true));
 
     let created = call_daemon(
         &socket_path,
@@ -391,6 +451,102 @@ async fn unix_server_round_trips_generic_backend_register_and_resolve() {
             "kind": "signed_message",
             "signature": "0xsigned-message"
         })
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn unix_server_backend_heartbeat_updates_lock_state() {
+    let (_tempdir, socket_path, server) = spawn_local_backend_server().await;
+
+    register_local_backend(
+        &socket_path,
+        "unlocked",
+        vec![local_backend_account("0x1", "0xabc", true, false)],
+    )
+    .await;
+
+    let heartbeat = call_daemon(
+        &socket_path,
+        "req-heartbeat-local",
+        "backend.heartbeat",
+        json!({
+            "protocol_version": 2,
+            "wallet_instance_id": "local-main",
+            "presented_request_ids": [],
+            "lock_state": "locked",
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(heartbeat) = heartbeat else {
+        panic!("expected heartbeat success");
+    };
+    assert_eq!(heartbeat.result["ok"], json!(true));
+
+    let instances = list_wallet_instances(&socket_path).await;
+    assert_eq!(
+        instances["wallet_instances"][0]["wallet_instance_id"],
+        json!("local-main")
+    );
+    assert_eq!(
+        instances["wallet_instances"][0]["lock_state"],
+        json!("locked")
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn unix_server_backend_update_accounts_replaces_snapshot() {
+    let (_tempdir, socket_path, server) = spawn_local_backend_server().await;
+
+    register_local_backend(
+        &socket_path,
+        "unlocked",
+        vec![local_backend_account("0x1", "0xabc", true, false)],
+    )
+    .await;
+
+    let updated = call_daemon(
+        &socket_path,
+        "req-update-accounts-local",
+        "backend.updateAccounts",
+        json!({
+            "protocol_version": 2,
+            "wallet_instance_id": "local-main",
+            "lock_state": "locked",
+            "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction"],
+            "accounts": [
+                local_backend_account("0x2", "0xdef", true, false)
+            ],
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(updated) = updated else {
+        panic!("expected update accounts success");
+    };
+    assert_eq!(updated.result["ok"], json!(true));
+
+    let accounts = list_wallet_accounts(&socket_path, "local-main").await;
+    assert_eq!(
+        accounts["wallet_instances"][0]["wallet_instance_id"],
+        json!("local-main")
+    );
+    assert_eq!(
+        accounts["wallet_instances"][0]["lock_state"],
+        json!("locked")
+    );
+    assert_eq!(
+        accounts["wallet_instances"][0]["accounts"],
+        json!([{
+            "address": "0x2",
+            "public_key": "0xdef",
+            "is_default": true,
+            "is_locked": false
+        }])
     );
 
     server.abort();

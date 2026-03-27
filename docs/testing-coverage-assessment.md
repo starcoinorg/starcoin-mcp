@@ -30,6 +30,13 @@ Summary:
 | `starcoin-node-mcp` | `40 passed`, `1 ignored` | the ignored test is `crates/starcoin-node-mcp-core/tests/live_read_only.rs` and requires `STARCOIN_NODE_MCP_E2E_RPC_URL` |
 | `starmask-mcp` | `98 passed` | all local Rust workspace tests passed |
 
+Follow-up targeted runs on this branch:
+
+| Subproject | Result | Notes |
+| --- | --- | --- |
+| `starmask-local-account-agent` | `13 passed` | adds deterministic phase-2 signing, unlock, snapshot-sync, and heartbeat coverage |
+| `starmaskd` | `30 passed` | includes updated config, migration, recovery, and transport coverage |
+
 ## `starcoin-node-mcp`
 
 Primary design references:
@@ -86,8 +93,8 @@ Primary design references:
 Important scope distinction:
 
 - the repository still contains a strong `v1` extension-backed acceptance and coverage story
-- phase 2 multi-backend code is implemented, but its automated coverage is still materially behind
-  the phase-2 acceptance contract
+- phase 2 multi-backend code is implemented, and coverage has improved on this branch, but it still
+  remains behind the full phase-2 acceptance contract
 
 Current evidence:
 
@@ -96,9 +103,9 @@ Current evidence:
 - daemon transport tests in `crates/starmaskd/tests/transport.rs`
 - Native Messaging framing and bridge tests in `crates/starmask-native-host/src/*`
 - MCP shim request and error mapping tests in `crates/starmask-mcp/tests/*`
-- local-account helper and capability tests in `crates/starmask-local-account-agent/src/agent.rs`
+- local-account signing, unlock, snapshot, and heartbeat tests in `crates/starmask-local-account-agent/src/agent.rs`
 - daemon config validation tests in `crates/starmaskd/src/config.rs`
-- one migration rollback-safety test in `crates/starmaskd/src/sqlite_store.rs`
+- positive and rollback-safety migration tests in `crates/starmaskd/src/sqlite_store.rs`
 
 ### `v1` Extension-Backed Contract
 
@@ -112,13 +119,13 @@ Current evidence:
 
 | Area | Status | Evidence | Gap |
 | --- | --- | --- | --- |
-| Generic backend transport happy path | `partial` | `crates/starmaskd/tests/transport.rs` proves `backend.register -> request.pullNext -> request.presented -> request.resolve` for a local backend over protocol `v2`. | The phase-2 transport contract also requires explicit coverage for `backend.heartbeat`, `backend.updateAccounts`, unknown-instance rejection, disabled backend rejection, and the optional `request.hasAvailable` behavior. Those tests are not present. |
-| `local_account_dir` capability and helper behavior | `partial` | `crates/starmask-local-account-agent/src/agent.rs` tests locked-account capability advertisement, public-key formatting, decode helpers, and unlock-capability failure behavior. | These are helper/unit tests, not backend integration tests. They do not prove the real local-account sign-message or sign-transaction flows end to end. |
-| `local_account_dir` signing flows | `missing release evidence` | The implementation exists in `crates/starmask-local-account-agent/src/agent.rs`. | The phase-2 acceptance doc requires integration tests using temporary account directories. The repository does not contain end-to-end tests proving `sign_transaction` and `sign_message` return real signatures through the backend agent path. |
-| Backend-local unlock behavior | `partial` | Routing and capability policy are tested in `crates/starmask-core/src/service.rs`; helper checks exist in `crates/starmask-local-account-agent/src/agent.rs`. | There is no automated integration test showing successful backend-local unlock, unlock failure, or unlock cancellation during a sign flow without exposing secrets over daemon transport. |
-| Filesystem and security checks | `partial` | Strict-permission rejection is tested in `crates/starmaskd/src/config.rs`, and symlink-escape validation exists in implementation. | There is no explicit symlink-escape test, despite phase-2 security docs requiring it. |
+| Generic backend transport happy path | `partial` | `crates/starmaskd/tests/transport.rs` now proves `backend.register`, `backend.heartbeat`, `backend.updateAccounts`, and `request.pullNext -> request.presented -> request.resolve` for a local backend over protocol `v2`. | The phase-2 transport contract still asks for explicit unknown-instance rejection, disabled-backend rejection, and optional `request.hasAvailable` coverage. Those tests are still absent. |
+| `local_account_dir` capability and helper behavior | `strong` | `crates/starmask-local-account-agent/src/agent.rs` now covers locked-account capability advertisement, public-key formatting, decode helpers, snapshot sync, and heartbeat payload reporting. | This layer is in good shape; remaining phase-2 gaps are now above the helper layer, especially recovery and full local-stack scenarios. |
+| `local_account_dir` signing flows | `partial` | `crates/starmask-local-account-agent/src/agent.rs` now proves `sign_message` and `sign_transaction` with temporary account directories and real signatures through the backend-agent request path. | The repository still lacks a full daemon + agent end-to-end local-stack test proving these flows through actual backend registration and polling rather than a fake daemon RPC boundary. |
+| Backend-local unlock behavior | `partial` | `crates/starmask-local-account-agent/src/agent.rs` now covers successful backend-local unlock during signing and wrong-password rejection during a sign flow. | The phase-2 contract still expects an explicit cancellation-path test and stronger proof that no secret-bearing data appears on daemon transport or normal logs. |
+| Filesystem and security checks | `partial` | `crates/starmaskd/src/config.rs` now covers strict-permission rejection and symlink-escape rejection for `local_account_dir`. | There is still no explicit automated proof for transport/log redaction items in the phase-2 security contract. |
 | Phase-2 recovery | `missing release evidence` | Recovery coverage is strong for the extension-backed path in `crates/starmaskd/tests/recovery.rs`. | The recovery tests use extension registration helpers, not generic local-backend registration. The phase-2 acceptance doc specifically requires restart coverage for `local_account_dir` requests and same-instance resume on that backend path. |
-| Migration and compatibility | `partial` | `crates/starmaskd/src/sqlite_store.rs` tests rollback safety when the `v2` migration backfill fails. | The phase-2 contract requires positive `v1 -> v2` migration coverage, proof that migrated `v1` rows remain readable, and proof that extension-backed compatibility stays green after migration. Those tests are not present. |
+| Migration and compatibility | `partial` | `crates/starmaskd/src/sqlite_store.rs` now covers rollback safety and positive `v1 -> v2` backfill/readability for existing extension-backed rows. | The phase-2 contract still wants an explicit compatibility scenario proving extension-backed behavior stays green after migration, rather than inferring that from separate `v1` and migration tests. |
 | Configuration acceptance | `partial` | `crates/starmaskd/src/config.rs` tests duplicate backend IDs, prompt-mode validation, permission strictness, and legacy-field conflicts. | The phase-2 acceptance doc also requires explicit coverage for legacy implicit-backend translation, invalid local-account paths, missing `chain_id`, and other backend-entry validation scenarios that are not fully represented as focused acceptance tests. |
 | Performance and boundedness | `missing release evidence` | Existing tests indirectly cover lease expiry, TTL clamping, and non-redelivery in the core coordinator. | The phase-2 contract asks for explicit proof that idle polling remains cheap and stable, account snapshot replacement is atomic, result retention remains bounded after migration, and one backend cannot resume another backend's presented request on the multi-backend path. The repository does not contain a dedicated phase-2 performance or boundedness suite. |
 | Phase-2 release gate | `not enough` | Phase-2 implementation code exists, and some happy-path transport coverage exists. | The repository does not yet meet the documented phase-2 rule that every acceptance area have a test or manual verification record. |
@@ -126,10 +133,13 @@ Current evidence:
 Conclusion:
 
 - `starmask-mcp` is in a split state: the `v1` extension-backed implementation has strong local
-  automated coverage, while phase 2 does not.
-- The main problem is not a missing assertion or two. The phase-2 backend path needs a dedicated
-  integration harness for `local_account_dir`, migration/compatibility tests, and backend-specific
-  recovery tests.
+  automated coverage, while phase 2 still does not fully satisfy its own acceptance contract.
+- This branch materially improves phase-2 evidence: backend transport round trips, local-account
+  signing flows, unlock paths, symlink rejection, and positive migration readability are now
+  covered automatically.
+- The remaining problem is now narrower and clearer: the phase-2 backend path still needs dedicated
+  recovery coverage, a full local-stack daemon-plus-agent scenario, and the remaining
+  compatibility/boundedness checks.
 - Phase-2 coverage should be expanded structurally, not by sprinkling isolated one-off assertions
   across unrelated files.
 
@@ -141,5 +151,5 @@ Conclusion:
 3. The highest-value next step is not to add random test cases. It is to add or reorganize the
    missing test harness layers so each major design contract has one obvious home:
    - `starcoin-node-mcp`: resource-governance and live transaction end-to-end coverage
-   - `starmask-mcp`: phase-2 backend integration, migration/compatibility, and backend-path
-     recovery coverage
+   - `starmask-mcp`: phase-2 backend-path recovery, full local-stack end-to-end coverage, and the
+     remaining compatibility/boundedness checks
