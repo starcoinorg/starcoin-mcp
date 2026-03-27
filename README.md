@@ -4,15 +4,16 @@ This repository groups Starcoin-related MCP projects in one place.
 
 Repository-level materials live under:
 
-- `docs/architecture/`
+- `docs/`
 - `shared/`
 
-Key architecture documents:
+Key repository documents:
 
 - `docs/architecture/overview.md`
 - `docs/architecture/host-integration.md`
 - `docs/architecture/design-closure-plan.md`
 - `docs/architecture/deployment-model.md`
+- `docs/testing-coverage-assessment.md`
 
 ## Subprojects
 

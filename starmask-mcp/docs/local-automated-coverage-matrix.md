@@ -4,8 +4,12 @@
 
 This note tracks local automated coverage for the current `v1` extension-backed Rust workspace.
 
-It does not claim coverage for planned multi-backend features such as `local_account_dir` or
-explicit unlock requests.
+It intentionally does not claim phase-2 multi-backend coverage for `local_account_dir` or explicit
+unlock requests.
+
+For the current repository-level assessment that includes the implemented phase-2 code paths, see:
+
+- `../../docs/testing-coverage-assessment.md`
 
 ## Scope
 
@@ -141,5 +145,8 @@ For the currently implemented Rust crates, local automated coverage now covers t
 environment protocol, lifecycle, recovery, transport, result-retention, and diagnostics flows
 described in the current acceptance document.
 
-Multi-backend features remain out of scope until the phase-2 design in
-`docs/unified-wallet-coordinator-evolution.md` is implemented.
+Phase-2 multi-backend coverage remains out of scope for this note by design. It should be assessed
+against:
+
+- `docs/wallet-backend-testing-and-acceptance.md`
+- `../../docs/testing-coverage-assessment.md`
