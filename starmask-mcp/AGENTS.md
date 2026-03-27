@@ -70,6 +70,8 @@ This is a project-wide layering rule, not a special exception for this subprojec
 
 - Default to `#![forbid(unsafe_code)]`.
 - If platform-specific unsafe code is unavoidable, isolate it in the smallest possible module.
+- If a task requires `unsafe`, treat it as a blocking safety item: finish isolating, reviewing,
+  and testing that unsafe code before continuing unrelated code generation in the surrounding area.
 - Never log:
   - private keys
   - raw signed transaction payloads

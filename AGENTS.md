@@ -14,6 +14,11 @@ These instructions apply to the whole repository unless a subproject adds strict
 
 - Prefer crate names with a repository-consistent prefix.
   - For the wallet-facing implementation, prefer `starmask-...`.
+- Default to `#![forbid(unsafe_code)]` in Rust crates and module files that define core runtime
+  behavior.
+- If `unsafe` is ever unavoidable, stop adjacent feature work and handle that unsafe code first in
+  one focused pass: isolate it, document why it is required, add the narrowest possible tests, and
+  only then continue generating surrounding code.
 - When using `format!` and variables can be inlined into `{}`, inline them.
 - Always collapse `if` statements when doing so improves readability.
 - Prefer method references over redundant closures when they are equally clear.
