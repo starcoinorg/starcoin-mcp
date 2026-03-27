@@ -76,6 +76,15 @@ These instructions apply to the whole repository unless a subproject adds strict
 - Run tests for the affected crate or binary first.
 - Do not default to `--all-features` for routine local runs.
 - Ask before running a full workspace test suite if the change is broad or expensive.
+- Name new task branches as `codex/<kind>/<topic>` by default.
+- Prefer these branch kinds:
+  - `feat` for new behavior or user-visible capability
+  - `fix` for bug fixes or regression corrections
+  - `refactor` for behavior-preserving structural changes
+  - `chore` for small maintenance work when no more specific kind fits
+  - `docs` for documentation-led changes
+  - `test` for test-only or test-led changes
+- Do not use `chore` when `feat`, `fix`, `refactor`, `docs`, or `test` describes the branch more precisely.
 - Default to a dedicated git worktree for each new task branch, created from the latest relevant `main` branch.
 - Reuse the current worktree only when the user explicitly asks for that, or when the task is to continue an already-existing in-place dirty worktree.
 - If you continue in a dirty worktree instead of creating a worktree, state that reason before making substantial changes.
