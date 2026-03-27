@@ -71,11 +71,11 @@ impl LocalAccountAgent {
         config: LocalAccountDirBackendConfig,
     ) -> Result<Self> {
         let storage =
-            AccountStorage::create_from_path(&config.account_dir, RocksdbConfig::default())
+            AccountStorage::create_from_path(config.account_dir(), RocksdbConfig::default())
                 .context("failed to open local account storage")?;
-        let manager = AccountManager::new(storage, ChainId::new(config.chain_id))
+        let manager = AccountManager::new(storage, ChainId::new(config.chain_id()))
             .context("failed to open local account manager")?;
-        let wallet_instance_id = WalletInstanceId::new(config.common.backend_id.clone())
+        let wallet_instance_id = WalletInstanceId::new(config.backend_id().to_owned())
             .map_err(|error| anyhow!(error.to_string()))?;
 
         Ok(Self {
@@ -100,8 +100,8 @@ impl LocalAccountAgent {
             wallet_instance_id: self.wallet_instance_id.clone(),
             backend_kind: starmask_types::BackendKind::LocalAccountDir,
             transport_kind: TransportKind::LocalSocket,
-            approval_surface: self.config.common.approval_surface,
-            instance_label: self.config.common.instance_label.clone(),
+            approval_surface: self.config.approval_surface(),
+            instance_label: self.config.instance_label().to_owned(),
             lock_state: snapshot.lock_state,
             capabilities: snapshot.capabilities.clone(),
             backend_metadata: json!({
@@ -152,7 +152,7 @@ impl LocalAccountAgent {
             .list_account_infos()
             .context("failed to list local accounts")?
             .into_iter()
-            .filter(|account| self.config.allow_read_only_accounts || !account.is_readonly)
+            .filter(|account| self.config.allow_read_only_accounts() || !account.is_readonly)
             .map(account_info_to_backend_account)
             .collect();
         accounts.sort_by(|left, right| left.address.cmp(&right.address));
@@ -284,7 +284,7 @@ impl LocalAccountAgent {
                 .unlock_account(
                     account_address,
                     password,
-                    Duration::from_secs(self.config.unlock_cache_ttl.as_secs()),
+                    Duration::from_secs(self.config.unlock_cache_ttl().as_secs()),
                 )
                 .map_err(|error| RequestRejection {
                     reason_code: RejectReasonCode::WalletLocked,
@@ -694,7 +694,7 @@ mod tests {
         ensure_local_unlock_capability, sanitize_for_tty,
     };
     use starmask_types::{DurationSeconds, LockState, MessageFormat, WalletCapability};
-    use starmaskd::config::{CommonBackendConfig, LocalAccountDirBackendConfig, LocalPromptMode};
+    use starmaskd::config::{LocalAccountDirBackendConfig, LocalPromptMode};
 
     #[test]
     fn decode_signing_message_accepts_utf8_and_hex() {
@@ -716,19 +716,17 @@ mod tests {
             manager.lock_account(*account.address()).unwrap();
         }
 
-        let config = LocalAccountDirBackendConfig {
-            common: CommonBackendConfig {
-                backend_id: "local-main".to_owned(),
-                instance_label: "Local Main".to_owned(),
-                approval_surface: starmask_types::ApprovalSurface::TtyPrompt,
-            },
-            account_dir: tempdir.path().to_path_buf(),
-            prompt_mode: LocalPromptMode::TtyPrompt,
-            chain_id: 255,
-            unlock_cache_ttl: DurationSeconds::new(30),
-            allow_read_only_accounts: true,
-            require_strict_permissions: false,
-        };
+        let config = LocalAccountDirBackendConfig::new(
+            "local-main",
+            "Local Main",
+            starmask_types::ApprovalSurface::TtyPrompt,
+            tempdir.path().to_path_buf(),
+            LocalPromptMode::TtyPrompt,
+            255,
+            DurationSeconds::new(30),
+            true,
+            false,
+        );
         let agent = LocalAccountAgent::new(
             tempdir.path().join("daemon.sock"),
             Duration::from_secs(1),

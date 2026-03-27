@@ -45,11 +45,18 @@ const MAX_REQUEST_BYTES: usize = 1024 * 1024;
 
 #[derive(Clone, Debug)]
 pub struct ServerPolicy {
-    pub channel: Channel,
-    pub wallet_backends: Vec<WalletBackendConfig>,
+    channel: Channel,
+    wallet_backends: Vec<WalletBackendConfig>,
 }
 
 impl ServerPolicy {
+    pub fn new(channel: Channel, wallet_backends: Vec<WalletBackendConfig>) -> Self {
+        Self {
+            channel,
+            wallet_backends,
+        }
+    }
+
     fn accepts_extension(
         &self,
         extension_id: &str,
@@ -57,7 +64,7 @@ impl ServerPolicy {
         self.wallet_backends
             .iter()
             .filter_map(WalletBackendConfig::as_extension)
-            .find(|backend| backend.allowed_extension_ids.contains(extension_id))
+            .find(|backend| backend.allowed_extension_ids().contains(extension_id))
     }
 
     fn configured_backend(
@@ -341,7 +348,10 @@ async fn dispatch_request(
             let lock_state = params.lock_state;
             let extension_id = params.extension_id.clone();
             let extension_version = params.extension_version.clone();
-            let profile_hint = params.profile_hint.clone().or(config.profile_hint.clone());
+            let profile_hint = params
+                .profile_hint
+                .clone()
+                .or_else(|| config.profile_hint().map(ToOwned::to_owned));
             expect_response(
                 handle
                     .dispatch(CoordinatorCommand::RegisterBackend(
@@ -353,7 +363,7 @@ async fn dispatch_request(
                             instance_label: params
                                 .profile_hint
                                 .clone()
-                                .unwrap_or_else(|| config.common.instance_label.clone()),
+                                .unwrap_or_else(|| config.instance_label().to_owned()),
                             extension_id: extension_id.clone(),
                             extension_version: extension_version.clone(),
                             protocol_version: params.protocol_version,
@@ -363,10 +373,10 @@ async fn dispatch_request(
                                 WalletCapability::SignTransaction,
                             ],
                             backend_metadata: serde_json::json!({
-                                "backend_id": config.common.backend_id,
+                                "backend_id": config.backend_id(),
                                 "extension_id": extension_id,
                                 "extension_version": extension_version,
-                                "native_host_name": config.native_host_name,
+                                "native_host_name": config.native_host_name(),
                                 "profile_hint": profile_hint,
                             }),
                             profile_hint,
@@ -936,7 +946,7 @@ fn validate_generic_backend_registration(
         )
         .with_retryable(false));
     }
-    if params.approval_surface != config.common.approval_surface {
+    if params.approval_surface != config.approval_surface() {
         return Err(SharedError::new(
             SharedErrorCode::InvalidBackendRegistration,
             "approval_surface does not match the configured backend",
@@ -1001,7 +1011,7 @@ mod tests {
 
     use super::{ServerPolicy, dispatch_request};
     use crate::{
-        config::{CommonBackendConfig, StarmaskExtensionBackendConfig, WalletBackendConfig},
+        config::{StarmaskExtensionBackendConfig, WalletBackendConfig},
         coordinator_runtime::CoordinatorHandle,
     };
     use starmask_types::{
@@ -1010,24 +1020,22 @@ mod tests {
     };
 
     fn test_policy(allowed_extension_ids: &[&str]) -> ServerPolicy {
-        ServerPolicy {
-            channel: Channel::Development,
-            wallet_backends: vec![WalletBackendConfig::StarmaskExtension(
-                StarmaskExtensionBackendConfig {
-                    common: CommonBackendConfig {
-                        backend_id: "browser-default".to_owned(),
-                        instance_label: "Browser Default".to_owned(),
-                        approval_surface: starmask_types::ApprovalSurface::BrowserUi,
-                    },
-                    allowed_extension_ids: allowed_extension_ids
+        ServerPolicy::new(
+            Channel::Development,
+            vec![WalletBackendConfig::StarmaskExtension(
+                StarmaskExtensionBackendConfig::new(
+                    "browser-default",
+                    "Browser Default",
+                    starmask_types::ApprovalSurface::BrowserUi,
+                    allowed_extension_ids
                         .iter()
                         .map(|extension_id| (*extension_id).to_owned())
                         .collect(),
-                    native_host_name: "com.starcoin.test".to_owned(),
-                    profile_hint: None,
-                },
+                    "com.starcoin.test",
+                    None,
+                ),
             )],
-        }
+        )
     }
 
     fn test_handle() -> CoordinatorHandle {

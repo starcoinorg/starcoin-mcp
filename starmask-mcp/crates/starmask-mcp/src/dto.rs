@@ -9,50 +9,50 @@ pub struct EmptyParams {}
 
 #[derive(Debug, Default, Deserialize, JsonSchema)]
 pub struct WalletListAccountsInput {
-    pub wallet_instance_id: Option<String>,
+    pub(crate) wallet_instance_id: Option<String>,
     #[serde(default)]
-    pub include_public_key: bool,
+    pub(crate) include_public_key: bool,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct WalletGetPublicKeyInput {
-    pub address: String,
-    pub wallet_instance_id: Option<String>,
+    pub(crate) address: String,
+    pub(crate) wallet_instance_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct WalletRequestSignTransactionInput {
-    pub client_request_id: String,
-    pub account_address: String,
-    pub wallet_instance_id: Option<String>,
-    pub chain_id: u64,
-    pub raw_txn_bcs_hex: String,
-    pub tx_kind: String,
-    pub display_hint: Option<String>,
-    pub client_context: Option<String>,
-    pub ttl_seconds: Option<u64>,
+    pub(crate) client_request_id: String,
+    pub(crate) account_address: String,
+    pub(crate) wallet_instance_id: Option<String>,
+    pub(crate) chain_id: u64,
+    pub(crate) raw_txn_bcs_hex: String,
+    pub(crate) tx_kind: String,
+    pub(crate) display_hint: Option<String>,
+    pub(crate) client_context: Option<String>,
+    pub(crate) ttl_seconds: Option<u64>,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct WalletGetRequestStatusInput {
-    pub request_id: String,
+    pub(crate) request_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct WalletCancelRequestInput {
-    pub request_id: String,
+    pub(crate) request_id: String,
 }
 
 #[derive(Debug, Deserialize, JsonSchema)]
 pub struct WalletSignMessageInput {
-    pub client_request_id: String,
-    pub account_address: String,
-    pub wallet_instance_id: Option<String>,
-    pub message: String,
-    pub format: MessageFormatInput,
-    pub display_hint: Option<String>,
-    pub client_context: Option<String>,
-    pub ttl_seconds: Option<u64>,
+    pub(crate) client_request_id: String,
+    pub(crate) account_address: String,
+    pub(crate) wallet_instance_id: Option<String>,
+    pub(crate) message: String,
+    pub(crate) format: MessageFormatInput,
+    pub(crate) display_hint: Option<String>,
+    pub(crate) client_context: Option<String>,
+    pub(crate) ttl_seconds: Option<u64>,
 }
 
 impl WalletListAccountsInput {

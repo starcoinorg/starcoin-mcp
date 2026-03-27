@@ -59,29 +59,158 @@ impl LocalPromptMode {
 }
 
 #[derive(Clone, Debug)]
-pub struct CommonBackendConfig {
-    pub backend_id: String,
-    pub instance_label: String,
-    pub approval_surface: ApprovalSurface,
+struct CommonBackendConfig {
+    backend_id: String,
+    instance_label: String,
+    approval_surface: ApprovalSurface,
+}
+
+impl CommonBackendConfig {
+    fn new(
+        backend_id: impl Into<String>,
+        instance_label: impl Into<String>,
+        approval_surface: ApprovalSurface,
+    ) -> Self {
+        Self {
+            backend_id: backend_id.into(),
+            instance_label: instance_label.into(),
+            approval_surface,
+        }
+    }
+
+    fn backend_id(&self) -> &str {
+        &self.backend_id
+    }
+
+    fn instance_label(&self) -> &str {
+        &self.instance_label
+    }
+
+    fn approval_surface(&self) -> ApprovalSurface {
+        self.approval_surface
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct StarmaskExtensionBackendConfig {
-    pub common: CommonBackendConfig,
-    pub allowed_extension_ids: BTreeSet<String>,
-    pub native_host_name: String,
-    pub profile_hint: Option<String>,
+    common: CommonBackendConfig,
+    allowed_extension_ids: BTreeSet<String>,
+    native_host_name: String,
+    profile_hint: Option<String>,
+}
+
+impl StarmaskExtensionBackendConfig {
+    pub fn new(
+        backend_id: impl Into<String>,
+        instance_label: impl Into<String>,
+        approval_surface: ApprovalSurface,
+        allowed_extension_ids: BTreeSet<String>,
+        native_host_name: impl Into<String>,
+        profile_hint: Option<String>,
+    ) -> Self {
+        Self {
+            common: CommonBackendConfig::new(backend_id, instance_label, approval_surface),
+            allowed_extension_ids,
+            native_host_name: native_host_name.into(),
+            profile_hint,
+        }
+    }
+
+    pub fn backend_id(&self) -> &str {
+        self.common.backend_id()
+    }
+
+    pub fn instance_label(&self) -> &str {
+        self.common.instance_label()
+    }
+
+    pub fn approval_surface(&self) -> ApprovalSurface {
+        self.common.approval_surface()
+    }
+
+    pub fn allowed_extension_ids(&self) -> &BTreeSet<String> {
+        &self.allowed_extension_ids
+    }
+
+    pub fn native_host_name(&self) -> &str {
+        &self.native_host_name
+    }
+
+    pub fn profile_hint(&self) -> Option<&str> {
+        self.profile_hint.as_deref()
+    }
 }
 
 #[derive(Clone, Debug)]
 pub struct LocalAccountDirBackendConfig {
-    pub common: CommonBackendConfig,
-    pub account_dir: PathBuf,
-    pub prompt_mode: LocalPromptMode,
-    pub chain_id: u8,
-    pub unlock_cache_ttl: DurationSeconds,
-    pub allow_read_only_accounts: bool,
-    pub require_strict_permissions: bool,
+    common: CommonBackendConfig,
+    account_dir: PathBuf,
+    prompt_mode: LocalPromptMode,
+    chain_id: u8,
+    unlock_cache_ttl: DurationSeconds,
+    allow_read_only_accounts: bool,
+    require_strict_permissions: bool,
+}
+
+impl LocalAccountDirBackendConfig {
+    #[allow(clippy::too_many_arguments)]
+    pub fn new(
+        backend_id: impl Into<String>,
+        instance_label: impl Into<String>,
+        approval_surface: ApprovalSurface,
+        account_dir: PathBuf,
+        prompt_mode: LocalPromptMode,
+        chain_id: u8,
+        unlock_cache_ttl: DurationSeconds,
+        allow_read_only_accounts: bool,
+        require_strict_permissions: bool,
+    ) -> Self {
+        Self {
+            common: CommonBackendConfig::new(backend_id, instance_label, approval_surface),
+            account_dir,
+            prompt_mode,
+            chain_id,
+            unlock_cache_ttl,
+            allow_read_only_accounts,
+            require_strict_permissions,
+        }
+    }
+
+    pub fn backend_id(&self) -> &str {
+        self.common.backend_id()
+    }
+
+    pub fn instance_label(&self) -> &str {
+        self.common.instance_label()
+    }
+
+    pub fn approval_surface(&self) -> ApprovalSurface {
+        self.common.approval_surface()
+    }
+
+    pub fn account_dir(&self) -> &Path {
+        &self.account_dir
+    }
+
+    pub fn prompt_mode(&self) -> LocalPromptMode {
+        self.prompt_mode
+    }
+
+    pub fn chain_id(&self) -> u8 {
+        self.chain_id
+    }
+
+    pub fn unlock_cache_ttl(&self) -> DurationSeconds {
+        self.unlock_cache_ttl
+    }
+
+    pub fn allow_read_only_accounts(&self) -> bool {
+        self.allow_read_only_accounts
+    }
+
+    pub fn require_strict_permissions(&self) -> bool {
+        self.require_strict_permissions
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -93,8 +222,8 @@ pub enum WalletBackendConfig {
 impl WalletBackendConfig {
     pub fn backend_id(&self) -> &str {
         match self {
-            Self::StarmaskExtension(config) => &config.common.backend_id,
-            Self::LocalAccountDir(config) => &config.common.backend_id,
+            Self::StarmaskExtension(config) => config.backend_id(),
+            Self::LocalAccountDir(config) => config.backend_id(),
         }
     }
 
@@ -107,15 +236,15 @@ impl WalletBackendConfig {
 
     pub fn instance_label(&self) -> &str {
         match self {
-            Self::StarmaskExtension(config) => &config.common.instance_label,
-            Self::LocalAccountDir(config) => &config.common.instance_label,
+            Self::StarmaskExtension(config) => config.instance_label(),
+            Self::LocalAccountDir(config) => config.instance_label(),
         }
     }
 
     pub fn approval_surface(&self) -> ApprovalSurface {
         match self {
-            Self::StarmaskExtension(config) => config.common.approval_surface,
-            Self::LocalAccountDir(config) => config.common.approval_surface,
+            Self::StarmaskExtension(config) => config.approval_surface(),
+            Self::LocalAccountDir(config) => config.approval_surface(),
         }
     }
 
@@ -195,14 +324,14 @@ fn default_enabled() -> bool {
 
 #[derive(Clone, Debug)]
 pub struct RuntimeConfig {
-    pub channel: Channel,
-    pub socket_path: PathBuf,
-    pub database_path: PathBuf,
-    pub log_level: String,
-    pub maintenance_interval: DurationSeconds,
-    pub heartbeat_interval: DurationSeconds,
-    pub coordinator: CoordinatorConfig,
-    pub wallet_backends: Vec<WalletBackendConfig>,
+    channel: Channel,
+    socket_path: PathBuf,
+    database_path: PathBuf,
+    log_level: String,
+    maintenance_interval: DurationSeconds,
+    heartbeat_interval: DurationSeconds,
+    coordinator: CoordinatorConfig,
+    wallet_backends: Vec<WalletBackendConfig>,
 }
 
 impl RuntimeConfig {
@@ -315,6 +444,38 @@ impl RuntimeConfig {
         Ok(())
     }
 
+    pub fn channel(&self) -> Channel {
+        self.channel
+    }
+
+    pub fn socket_path(&self) -> &Path {
+        &self.socket_path
+    }
+
+    pub fn database_path(&self) -> &Path {
+        &self.database_path
+    }
+
+    pub fn log_level(&self) -> &str {
+        &self.log_level
+    }
+
+    pub fn maintenance_interval(&self) -> DurationSeconds {
+        self.maintenance_interval
+    }
+
+    pub fn heartbeat_interval(&self) -> DurationSeconds {
+        self.heartbeat_interval
+    }
+
+    pub fn coordinator(&self) -> &CoordinatorConfig {
+        &self.coordinator
+    }
+
+    pub fn wallet_backends(&self) -> &[WalletBackendConfig] {
+        &self.wallet_backends
+    }
+
     pub fn find_backend(&self, backend_id: &str) -> Option<&WalletBackendConfig> {
         self.wallet_backends
             .iter()
@@ -349,16 +510,14 @@ fn build_wallet_backends(
             .unwrap_or_else(|| default_native_host_name(channel));
 
         Ok(vec![WalletBackendConfig::StarmaskExtension(
-            StarmaskExtensionBackendConfig {
-                common: CommonBackendConfig {
-                    backend_id: "browser-default".to_owned(),
-                    instance_label: "Browser Default".to_owned(),
-                    approval_surface: ApprovalSurface::BrowserUi,
-                },
+            StarmaskExtensionBackendConfig::new(
+                "browser-default",
+                "Browser Default",
+                ApprovalSurface::BrowserUi,
                 allowed_extension_ids,
                 native_host_name,
-                profile_hint: None,
-            },
+                None,
+            ),
         )])
     }
 }
@@ -387,18 +546,15 @@ fn build_phase2_backends(
             continue;
         }
 
-        let common = CommonBackendConfig {
-            backend_id: backend_id.to_owned(),
-            instance_label: read_non_empty_string("instance_label", &backend.instance_label)?,
-            approval_surface: backend.approval_surface,
-        };
+        let instance_label = read_non_empty_string("instance_label", &backend.instance_label)?;
+        let approval_surface = backend.approval_surface;
 
         let parsed = match backend.backend_kind {
             BackendKind::StarmaskExtension => {
-                if common.approval_surface != ApprovalSurface::BrowserUi {
+                if approval_surface != ApprovalSurface::BrowserUi {
                     bail!(
                         "backend {} must use approval_surface = browser_ui",
-                        common.backend_id
+                        backend_id
                     );
                 }
                 let allowed_extension_ids =
@@ -414,45 +570,44 @@ fn build_phase2_backends(
                     .clone()
                     .filter(|value| !value.trim().is_empty())
                     .ok_or_else(|| {
-                        anyhow::anyhow!(
-                            "backend {} must configure native_host_name",
-                            common.backend_id
-                        )
+                        anyhow::anyhow!("backend {} must configure native_host_name", backend_id)
                     })?;
-                WalletBackendConfig::StarmaskExtension(StarmaskExtensionBackendConfig {
-                    common,
+                WalletBackendConfig::StarmaskExtension(StarmaskExtensionBackendConfig::new(
+                    backend_id.to_owned(),
+                    instance_label.clone(),
+                    approval_surface,
                     allowed_extension_ids,
                     native_host_name,
-                    profile_hint: backend.profile_hint.clone(),
-                })
+                    backend.profile_hint.clone(),
+                ))
             }
             BackendKind::LocalAccountDir => {
                 let prompt_mode = backend.prompt_mode.ok_or_else(|| {
-                    anyhow::anyhow!("backend {} must configure prompt_mode", common.backend_id)
+                    anyhow::anyhow!("backend {} must configure prompt_mode", backend_id)
                 })?;
                 if !matches!(
-                    common.approval_surface,
+                    approval_surface,
                     ApprovalSurface::TtyPrompt | ApprovalSurface::DesktopPrompt
                 ) {
                     bail!(
                         "backend {} must use tty_prompt or desktop_prompt approval surface",
-                        common.backend_id
+                        backend_id
                     );
                 }
-                if prompt_mode.approval_surface() != common.approval_surface {
+                if prompt_mode.approval_surface() != approval_surface {
                     bail!(
                         "backend {} must use matching approval_surface and prompt_mode",
-                        common.backend_id
+                        backend_id
                     );
                 }
                 if prompt_mode != LocalPromptMode::TtyPrompt {
                     bail!(
                         "backend {} must use prompt_mode = tty_prompt until desktop_prompt is implemented",
-                        common.backend_id
+                        backend_id
                     );
                 }
                 let account_dir = backend.account_dir.as_deref().ok_or_else(|| {
-                    anyhow::anyhow!("backend {} must configure account_dir", common.backend_id)
+                    anyhow::anyhow!("backend {} must configure account_dir", backend_id)
                 })?;
                 let account_dir = validate_local_account_dir(
                     account_dir,
@@ -461,27 +616,29 @@ fn build_phase2_backends(
                 let unlock_cache_ttl = backend.unlock_cache_ttl_seconds.ok_or_else(|| {
                     anyhow::anyhow!(
                         "backend {} must configure unlock_cache_ttl_seconds",
-                        common.backend_id
+                        backend_id
                     )
                 })?;
                 if unlock_cache_ttl == 0 {
                     bail!(
                         "backend {} unlock_cache_ttl_seconds must be greater than zero",
-                        common.backend_id
+                        backend_id
                     );
                 }
                 let chain_id = backend.chain_id.ok_or_else(|| {
-                    anyhow::anyhow!("backend {} must configure chain_id", common.backend_id)
+                    anyhow::anyhow!("backend {} must configure chain_id", backend_id)
                 })?;
-                WalletBackendConfig::LocalAccountDir(LocalAccountDirBackendConfig {
-                    common,
+                WalletBackendConfig::LocalAccountDir(LocalAccountDirBackendConfig::new(
+                    backend_id.to_owned(),
+                    instance_label.clone(),
+                    approval_surface,
                     account_dir,
                     prompt_mode,
                     chain_id,
-                    unlock_cache_ttl: DurationSeconds::new(unlock_cache_ttl),
-                    allow_read_only_accounts: backend.allow_read_only_accounts.unwrap_or(true),
-                    require_strict_permissions: backend.require_strict_permissions.unwrap_or(true),
-                })
+                    DurationSeconds::new(unlock_cache_ttl),
+                    backend.allow_read_only_accounts.unwrap_or(true),
+                    backend.require_strict_permissions.unwrap_or(true),
+                ))
             }
             BackendKind::PrivateKeyDev => unreachable!("validated above"),
         };
