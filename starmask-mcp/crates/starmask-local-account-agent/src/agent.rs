@@ -10,6 +10,7 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::json;
 use starcoin_account::{AccountManager, account_storage::AccountStorage};
+use starcoin_account_api::AccountInfo;
 use starcoin_config::RocksdbConfig;
 use starcoin_types::genesis_config::ChainId;
 use starmask_types::{
@@ -179,29 +180,18 @@ impl LocalAccountAgent {
     fn handle_request(&mut self, request: PulledRequest, snapshot: &Snapshot) -> Result<()> {
         let account_address = parse_account_address(&request.account_address)?;
         let active_presentation_id = request.presentation_id.as_ref();
-        let Some(account_info) = self
-            .manager
-            .account_info(account_address)
-            .context("failed to read local account state")?
-        else {
-            self.reject_request(
-                &request,
-                active_presentation_id,
-                RejectReasonCode::BackendUnavailable,
-                Some("Requested account is no longer available".to_owned()),
-            )?;
-            return Ok(());
+        let account_info = match self.load_signing_account_info(account_address) {
+            Ok(account_info) => account_info,
+            Err(rejection) => {
+                self.reject_request(
+                    &request,
+                    active_presentation_id,
+                    rejection.reason_code,
+                    rejection.message,
+                )?;
+                return Ok(());
+            }
         };
-
-        if account_info.is_readonly {
-            self.reject_request(
-                &request,
-                active_presentation_id,
-                RejectReasonCode::UnsupportedOperation,
-                Some("Read-only accounts cannot sign".to_owned()),
-            )?;
-            return Ok(());
-        }
 
         let presentation_id = request
             .presentation_id
@@ -221,6 +211,8 @@ impl LocalAccountAgent {
             let approval = prompt_for_request(&request, &account_info, &snapshot.capabilities)?;
 
             if approval.approved() {
+                let account_info = self.load_signing_account_info(account_address)?;
+
                 fulfill_request(
                     &self.manager,
                     Duration::from_secs(self.config.unlock_cache_ttl().as_secs()),
@@ -249,6 +241,34 @@ impl LocalAccountAgent {
                 rejection.message,
             ),
         }
+    }
+
+    fn load_signing_account_info(
+        &self,
+        account_address: starcoin_types::account_address::AccountAddress,
+    ) -> std::result::Result<AccountInfo, RequestRejection> {
+        let Some(account_info) = self
+            .manager
+            .account_info(account_address)
+            .map_err(|error| RequestRejection {
+                reason_code: RejectReasonCode::BackendUnavailable,
+                message: Some(format!("Failed to read local account state: {error}")),
+            })?
+        else {
+            return Err(RequestRejection {
+                reason_code: RejectReasonCode::BackendUnavailable,
+                message: Some("Requested account is no longer available".to_owned()),
+            });
+        };
+
+        if account_info.is_readonly {
+            return Err(RequestRejection {
+                reason_code: RejectReasonCode::UnsupportedOperation,
+                message: Some("Read-only accounts cannot sign".to_owned()),
+            });
+        }
+
+        Ok(account_info)
     }
 
     fn resolve_request(
