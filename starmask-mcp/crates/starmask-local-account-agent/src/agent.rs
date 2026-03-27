@@ -1,9 +1,7 @@
 #![forbid(unsafe_code)]
 
 use std::{
-    io::{self, Write},
     path::PathBuf,
-    str::FromStr,
     sync::{Arc, Mutex},
     thread,
     time::Duration,
@@ -12,23 +10,24 @@ use std::{
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::json;
 use starcoin_account::{AccountManager, account_storage::AccountStorage};
-use starcoin_account_api::AccountInfo;
 use starcoin_config::RocksdbConfig;
-use starcoin_types::{
-    account_address::AccountAddress, genesis_config::ChainId, sign_message::SigningMessage,
-    transaction::RawUserTransaction,
-};
+use starcoin_types::genesis_config::ChainId;
 use starmask_types::{
     BackendAccount, BackendHeartbeatParams, BackendRegisterParams, BackendUpdateAccountsParams,
-    LockState, MessageFormat, PresentationId, PulledRequest, RejectReasonCode, RequestId,
-    RequestKind, RequestResolveParams, RequestResult, ResultKind, TransportKind, WalletCapability,
-    WalletInstanceId,
+    LockState, PresentationId, PulledRequest, RejectReasonCode, RequestId, RequestResolveParams,
+    RequestResult, ResultKind, TransportKind, WalletCapability, WalletInstanceId,
 };
 use starmaskd::config::LocalAccountDirBackendConfig;
 use tracing::{info, warn};
 use uuid::Uuid;
 
-use crate::client::{DaemonRpc, LocalDaemonClient, daemon_protocol_version};
+use crate::{
+    client::{DaemonRpc, LocalDaemonClient, daemon_protocol_version},
+    request_support::{
+        RequestRejection, account_info_to_backend_account, fulfill_request, parse_account_address,
+    },
+    tty_prompt::prompt_for_request,
+};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 struct Snapshot {
@@ -41,18 +40,6 @@ struct Snapshot {
 struct HeartbeatState {
     lock_state: LockState,
     presented_request_ids: Vec<RequestId>,
-}
-
-#[derive(Clone, Debug)]
-struct PromptApproval {
-    approved: bool,
-    password: Option<String>,
-}
-
-#[derive(Clone, Debug)]
-struct RequestRejection {
-    reason_code: RejectReasonCode,
-    message: Option<String>,
 }
 
 pub struct LocalAccountAgent {
@@ -190,8 +177,7 @@ impl LocalAccountAgent {
     }
 
     fn handle_request(&mut self, request: PulledRequest, snapshot: &Snapshot) -> Result<()> {
-        let account_address = AccountAddress::from_str(&request.account_address)
-            .with_context(|| format!("invalid account address {}", request.account_address))?;
+        let account_address = parse_account_address(&request.account_address)?;
         let active_presentation_id = request.presentation_id.as_ref();
         let Some(account_info) = self
             .manager
@@ -232,16 +218,17 @@ impl LocalAccountAgent {
         self.push_presented_request(request.request_id.clone())?;
 
         let result = (|| {
-            let approval =
-                self.prompt_for_request(&request, &account_info, &snapshot.capabilities)?;
+            let approval = prompt_for_request(&request, &account_info, &snapshot.capabilities)?;
 
-            if approval.approved {
-                self.fulfill_request(
+            if approval.approved() {
+                fulfill_request(
+                    &self.manager,
+                    Duration::from_secs(self.config.unlock_cache_ttl().as_secs()),
                     &request,
                     account_address,
                     &account_info,
                     &snapshot.capabilities,
-                    approval.password.as_deref(),
+                    approval.password(),
                 )
             } else {
                 Err(RequestRejection {
@@ -262,115 +249,6 @@ impl LocalAccountAgent {
                 rejection.message,
             ),
         }
-    }
-
-    fn fulfill_request(
-        &self,
-        request: &PulledRequest,
-        account_address: AccountAddress,
-        account_info: &AccountInfo,
-        capabilities: &[WalletCapability],
-        password: Option<&str>,
-    ) -> std::result::Result<RequestResult, RequestRejection> {
-        if account_info.is_locked {
-            ensure_local_unlock_capability(account_info.is_locked, capabilities)?;
-            let Some(password) = password else {
-                return Err(RequestRejection {
-                    reason_code: RejectReasonCode::WalletLocked,
-                    message: Some("Local account is locked".to_owned()),
-                });
-            };
-            self.manager
-                .unlock_account(
-                    account_address,
-                    password,
-                    Duration::from_secs(self.config.unlock_cache_ttl().as_secs()),
-                )
-                .map_err(|error| RequestRejection {
-                    reason_code: RejectReasonCode::WalletLocked,
-                    message: Some(format!("Failed to unlock local account: {error}")),
-                })?;
-        }
-
-        match request.kind {
-            RequestKind::SignTransaction => self.sign_transaction(request, account_address),
-            RequestKind::SignMessage => self.sign_message(request, account_address),
-        }
-    }
-
-    fn sign_transaction(
-        &self,
-        request: &PulledRequest,
-        address: AccountAddress,
-    ) -> std::result::Result<RequestResult, RequestRejection> {
-        let raw_txn_hex = request
-            .raw_txn_bcs_hex
-            .as_deref()
-            .ok_or_else(|| RequestRejection {
-                reason_code: RejectReasonCode::InvalidTransactionPayload,
-                message: Some("Missing raw transaction payload".to_owned()),
-            })?;
-        let raw_txn_bytes = decode_hex_bytes(raw_txn_hex).map_err(|error| RequestRejection {
-            reason_code: RejectReasonCode::InvalidTransactionPayload,
-            message: Some(error),
-        })?;
-        let raw_txn: RawUserTransaction =
-            bcs_ext::from_bytes(&raw_txn_bytes).map_err(|error| RequestRejection {
-                reason_code: RejectReasonCode::InvalidTransactionPayload,
-                message: Some(format!("Invalid raw transaction payload: {error}")),
-            })?;
-        if raw_txn.sender() != address {
-            return Err(RequestRejection {
-                reason_code: RejectReasonCode::InvalidTransactionPayload,
-                message: Some("Raw transaction sender does not match request account".to_owned()),
-            });
-        }
-
-        let signed_txn =
-            self.manager
-                .sign_txn(address, raw_txn)
-                .map_err(|error| RequestRejection {
-                    reason_code: RejectReasonCode::BackendUnavailable,
-                    message: Some(format!("Failed to sign transaction: {error}")),
-                })?;
-        let signed_txn_bytes =
-            bcs_ext::to_bytes(&signed_txn).map_err(|error| RequestRejection {
-                reason_code: RejectReasonCode::BackendUnavailable,
-                message: Some(format!("Failed to serialize signed transaction: {error}")),
-            })?;
-        Ok(RequestResult::SignedTransaction {
-            signed_txn_bcs_hex: format!("0x{}", hex::encode(signed_txn_bytes)),
-        })
-    }
-
-    fn sign_message(
-        &self,
-        request: &PulledRequest,
-        address: AccountAddress,
-    ) -> std::result::Result<RequestResult, RequestRejection> {
-        let message = request.message.as_deref().ok_or_else(|| RequestRejection {
-            reason_code: RejectReasonCode::InvalidMessagePayload,
-            message: Some("Missing message payload".to_owned()),
-        })?;
-        let format = request.message_format.ok_or_else(|| RequestRejection {
-            reason_code: RejectReasonCode::InvalidMessagePayload,
-            message: Some("Missing message format".to_owned()),
-        })?;
-        let signing_message =
-            decode_signing_message(message, format).map_err(|error| RequestRejection {
-                reason_code: RejectReasonCode::InvalidMessagePayload,
-                message: Some(error),
-            })?;
-        let signed_message = self
-            .manager
-            .sign_message(address, signing_message)
-            .map_err(|error| RequestRejection {
-                reason_code: RejectReasonCode::BackendUnavailable,
-                message: Some(format!("Failed to sign message: {error}")),
-            })?;
-        Ok(RequestResult::SignedMessage {
-            signature: signed_message.to_string(),
-        })
     }
 
     fn resolve_request(
@@ -500,183 +378,11 @@ impl LocalAccountAgent {
             .context("failed to spawn heartbeat thread")?;
         Ok(())
     }
-
-    fn prompt_for_request(
-        &self,
-        request: &PulledRequest,
-        account_info: &AccountInfo,
-        capabilities: &[WalletCapability],
-    ) -> std::result::Result<PromptApproval, RequestRejection> {
-        ensure_local_unlock_capability(account_info.is_locked, capabilities)?;
-        print_request_summary(request, account_info);
-
-        let approved =
-            prompt_yes_no("Approve request? [y/N]: ").map_err(|error| RequestRejection {
-                reason_code: RejectReasonCode::BackendUnavailable,
-                message: Some(format!("Failed to read local approval input: {error}")),
-            })?;
-        if !approved {
-            return Ok(PromptApproval {
-                approved: false,
-                password: None,
-            });
-        }
-
-        let password = if account_info.is_locked {
-            let password = rpassword::prompt_password("Account password: ").map_err(|error| {
-                RequestRejection {
-                    reason_code: RejectReasonCode::BackendUnavailable,
-                    message: Some(format!("Failed to read account password: {error}")),
-                }
-            })?;
-            if password.is_empty() {
-                return Err(RequestRejection {
-                    reason_code: RejectReasonCode::WalletLocked,
-                    message: Some("Password entry was cancelled".to_owned()),
-                });
-            }
-            Some(password)
-        } else {
-            None
-        };
-
-        Ok(PromptApproval {
-            approved: true,
-            password,
-        })
-    }
-}
-
-fn account_info_to_backend_account(account: AccountInfo) -> BackendAccount {
-    BackendAccount {
-        address: account.address.to_string(),
-        label: None,
-        public_key: Some(format!(
-            "0x{}",
-            hex::encode(account.public_key.public_key_bytes())
-        )),
-        is_default: account.is_default,
-        is_read_only: account.is_readonly,
-        is_locked: account.is_locked,
-    }
-}
-
-fn ensure_local_unlock_capability(
-    account_locked: bool,
-    capabilities: &[WalletCapability],
-) -> std::result::Result<(), RequestRejection> {
-    if account_locked && !capabilities.contains(&WalletCapability::Unlock) {
-        return Err(RequestRejection {
-            reason_code: RejectReasonCode::WalletLocked,
-            message: Some("Local account is locked".to_owned()),
-        });
-    }
-    Ok(())
 }
 
 fn new_presentation_id() -> PresentationId {
     PresentationId::new(format!("presentation-{}", Uuid::now_v7()))
         .expect("generated presentation id should be valid")
-}
-
-fn decode_hex_bytes(input: &str) -> std::result::Result<Vec<u8>, String> {
-    let trimmed = input.strip_prefix("0x").unwrap_or(input);
-    hex::decode(trimmed).map_err(|error| format!("invalid hex payload: {error}"))
-}
-
-fn decode_signing_message(
-    message: &str,
-    format: MessageFormat,
-) -> std::result::Result<SigningMessage, String> {
-    match format {
-        MessageFormat::Utf8 => Ok(SigningMessage::from(message.as_bytes().to_vec())),
-        MessageFormat::Hex => decode_hex_bytes(message).map(SigningMessage::from),
-    }
-}
-
-fn sanitize_for_tty(input: &str) -> String {
-    let mut sanitized = String::with_capacity(input.len());
-    for character in input.chars() {
-        match character {
-            '\n' => sanitized.push_str("\\n"),
-            '\r' => sanitized.push_str("\\r"),
-            '\t' => sanitized.push_str("\\t"),
-            character if character.is_control() => {
-                sanitized.push_str(&format!("\\u{{{:x}}}", u32::from(character)));
-            }
-            character => sanitized.push(character),
-        }
-    }
-    sanitized
-}
-
-fn print_tty_field(label: &str, value: &str) {
-    eprintln!("  {label}: {}", sanitize_for_tty(value));
-}
-
-fn print_untrusted_tty_field(label: &str, value: &str) {
-    eprintln!("  {label} (untrusted): {}", sanitize_for_tty(value));
-}
-
-fn print_request_summary(request: &PulledRequest, account_info: &AccountInfo) {
-    eprintln!();
-    eprintln!("Starmask Local Signing Request");
-    eprintln!("  Request ID: {}", request.request_id);
-    let client_request_id = request.client_request_id.to_string();
-    print_untrusted_tty_field("Client Request ID", &client_request_id);
-    print_tty_field("Account", &request.account_address);
-    eprintln!("  Account Locked: {}", account_info.is_locked);
-    eprintln!("  Kind: {}", request_kind_label(request.kind));
-    let payload_hash = request.payload_hash.to_string();
-    print_tty_field("Payload Hash", &payload_hash);
-    if let Some(display_hint) = &request.display_hint {
-        print_untrusted_tty_field("Display Hint", display_hint);
-    }
-    if let Some(client_context) = &request.client_context {
-        print_untrusted_tty_field("Client Context", client_context);
-    }
-
-    match request.kind {
-        RequestKind::SignTransaction => {
-            if let Some(raw_txn_bcs_hex) = &request.raw_txn_bcs_hex {
-                print_untrusted_tty_field("Raw Transaction BCS", raw_txn_bcs_hex);
-            }
-        }
-        RequestKind::SignMessage => {
-            if let Some(message_format) = request.message_format {
-                eprintln!("  Message Format: {}", message_format_label(message_format));
-            }
-            if let Some(message) = &request.message {
-                print_untrusted_tty_field("Canonical Message", message);
-            }
-        }
-    }
-    eprintln!();
-}
-
-fn request_kind_label(kind: RequestKind) -> &'static str {
-    match kind {
-        RequestKind::SignTransaction => "sign_transaction",
-        RequestKind::SignMessage => "sign_message",
-    }
-}
-
-fn message_format_label(format: MessageFormat) -> &'static str {
-    match format {
-        MessageFormat::Utf8 => "utf8",
-        MessageFormat::Hex => "hex",
-    }
-}
-
-fn prompt_yes_no(prompt: &str) -> io::Result<bool> {
-    let mut stdout = io::stdout().lock();
-    stdout.write_all(prompt.as_bytes())?;
-    stdout.flush()?;
-
-    let mut line = String::new();
-    io::stdin().read_line(&mut line)?;
-    let normalized = line.trim().to_ascii_lowercase();
-    Ok(matches!(normalized.as_str(), "y" | "yes"))
 }
 
 #[cfg(test)]
@@ -689,21 +395,9 @@ mod tests {
     use starcoin_types::genesis_config::ChainId;
     use tempfile::tempdir;
 
-    use super::{
-        LocalAccountAgent, account_info_to_backend_account, decode_signing_message,
-        ensure_local_unlock_capability, sanitize_for_tty,
-    };
-    use starmask_types::{DurationSeconds, LockState, MessageFormat, WalletCapability};
+    use super::LocalAccountAgent;
+    use starmask_types::{DurationSeconds, LockState, WalletCapability};
     use starmaskd::config::{LocalAccountDirBackendConfig, LocalPromptMode};
-
-    #[test]
-    fn decode_signing_message_accepts_utf8_and_hex() {
-        let utf8 = decode_signing_message("hello", MessageFormat::Utf8).unwrap();
-        assert_eq!(utf8.to_string(), "0x68656c6c6f");
-
-        let hex = decode_signing_message("0x010203", MessageFormat::Hex).unwrap();
-        assert_eq!(hex.to_string(), "0x010203");
-    }
 
     #[test]
     fn snapshot_marks_locked_signable_accounts_as_unlock_capable() {
@@ -746,58 +440,5 @@ mod tests {
             ]
         );
         assert_eq!(snapshot.accounts.len(), 1);
-    }
-
-    #[test]
-    fn backend_account_uses_prefixed_public_key_hex() {
-        let tempdir = tempdir().unwrap();
-        let storage =
-            AccountStorage::create_from_path(tempdir.path(), RocksdbConfig::default()).unwrap();
-        let manager = AccountManager::new(storage, ChainId::test()).unwrap();
-        let account = manager.create_account("hello").unwrap();
-        let info = manager.account_info(*account.address()).unwrap().unwrap();
-        let backend = account_info_to_backend_account(info);
-
-        assert!(backend.public_key.unwrap().starts_with("0x"));
-    }
-
-    #[test]
-    fn locked_accounts_fail_closed_without_unlock_capability() {
-        let error = ensure_local_unlock_capability(
-            true,
-            &[
-                WalletCapability::GetPublicKey,
-                WalletCapability::SignMessage,
-                WalletCapability::SignTransaction,
-            ],
-        )
-        .unwrap_err();
-
-        assert_eq!(
-            error.reason_code,
-            starmask_types::RejectReasonCode::WalletLocked
-        );
-        assert_eq!(error.message.as_deref(), Some("Local account is locked"));
-    }
-
-    #[test]
-    fn unlocked_accounts_do_not_require_unlock_capability() {
-        ensure_local_unlock_capability(
-            false,
-            &[
-                WalletCapability::GetPublicKey,
-                WalletCapability::SignMessage,
-                WalletCapability::SignTransaction,
-            ],
-        )
-        .unwrap();
-    }
-
-    #[test]
-    fn sanitize_for_tty_escapes_control_sequences_but_preserves_unicode() {
-        assert_eq!(
-            sanitize_for_tty("hi\nthere\x1b[31m\t你好"),
-            "hi\\nthere\\u{1b}[31m\\t你好"
-        );
     }
 }
