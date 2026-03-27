@@ -31,14 +31,14 @@ async fn main() -> Result<()> {
 
     tracing_subscriber::fmt()
         .with_writer(io::stderr)
-        .with_env_filter(EnvFilter::new(config.log_level.clone()))
+        .with_env_filter(EnvFilter::new(config.log_level().to_owned()))
         .with_target(false)
         .init();
 
-    let store = SqliteStore::open(&config.database_path)?;
-    let coordinator = spawn_coordinator(store, config.coordinator.clone());
+    let store = SqliteStore::open(config.database_path())?;
+    let coordinator = spawn_coordinator(store, config.coordinator().clone());
     let maintenance_handle = coordinator.clone();
-    let maintenance_interval = Duration::from_secs(config.maintenance_interval.as_secs());
+    let maintenance_interval = Duration::from_secs(config.maintenance_interval().as_secs());
     let maintenance_task = tokio::spawn(async move {
         let mut ticker = tokio::time::interval(maintenance_interval);
         ticker.set_missed_tick_behavior(MissedTickBehavior::Skip);
@@ -52,14 +52,11 @@ async fn main() -> Result<()> {
             }
         }
     });
-    let server_policy = ServerPolicy {
-        channel: config.channel,
-        wallet_backends: config.wallet_backends.clone(),
-    };
+    let server_policy = ServerPolicy::new(config.channel(), config.wallet_backends().to_vec());
 
     #[cfg(unix)]
     {
-        let result = run_unix_server(&config.socket_path, coordinator, server_policy).await;
+        let result = run_unix_server(config.socket_path(), coordinator, server_policy).await;
         maintenance_task.abort();
         result
     }

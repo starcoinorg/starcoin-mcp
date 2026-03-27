@@ -12,8 +12,8 @@ use starmask_core::CoordinatorConfig;
 use starmask_types::{Channel, JsonRpcResponse};
 use starmaskd::{
     config::{
-        CommonBackendConfig, LocalAccountDirBackendConfig, LocalPromptMode,
-        StarmaskExtensionBackendConfig, WalletBackendConfig,
+        LocalAccountDirBackendConfig, LocalPromptMode, StarmaskExtensionBackendConfig,
+        WalletBackendConfig,
     },
     coordinator_runtime::spawn_coordinator,
     server::{ServerPolicy, run_unix_server},
@@ -33,21 +33,19 @@ async fn spawn_test_server() -> (tempfile::TempDir, std::path::PathBuf, JoinHand
         run_unix_server(
             &socket_path_for_server,
             handle,
-            ServerPolicy {
-                channel: Channel::Development,
-                wallet_backends: vec![WalletBackendConfig::StarmaskExtension(
-                    StarmaskExtensionBackendConfig {
-                        common: CommonBackendConfig {
-                            backend_id: "browser-default".to_owned(),
-                            instance_label: "Browser Default".to_owned(),
-                            approval_surface: starmask_types::ApprovalSurface::BrowserUi,
-                        },
-                        allowed_extension_ids: ["ext.allowed".to_owned()].into_iter().collect(),
-                        native_host_name: "com.starcoin.test".to_owned(),
-                        profile_hint: None,
-                    },
+            ServerPolicy::new(
+                Channel::Development,
+                vec![WalletBackendConfig::StarmaskExtension(
+                    StarmaskExtensionBackendConfig::new(
+                        "browser-default",
+                        "Browser Default",
+                        starmask_types::ApprovalSurface::BrowserUi,
+                        ["ext.allowed".to_owned()].into_iter().collect(),
+                        "com.starcoin.test",
+                        None,
+                    ),
                 )],
-            },
+            ),
         )
         .await
         .unwrap();
@@ -71,24 +69,22 @@ async fn spawn_local_backend_server() -> (tempfile::TempDir, std::path::PathBuf,
         run_unix_server(
             &socket_path_for_server,
             handle,
-            ServerPolicy {
-                channel: Channel::Development,
-                wallet_backends: vec![WalletBackendConfig::LocalAccountDir(
-                    LocalAccountDirBackendConfig {
-                        common: CommonBackendConfig {
-                            backend_id: "local-main".to_owned(),
-                            instance_label: "Local Main".to_owned(),
-                            approval_surface: starmask_types::ApprovalSurface::TtyPrompt,
-                        },
+            ServerPolicy::new(
+                Channel::Development,
+                vec![WalletBackendConfig::LocalAccountDir(
+                    LocalAccountDirBackendConfig::new(
+                        "local-main",
+                        "Local Main",
+                        starmask_types::ApprovalSurface::TtyPrompt,
                         account_dir,
-                        prompt_mode: LocalPromptMode::TtyPrompt,
-                        chain_id: 251,
-                        unlock_cache_ttl: starmask_types::DurationSeconds::new(30),
-                        allow_read_only_accounts: true,
-                        require_strict_permissions: false,
-                    },
+                        LocalPromptMode::TtyPrompt,
+                        251,
+                        starmask_types::DurationSeconds::new(30),
+                        true,
+                        false,
+                    ),
                 )],
-            },
+            ),
         )
         .await
         .unwrap();

@@ -79,6 +79,9 @@ This is a project-wide layering rule, not a special exception for this subprojec
 
 ## Commit and Push Discipline
 
+- Name new task branches as `codex/<kind>/<topic>` by default.
+- Prefer `feat`, `fix`, `refactor`, `chore`, `docs`, or `test` as the `<kind>` segment.
+- Use `refactor` only for behavior-preserving structural changes, and do not default to `chore` when a more specific kind applies.
 - For each new `starmask-mcp` task branch, prefer a dedicated git worktree based on the latest `main`.
 - Reuse the current worktree only when the user explicitly requests it or when the task is to continue an already-dirty in-place branch.
 - If continuing in a dirty worktree, explain why that is safer than creating a fresh worktree before making substantial edits.

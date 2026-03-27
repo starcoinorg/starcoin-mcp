@@ -105,12 +105,12 @@ fn run_doctor(args: DoctorArgs) -> Result<()> {
     }) {
         Ok(config) => {
             let extension_backends = config
-                .wallet_backends
+                .wallet_backends()
                 .iter()
                 .filter(|backend| backend.as_extension().is_some())
                 .count();
             let local_backends = config
-                .wallet_backends
+                .wallet_backends()
                 .iter()
                 .filter(|backend| backend.as_local_account_dir().is_some())
                 .count();
@@ -118,12 +118,12 @@ fn run_doctor(args: DoctorArgs) -> Result<()> {
                 "config",
                 format!(
                     "channel={:?} wallet_backends={} extension_backends={} local_backends={} socket={} db={}",
-                    config.channel,
-                    config.wallet_backends.len(),
+                    config.channel(),
+                    config.wallet_backends().len(),
                     extension_backends,
                     local_backends,
-                    config.socket_path.display(),
-                    config.database_path.display(),
+                    config.socket_path().display(),
+                    config.database_path().display(),
                 ),
             );
             config
@@ -134,7 +134,7 @@ fn run_doctor(args: DoctorArgs) -> Result<()> {
         }
     };
 
-    match inspect_database(&config.database_path) {
+    match inspect_database(config.database_path()) {
         Ok(database) => report.ok(
             "database",
             format!(
@@ -148,7 +148,7 @@ fn run_doctor(args: DoctorArgs) -> Result<()> {
         Err(error) => report.fail("database", error.to_string()),
     }
 
-    let manifest_targets = collect_manifest_targets(&config.wallet_backends);
+    let manifest_targets = collect_manifest_targets(config.wallet_backends());
     if manifest_targets.is_empty() {
         report.ok(
             "native-host-manifest",
@@ -171,7 +171,7 @@ fn run_doctor(args: DoctorArgs) -> Result<()> {
         }
     }
 
-    let daemon_client = LocalDaemonClient::new(config.socket_path.clone());
+    let daemon_client = LocalDaemonClient::new(config.socket_path().to_path_buf());
     match daemon_client.system_ping() {
         Ok(ping) => report.ok(
             "daemon",
@@ -302,9 +302,9 @@ fn collect_manifest_targets(wallet_backends: &[WalletBackendConfig]) -> Vec<Mani
             continue;
         };
         grouped
-            .entry(extension.native_host_name.clone())
+            .entry(extension.native_host_name().to_owned())
             .or_default()
-            .extend(extension.allowed_extension_ids.iter().cloned());
+            .extend(extension.allowed_extension_ids().iter().cloned());
     }
 
     grouped
@@ -524,8 +524,8 @@ mod tests {
 
     use starmask_types::{ApprovalSurface, DurationSeconds};
     use starmaskd::config::{
-        CommonBackendConfig, LocalAccountDirBackendConfig, LocalPromptMode,
-        StarmaskExtensionBackendConfig, WalletBackendConfig,
+        LocalAccountDirBackendConfig, LocalPromptMode, StarmaskExtensionBackendConfig,
+        WalletBackendConfig,
     };
 
     use super::{collect_manifest_targets, inspect_database, inspect_manifest_in_candidates};
@@ -614,39 +614,33 @@ mod tests {
     #[test]
     fn collect_manifest_targets_unions_extension_ids_by_host_name() {
         let backends = vec![
-            WalletBackendConfig::StarmaskExtension(StarmaskExtensionBackendConfig {
-                common: CommonBackendConfig {
-                    backend_id: "ext-1".to_owned(),
-                    instance_label: "Extension 1".to_owned(),
-                    approval_surface: ApprovalSurface::BrowserUi,
-                },
-                allowed_extension_ids: BTreeSet::from(["ext.allowed.1".to_owned()]),
-                native_host_name: "com.starcoin.test".to_owned(),
-                profile_hint: None,
-            }),
-            WalletBackendConfig::StarmaskExtension(StarmaskExtensionBackendConfig {
-                common: CommonBackendConfig {
-                    backend_id: "ext-2".to_owned(),
-                    instance_label: "Extension 2".to_owned(),
-                    approval_surface: ApprovalSurface::BrowserUi,
-                },
-                allowed_extension_ids: BTreeSet::from(["ext.allowed.2".to_owned()]),
-                native_host_name: "com.starcoin.test".to_owned(),
-                profile_hint: None,
-            }),
-            WalletBackendConfig::LocalAccountDir(LocalAccountDirBackendConfig {
-                common: CommonBackendConfig {
-                    backend_id: "local-main".to_owned(),
-                    instance_label: "Local Main".to_owned(),
-                    approval_surface: ApprovalSurface::TtyPrompt,
-                },
-                account_dir: PathBuf::from("/tmp/local-main"),
-                prompt_mode: LocalPromptMode::TtyPrompt,
-                chain_id: 251,
-                unlock_cache_ttl: DurationSeconds::new(60),
-                allow_read_only_accounts: false,
-                require_strict_permissions: true,
-            }),
+            WalletBackendConfig::StarmaskExtension(StarmaskExtensionBackendConfig::new(
+                "ext-1",
+                "Extension 1",
+                ApprovalSurface::BrowserUi,
+                BTreeSet::from(["ext.allowed.1".to_owned()]),
+                "com.starcoin.test",
+                None,
+            )),
+            WalletBackendConfig::StarmaskExtension(StarmaskExtensionBackendConfig::new(
+                "ext-2",
+                "Extension 2",
+                ApprovalSurface::BrowserUi,
+                BTreeSet::from(["ext.allowed.2".to_owned()]),
+                "com.starcoin.test",
+                None,
+            )),
+            WalletBackendConfig::LocalAccountDir(LocalAccountDirBackendConfig::new(
+                "local-main",
+                "Local Main",
+                ApprovalSurface::TtyPrompt,
+                PathBuf::from("/tmp/local-main"),
+                LocalPromptMode::TtyPrompt,
+                251,
+                DurationSeconds::new(60),
+                false,
+                true,
+            )),
         ];
 
         let targets = collect_manifest_targets(&backends);

@@ -29,7 +29,7 @@ fn main() -> Result<()> {
     })?;
 
     tracing_subscriber::fmt()
-        .with_env_filter(EnvFilter::new(runtime.log_level.clone()))
+        .with_env_filter(EnvFilter::new(runtime.log_level().to_owned()))
         .init();
 
     let Some(backend) = runtime.find_backend(&cli.backend_id) else {
@@ -41,13 +41,13 @@ fn main() -> Result<()> {
             cli.backend_id
         );
     };
-    if config.prompt_mode != LocalPromptMode::TtyPrompt {
+    if config.prompt_mode() != LocalPromptMode::TtyPrompt {
         bail!("local-account-agent currently supports only prompt_mode = tty_prompt");
     }
 
     let mut agent = LocalAccountAgent::new(
-        runtime.socket_path,
-        std::time::Duration::from_secs(runtime.heartbeat_interval.as_secs()),
+        runtime.socket_path().to_path_buf(),
+        std::time::Duration::from_secs(runtime.heartbeat_interval().as_secs()),
         config,
     )?;
     agent.run()
