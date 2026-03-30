@@ -5,6 +5,7 @@ mod probe;
 #[cfg(test)]
 mod tests;
 mod tls;
+mod vm2_helpers;
 
 use std::{
     collections::HashMap,
@@ -43,6 +44,11 @@ use url::Url;
 use x509_parser::{certificate::X509Certificate, prelude::FromDer};
 
 use tls::build_http_client;
+use vm2_helpers::{
+    PRIMARY_FUNGIBLE_STORE_STRUCT_TAG, synthesize_account_state_from_resources,
+    validate_list_resources_response, vm2_get_resource_params, vm2_list_code_params,
+    vm2_list_resources_params,
+};
 
 pub(crate) use cache::TimedValueCache;
 
@@ -506,6 +512,10 @@ impl NodeRpcClient {
             ),
         )
         .await
+        .and_then(|value| {
+            validate_list_resources_response(&value)?;
+            Ok(value)
+        })
     }
 
     async fn account_state_from_vm2_resources(
@@ -716,9 +726,6 @@ struct RpcFailure {
     data: Option<Value>,
 }
 
-const PRIMARY_FUNGIBLE_STORE_STRUCT_TAG: &str =
-    "0x00000000000000000000000000000001::fungible_asset::FungibleStore";
-
 fn legacy_list_resources_params(
     address: &str,
     decode: bool,
@@ -739,65 +746,12 @@ fn legacy_list_resources_params(
     ])
 }
 
-fn vm2_list_resources_params(
-    address: &str,
-    decode: bool,
-    start_index: u64,
-    max_size: u64,
-    state_root: Option<String>,
-    resource_types: &[String],
-) -> Value {
-    json!([
-        address,
-        {
-            "decode": decode,
-            "state_root": state_root,
-            "start_index": start_index,
-            "max_size": max_size,
-            "resource_types": if resource_types.is_empty() { Value::Null } else { json!(resource_types) },
-            "primary_fungible_store": {}
-        }
-    ])
-}
-
 fn legacy_list_code_params(address: &str, resolve: bool, state_root: Option<String>) -> Value {
     json!([
         address,
         {
             "resolve": resolve,
             "state_root": state_root,
-        }
-    ])
-}
-
-fn vm2_list_code_params(address: &str, resolve: bool, state_root: Option<String>) -> Value {
-    json!([
-        address,
-        {
-            "resolve": resolve,
-            "state_root": state_root,
-        }
-    ])
-}
-
-fn vm2_get_resource_params(
-    address: &str,
-    resource_type: &str,
-    decode: bool,
-    state_root: Option<String>,
-    include_primary_fungible_store: bool,
-) -> Value {
-    json!([
-        address,
-        resource_type,
-        {
-            "decode": decode,
-            "state_root": state_root,
-            "primary_fungible_store": if include_primary_fungible_store {
-                json!({})
-            } else {
-                Value::Null
-            }
         }
     ])
 }
@@ -833,25 +787,4 @@ fn resource_entries_are_non_empty(value: &Value) -> bool {
         .and_then(Value::as_object)
         .map(|entries| !entries.is_empty())
         .unwrap_or(false)
-}
-
-fn synthesize_account_state_from_resources(resources: &Value) -> Option<Value> {
-    let entries = resources.get("resources")?.as_object()?;
-    if entries.is_empty() {
-        return None;
-    }
-
-    let sequence_number = entries
-        .iter()
-        .find(|(name, _)| name.contains("::account::Account"))
-        .and_then(|(_, resource)| resource.get("json"))
-        .and_then(|resource| resource.get("sequence_number"))
-        .and_then(parse_u64);
-
-    let mut summary = serde_json::Map::new();
-    if let Some(sequence_number) = sequence_number {
-        summary.insert("sequence_number".to_owned(), json!(sequence_number));
-    }
-
-    Some(Value::Object(summary))
 }

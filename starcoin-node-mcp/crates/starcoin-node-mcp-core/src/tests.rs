@@ -166,6 +166,67 @@ fn primary_store_balance_replaces_legacy_stc_coin_store_balance() {
 }
 
 #[test]
+fn primary_store_balance_preserves_non_stc_fungible_store_balances() {
+    let mut balances = vec![
+        named_resource_entry(
+            "0x00000000000000000000000000000001::coin::CoinStore<0x00000000000000000000000000000001::starcoin_coin::STC>",
+            json!({
+                "json": {
+                    "coin": { "value": 7 }
+                }
+            }),
+        ),
+        named_resource_entry(
+            "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
+            json!({
+                "raw": "0x01",
+                "json": {
+                    "balance": 7
+                }
+            }),
+        ),
+        named_resource_entry(
+            "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
+            json!({
+                "raw": "0x99",
+                "json": {
+                    "balance": 9
+                }
+            }),
+        ),
+    ];
+
+    replace_stc_balance_with_primary_store(
+        &mut balances,
+        named_resource_entry(
+            "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
+            json!({
+                "raw": "0x01",
+                "json": {
+                    "balance": 42
+                }
+            }),
+        ),
+    );
+
+    assert_eq!(balances.len(), 2);
+    assert_eq!(
+        balances[0]
+            .get("value")
+            .and_then(|value| value.get("raw"))
+            .and_then(Value::as_str),
+        Some("0x01")
+    );
+    assert_eq!(
+        balances[1]
+            .get("value")
+            .and_then(|value| value.get("raw"))
+            .and_then(Value::as_str),
+        Some("0x99")
+    );
+}
+
+#[test]
 fn watch_only_terminates_on_confirmation() {
     assert!(!is_terminal_watch_status(&status_summary_from_parts(
         Some(&json!({"status": "Pending"})),

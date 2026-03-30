@@ -346,6 +346,32 @@ async fn get_account_state_propagates_vm2_errors_after_legacy_null() {
 }
 
 #[tokio::test]
+async fn get_account_state_rejects_malformed_vm2_resource_envelope() {
+    let server = MockServer::start();
+    mock_json_rpc_result(&server, "state.get_account_state", Value::Null);
+    mock_json_rpc_result_with_params(
+        &server,
+        "state2.list_resource",
+        super::vm2_list_resources_params("0x1", true, 0, 32, None, &[]),
+        json!({ "unexpected": {} }),
+    );
+
+    let client = NodeRpcClient::new(&runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::Auto,
+        true,
+    ))
+    .expect("rpc client should build");
+    let error = client
+        .get_account_state("0x1")
+        .await
+        .expect_err("malformed vm2 envelopes should propagate as rpc failures");
+
+    assert_eq!(error.code, SharedErrorCode::RpcUnavailable);
+}
+
+#[tokio::test]
 async fn list_resources_propagates_vm2_errors_after_legacy_empty() {
     let server = MockServer::start();
     mock_json_rpc_result_with_params(
@@ -384,6 +410,37 @@ async fn list_resources_propagates_vm2_errors_after_legacy_empty() {
         .list_resources("0x1", true, 0, 20, None, &[])
         .await
         .expect_err("vm2 fallback errors should propagate");
+
+    assert_eq!(error.code, SharedErrorCode::RpcUnavailable);
+}
+
+#[tokio::test]
+async fn list_resources_rejects_malformed_vm2_resource_envelope() {
+    let server = MockServer::start();
+    mock_json_rpc_result_with_params(
+        &server,
+        "state.list_resource",
+        super::legacy_list_resources_params("0x1", true, 0, 20, None, &[]),
+        json!({ "resources": {} }),
+    );
+    mock_json_rpc_result_with_params(
+        &server,
+        "state2.list_resource",
+        super::vm2_list_resources_params("0x1", true, 0, 20, None, &[]),
+        json!({ "unexpected": {} }),
+    );
+
+    let client = NodeRpcClient::new(&runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::Auto,
+        true,
+    ))
+    .expect("rpc client should build");
+    let error = client
+        .list_resources("0x1", true, 0, 20, None, &[])
+        .await
+        .expect_err("malformed vm2 resource envelopes should fail closed");
 
     assert_eq!(error.code, SharedErrorCode::RpcUnavailable);
 }

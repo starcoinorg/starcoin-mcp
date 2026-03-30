@@ -227,11 +227,17 @@ pub(crate) fn replace_stc_balance_with_primary_store(
     primary_store_resource: Value,
 ) {
     let stc_token = G_STC_TOKEN_CODE.to_string();
+    let primary_store_name = resource_name(&primary_store_resource);
+    let primary_store_value = primary_store_resource.get("value");
     balances.retain(|resource| {
         let Some(name) = resource_name(resource) else {
             return true;
         };
-        if name.contains("::fungible_asset::FungibleStore") {
+        if primary_store_name == Some(name)
+            && primary_store_value
+                .map(|value| same_resource_value(resource.get("value"), value))
+                .unwrap_or(false)
+        {
             return false;
         }
         extract_generic_resource_token(name, "CoinStore")
@@ -247,6 +253,16 @@ pub(crate) fn named_resource_entry(name: &str, value: Value) -> Value {
 
 fn resource_name(resource: &Value) -> Option<&str> {
     resource.get("name").and_then(Value::as_str)
+}
+
+fn same_resource_value(candidate: Option<&Value>, expected: &Value) -> bool {
+    let Some(candidate) = candidate else {
+        return false;
+    };
+    if candidate == expected {
+        return true;
+    }
+    candidate.get("raw").and_then(Value::as_str) == expected.get("raw").and_then(Value::as_str)
 }
 
 fn extract_generic_resource_token(name: &str, container: &str) -> Option<String> {
