@@ -1,0 +1,47 @@
+# Copy this file to:
+#   macOS: ~/Library/Application Support/StarcoinMCP/node-mcp.toml
+#   Linux: ~/.config/starcoin-mcp/node-mcp.toml
+#
+# Replace the placeholder RPC URL and genesis hash with the chain you actually intend to use.
+
+rpc_endpoint_url = "https://barnard.seed.example.org"
+mode = "transaction"
+vm_profile = "auto"
+
+# Barnard example pins.
+expected_chain_id = 251
+expected_network = "barnard"
+expected_genesis_hash = "0xREPLACE_WITH_REAL_GENESIS_HASH"
+require_genesis_hash_match = true
+
+connect_timeout_ms = 3000
+request_timeout_ms = 10000
+startup_probe_timeout_ms = 5000
+
+default_expiration_ttl_seconds = 600
+max_expiration_ttl_seconds = 3600
+watch_poll_interval_seconds = 3
+watch_timeout_seconds = 120
+max_head_lag_seconds = 60
+warn_head_lag_seconds = 15
+allow_submit_without_prior_simulation = true
+
+chain_status_cache_ttl_seconds = 3
+abi_cache_ttl_seconds = 300
+module_cache_max_entries = 1024
+disable_disk_cache = true
+
+max_submit_blocking_timeout_seconds = 60
+max_watch_timeout_seconds = 300
+min_watch_poll_interval_seconds = 2
+max_list_blocks_count = 100
+max_events_limit = 200
+max_account_resource_limit = 100
+max_account_module_limit = 50
+max_list_resources_size = 100
+max_list_modules_size = 100
+max_publish_package_bytes = 524288
+max_concurrent_watch_requests = 8
+max_inflight_expensive_requests = 16
+
+log_level = "info"

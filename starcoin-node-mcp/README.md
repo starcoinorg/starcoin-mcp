@@ -15,6 +15,7 @@ The first conforming implementation of `starcoin-node-mcp` is required to be wri
 
 ## Contents
 
+- `docs/architecture/host-integration.md`: host-side orchestration from prepare to wallet approval and submission
 - `docs/starcoin-node-mcp-interface-design.md`: MCP tool surface and result semantics
 - `docs/security-model.md`: chain-side trust boundary and safety rules
 - `docs/deployment-model.md`: runtime topology and capability profiles

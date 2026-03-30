@@ -1,0 +1,20 @@
+{
+  "name": "starcoin-local",
+  "interface": {
+    "displayName": "Starcoin Local Plugins"
+  },
+  "plugins": [
+    {
+      "name": "starcoin-transfer-workflow",
+      "source": {
+        "source": "local",
+        "path": "./plugins/starcoin-transfer-workflow"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

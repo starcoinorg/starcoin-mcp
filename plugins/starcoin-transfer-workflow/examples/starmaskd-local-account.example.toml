@@ -1,0 +1,36 @@
+# Copy this file to:
+#   macOS: ~/Library/Application Support/StarcoinMCP/config.toml
+#   Linux: ~/.config/starcoin-mcp/config.toml
+#
+# Replace the placeholder home-directory paths before starting starmaskd or local-account-agent.
+# For Starcoin local wallets, account_dir should point at an account vault directory such as:
+#   ~/.starcoin/main/account_vaults
+# or a dedicated local vault that you created with:
+#   starcoin --connect ws://127.0.0.1:9870 --local-account-dir <dir> account create -p <password>
+
+channel = "development"
+socket_path = "/Users/alice/Library/Application Support/StarcoinMCP/run/starmaskd.sock"
+database_path = "/Users/alice/Library/Application Support/StarcoinMCP/starmaskd.sqlite3"
+log_level = "info"
+maintenance_interval_seconds = 1
+default_request_ttl_seconds = 300
+min_request_ttl_seconds = 30
+max_request_ttl_seconds = 3600
+delivery_lease_seconds = 30
+presentation_lease_seconds = 45
+heartbeat_interval_seconds = 10
+wallet_offline_after_seconds = 25
+result_retention_seconds = 600
+
+[[wallet_backends]]
+backend_id = "local-main"
+backend_kind = "local_account_dir"
+enabled = true
+instance_label = "Local Main"
+approval_surface = "tty_prompt"
+account_dir = "/Users/alice/.starcoin/main/account_vaults"
+prompt_mode = "tty_prompt"
+chain_id = 251
+unlock_cache_ttl_seconds = 300
+allow_read_only_accounts = true
+require_strict_permissions = true

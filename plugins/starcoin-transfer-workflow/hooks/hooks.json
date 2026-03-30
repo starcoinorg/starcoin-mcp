@@ -1,0 +1,14 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 plugins/starcoin-transfer-workflow/scripts/doctor.py --session-start || true"
+          }
+        ]
+      }
+    ]
+  }
+}

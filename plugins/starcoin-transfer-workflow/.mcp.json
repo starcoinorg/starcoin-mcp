@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "starcoin-node-mcp": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "set -e\nif [ -n \"${STARCOIN_NODE_MCP_BIN:-}\" ]; then\n  if [ -n \"${STARCOIN_NODE_MCP_CONFIG:-}\" ]; then\n    exec \"$STARCOIN_NODE_MCP_BIN\" --config \"$STARCOIN_NODE_MCP_CONFIG\"\n  fi\n  exec \"$STARCOIN_NODE_MCP_BIN\"\nfi\nif [ -n \"${STARCOIN_NODE_MCP_CONFIG:-}\" ]; then\n  exec cargo run --quiet --manifest-path \"${STARCOIN_NODE_MCP_MANIFEST:-/Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/starcoin-node-mcp/crates/starcoin-node-mcp-server/Cargo.toml}\" --bin starcoin-node-mcp -- --config \"$STARCOIN_NODE_MCP_CONFIG\"\nfi\nexec cargo run --quiet --manifest-path \"${STARCOIN_NODE_MCP_MANIFEST:-/Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/starcoin-node-mcp/crates/starcoin-node-mcp-server/Cargo.toml}\" --bin starcoin-node-mcp"
+      ]
+    },
+    "starmask-mcp": {
+      "command": "sh",
+      "args": [
+        "-c",
+        "set -e\nif [ -n \"${STARMASK_MCP_BIN:-}\" ]; then\n  if [ -n \"${STARMASK_MCP_DAEMON_SOCKET_PATH:-}\" ]; then\n    exec \"$STARMASK_MCP_BIN\" --daemon_socket_path \"$STARMASK_MCP_DAEMON_SOCKET_PATH\"\n  fi\n  exec \"$STARMASK_MCP_BIN\"\nfi\nif [ -n \"${STARMASK_MCP_DAEMON_SOCKET_PATH:-}\" ]; then\n  exec cargo run --quiet --manifest-path \"${STARMASK_MCP_MANIFEST:-/Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/starmask-mcp/crates/starmask-mcp/Cargo.toml}\" --bin starmask-mcp -- --daemon_socket_path \"$STARMASK_MCP_DAEMON_SOCKET_PATH\"\nfi\nexec cargo run --quiet --manifest-path \"${STARMASK_MCP_MANIFEST:-/Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/starmask-mcp/crates/starmask-mcp/Cargo.toml}\" --bin starmask-mcp"
+      ]
+    }
+  }
+}

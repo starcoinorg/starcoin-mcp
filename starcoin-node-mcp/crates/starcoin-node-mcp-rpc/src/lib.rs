@@ -52,6 +52,8 @@ use vm2_helpers::{
 
 pub(crate) use cache::TimedValueCache;
 
+const ACCOUNT_RESOURCE_TYPE: &str = "0x1::account::Account";
+
 #[derive(Debug)]
 pub struct NodeRpcClient {
     endpoint: Url,
@@ -229,14 +231,22 @@ impl NodeRpcClient {
             return self.account_state_from_vm2_resources(address).await;
         }
         match self.call("state.get_account_state", json!([address])).await {
-            Ok(Some(state)) => Ok(Some(state)),
-            Ok(None) => match self.account_state_from_vm2_resources(address).await {
+            Ok(Some(state)) if legacy_account_state_has_sequence_number(&state) => Ok(Some(state)),
+            Ok(Some(state)) => match self.account_state_from_resource_listing(address).await {
+                Ok(Some(vm2_state)) => Ok(Some(vm2_state)),
+                Ok(None) => Ok(Some(state)),
+                Err(error) if error.code == SharedErrorCode::UnsupportedOperation => {
+                    Ok(Some(state))
+                }
+                Err(error) => Err(error),
+            },
+            Ok(None) => match self.account_state_from_resource_listing(address).await {
                 Ok(state) => Ok(state),
                 Err(error) if error.code == SharedErrorCode::UnsupportedOperation => Ok(None),
                 Err(error) => Err(error),
             },
             Err(error) if error.code == SharedErrorCode::UnsupportedOperation => {
-                self.account_state_from_vm2_resources(address).await
+                self.account_state_from_resource_listing(address).await
             }
             Err(error) => Err(error),
         }
@@ -528,6 +538,23 @@ impl NodeRpcClient {
         Ok(synthesize_account_state_from_resources(&resources))
     }
 
+    async fn account_state_from_resource_listing(
+        &self,
+        address: &str,
+    ) -> Result<Option<Value>, SharedError> {
+        let resources = self
+            .list_resources(
+                address,
+                true,
+                0,
+                20,
+                None,
+                &[ACCOUNT_RESOURCE_TYPE.to_owned()],
+            )
+            .await?;
+        Ok(synthesize_account_state_from_resources(&resources))
+    }
+
     async fn call_first_available_value(
         &self,
         methods: &[&str],
@@ -688,6 +715,10 @@ impl NodeRpcClient {
             }
         }
     }
+}
+
+fn legacy_account_state_has_sequence_number(state: &Value) -> bool {
+    state.get("sequence_number").is_some()
 }
 
 fn extract_submission_hash(hash_value: &Value) -> Result<String, SharedError> {
