@@ -1,10 +1,10 @@
 use super::{
     AppContext, CachedProbe, SignedUserTransaction, accepted_submission_output,
-    effective_submit_timeout_seconds, enforce_transaction_head_lag, extract_balances_and_tokens,
-    extract_chain_context, extract_optional_string, is_terminal_watch_status,
-    status_summary_from_parts,
-    submission_unknown_output, validate_chain_identity, validate_signed_transaction_submission,
-    validate_transaction_probe,
+    effective_submit_timeout_seconds, enforce_transaction_head_lag, extract_accepted_tokens,
+    extract_balance_resources, extract_chain_context, extract_optional_string,
+    is_terminal_watch_status, named_resource_entry, replace_stc_balance_with_primary_store,
+    status_summary_from_parts, submission_unknown_output, validate_chain_identity,
+    validate_signed_transaction_submission, validate_transaction_probe,
 };
 use httpmock::prelude::*;
 use serde_json::{Value, json};
@@ -110,7 +110,7 @@ fn extract_optional_string_rejects_non_string_values() {
 }
 
 #[test]
-fn extract_balances_and_tokens_recognizes_coin_store_resources() {
+fn primary_store_balance_replaces_legacy_stc_coin_store_balance() {
     let resources = vec![
         json!({
             "name": "0x00000000000000000000000000000001::account::Account",
@@ -125,10 +125,10 @@ fn extract_balances_and_tokens_recognizes_coin_store_resources() {
             }
         }),
         json!({
-            "name": "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
+            "name": "0x00000000000000000000000000000001::coin::CoinStore<0x00000000000000000000000000000042::usdt::USDT>",
             "value": {
                 "json": {
-                    "balance": 42
+                    "coin": { "value": 9 }
                 }
             }
         }),
@@ -136,16 +136,32 @@ fn extract_balances_and_tokens_recognizes_coin_store_resources() {
     let mut balances = Vec::new();
     let mut accepted_tokens = Vec::new();
 
-    extract_balances_and_tokens(&resources, &mut balances, &mut accepted_tokens);
+    extract_balance_resources(&resources, &mut balances);
+    extract_accepted_tokens(&resources, &mut accepted_tokens);
+    replace_stc_balance_with_primary_store(
+        &mut balances,
+        named_resource_entry(
+            "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
+            json!({
+                "raw": "0x01",
+                "json": {
+                    "balance": 42
+                }
+            }),
+        ),
+    );
 
-    assert_eq!(balances.len(), 1);
+    assert_eq!(balances.len(), 2);
     assert_eq!(
         balances[0].get("name").and_then(Value::as_str),
         Some("0x00000000000000000000000000000001::fungible_asset::FungibleStore")
     );
     assert_eq!(
         accepted_tokens,
-        vec!["0x00000000000000000000000000000001::starcoin_coin::STC".to_owned()]
+        vec![
+            "0x00000000000000000000000000000001::starcoin_coin::STC".to_owned(),
+            "0x00000000000000000000000000000042::usdt::USDT".to_owned()
+        ]
     );
 }
 

@@ -224,9 +224,13 @@ impl NodeRpcClient {
         }
         match self.call("state.get_account_state", json!([address])).await {
             Ok(Some(state)) => Ok(Some(state)),
-            Ok(None) => Ok(self.account_state_from_vm2_resources(address).await.unwrap_or(None)),
+            Ok(None) => match self.account_state_from_vm2_resources(address).await {
+                Ok(state) => Ok(state),
+                Err(error) if error.code == SharedErrorCode::UnsupportedOperation => Ok(None),
+                Err(error) => Err(error),
+            },
             Err(error) if error.code == SharedErrorCode::UnsupportedOperation => {
-                Ok(self.account_state_from_vm2_resources(address).await.unwrap_or(None))
+                self.account_state_from_vm2_resources(address).await
             }
             Err(error) => Err(error),
         }
@@ -263,16 +267,14 @@ impl NodeRpcClient {
         let legacy_result = self
             .call_value(
                 "state.list_resource",
-                json!([
+                legacy_list_resources_params(
                     address,
-                    {
-                        "decode": decode,
-                        "state_root": state_root.clone(),
-                        "start_index": start_index,
-                        "max_size": max_size,
-                        "resource_types": if resource_types.is_empty() { Value::Null } else { json!(resource_types) }
-                    }
-                ]),
+                    decode,
+                    start_index,
+                    max_size,
+                    state_root.clone(),
+                    resource_types,
+                ),
             )
             .await;
 
@@ -290,7 +292,8 @@ impl NodeRpcClient {
                 .await
             {
                 Ok(vm2_value) => Ok(vm2_value),
-                Err(_) => Ok(value),
+                Err(error) if error.code == SharedErrorCode::UnsupportedOperation => Ok(value),
+                Err(error) => Err(error),
             },
             Err(error) if error.code == SharedErrorCode::UnsupportedOperation => {
                 self.list_resources_via_vm2(
@@ -317,27 +320,38 @@ impl NodeRpcClient {
             return self
                 .call_value(
                     "state2.list_code",
-                    json!([
-                        address,
-                        {
-                            "resolve": resolve,
-                            "state_root": state_root,
-                        }
-                    ]),
+                    vm2_list_code_params(address, resolve, state_root),
                 )
                 .await;
         }
         self.call_value(
             "state.list_code",
-            json!([
-                address,
-                {
-                    "resolve": resolve,
-                    "state_root": state_root,
-                }
-            ]),
+            legacy_list_code_params(address, resolve, state_root),
         )
         .await
+    }
+
+    pub async fn get_primary_stc_balance_resource(
+        &self,
+        address: &str,
+    ) -> Result<Option<Value>, SharedError> {
+        match self
+            .call(
+                "state2.get_resource",
+                vm2_get_resource_params(
+                    address,
+                    PRIMARY_FUNGIBLE_STORE_STRUCT_TAG,
+                    true,
+                    None,
+                    true,
+                ),
+            )
+            .await
+        {
+            Ok(resource) => Ok(resource),
+            Err(error) if error.code == SharedErrorCode::UnsupportedOperation => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     pub async fn resolve_function_abi(&self, function_id: &str) -> Result<Value, SharedError> {
@@ -482,17 +496,14 @@ impl NodeRpcClient {
     ) -> Result<Value, SharedError> {
         self.call_value(
             "state2.list_resource",
-            json!([
+            vm2_list_resources_params(
                 address,
-                {
-                    "decode": decode,
-                    "state_root": state_root,
-                    "start_index": start_index,
-                    "max_size": max_size,
-                    "resource_types": if resource_types.is_empty() { Value::Null } else { json!(resource_types) },
-                    "primary_fungible_store": {}
-                }
-            ]),
+                decode,
+                start_index,
+                max_size,
+                state_root,
+                resource_types,
+            ),
         )
         .await
     }
@@ -705,6 +716,92 @@ struct RpcFailure {
     data: Option<Value>,
 }
 
+const PRIMARY_FUNGIBLE_STORE_STRUCT_TAG: &str =
+    "0x00000000000000000000000000000001::fungible_asset::FungibleStore";
+
+fn legacy_list_resources_params(
+    address: &str,
+    decode: bool,
+    start_index: u64,
+    max_size: u64,
+    state_root: Option<String>,
+    resource_types: &[String],
+) -> Value {
+    json!([
+        address,
+        {
+            "decode": decode,
+            "state_root": state_root,
+            "start_index": start_index,
+            "max_size": max_size,
+            "resource_types": if resource_types.is_empty() { Value::Null } else { json!(resource_types) }
+        }
+    ])
+}
+
+fn vm2_list_resources_params(
+    address: &str,
+    decode: bool,
+    start_index: u64,
+    max_size: u64,
+    state_root: Option<String>,
+    resource_types: &[String],
+) -> Value {
+    json!([
+        address,
+        {
+            "decode": decode,
+            "state_root": state_root,
+            "start_index": start_index,
+            "max_size": max_size,
+            "resource_types": if resource_types.is_empty() { Value::Null } else { json!(resource_types) },
+            "primary_fungible_store": {}
+        }
+    ])
+}
+
+fn legacy_list_code_params(address: &str, resolve: bool, state_root: Option<String>) -> Value {
+    json!([
+        address,
+        {
+            "resolve": resolve,
+            "state_root": state_root,
+        }
+    ])
+}
+
+fn vm2_list_code_params(address: &str, resolve: bool, state_root: Option<String>) -> Value {
+    json!([
+        address,
+        {
+            "resolve": resolve,
+            "state_root": state_root,
+        }
+    ])
+}
+
+fn vm2_get_resource_params(
+    address: &str,
+    resource_type: &str,
+    decode: bool,
+    state_root: Option<String>,
+    include_primary_fungible_store: bool,
+) -> Value {
+    json!([
+        address,
+        resource_type,
+        {
+            "decode": decode,
+            "state_root": state_root,
+            "primary_fungible_store": if include_primary_fungible_store {
+                json!({})
+            } else {
+                Value::Null
+            }
+        }
+    ])
+}
+
 fn map_rpc_error_code(message: &str) -> SharedErrorCode {
     let lower = message.to_ascii_lowercase();
     if lower.contains("expired") {
@@ -731,7 +828,8 @@ fn parse_u64(value: &Value) -> Option<u64> {
 }
 
 fn resource_entries_are_non_empty(value: &Value) -> bool {
-    value.get("resources")
+    value
+        .get("resources")
         .and_then(Value::as_object)
         .map(|entries| !entries.is_empty())
         .unwrap_or(false)

@@ -188,33 +188,27 @@ pub(crate) fn map_named_entries(container: &Value, field: &str) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-pub(crate) fn extract_balances_and_tokens(
-    resources: &[Value],
-    balances: &mut Vec<Value>,
-    accepted_tokens: &mut Vec<String>,
-) {
-    let has_primary_fungible_store = resources.iter().any(|resource| {
-        resource
-            .get("name")
-            .and_then(Value::as_str)
-            .map(|name| name.contains("::fungible_asset::FungibleStore"))
-            .unwrap_or(false)
-    });
-
+pub(crate) fn extract_balance_resources(resources: &[Value], balances: &mut Vec<Value>) {
     for resource in resources {
-        let Some(name) = resource.get("name").and_then(Value::as_str) else {
+        let Some(name) = resource_name(resource) else {
             continue;
         };
-        let coin_store_token = extract_generic_resource_token(name, "CoinStore");
-        let is_primary_fungible_store = name.contains("::fungible_asset::FungibleStore");
-        let is_balance_resource = name.contains("Balance")
+        if name.contains("Balance")
             || name.contains("balance")
-            || is_primary_fungible_store
-            || (!has_primary_fungible_store && coin_store_token.is_some());
-        if is_balance_resource {
+            || name.contains("::fungible_asset::FungibleStore")
+            || extract_generic_resource_token(name, "CoinStore").is_some()
+        {
             balances.push(resource.clone());
         }
-        if let Some(token) = coin_store_token {
+    }
+}
+
+pub(crate) fn extract_accepted_tokens(resources: &[Value], accepted_tokens: &mut Vec<String>) {
+    for resource in resources {
+        let Some(name) = resource_name(resource) else {
+            continue;
+        };
+        if let Some(token) = extract_generic_resource_token(name, "CoinStore") {
             if !accepted_tokens.iter().any(|existing| existing == &token) {
                 accepted_tokens.push(token);
             }
@@ -226,6 +220,33 @@ pub(crate) fn extract_balances_and_tokens(
             accepted_tokens.push(name.to_owned());
         }
     }
+}
+
+pub(crate) fn replace_stc_balance_with_primary_store(
+    balances: &mut Vec<Value>,
+    primary_store_resource: Value,
+) {
+    let stc_token = G_STC_TOKEN_CODE.to_string();
+    balances.retain(|resource| {
+        let Some(name) = resource_name(resource) else {
+            return true;
+        };
+        if name.contains("::fungible_asset::FungibleStore") {
+            return false;
+        }
+        extract_generic_resource_token(name, "CoinStore")
+            .map(|token| token != stc_token)
+            .unwrap_or(true)
+    });
+    balances.insert(0, primary_store_resource);
+}
+
+pub(crate) fn named_resource_entry(name: &str, value: Value) -> Value {
+    json!({ "name": name, "value": value })
+}
+
+fn resource_name(resource: &Value) -> Option<&str> {
+    resource.get("name").and_then(Value::as_str)
 }
 
 fn extract_generic_resource_token(name: &str, container: &str) -> Option<String> {

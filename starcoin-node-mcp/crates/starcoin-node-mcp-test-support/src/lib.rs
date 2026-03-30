@@ -162,6 +162,31 @@ pub fn mock_json_rpc_result<'a>(server: &'a MockServer, method: &str, result: Va
     })
 }
 
+pub fn mock_json_rpc_result_with_params<'a>(
+    server: &'a MockServer,
+    method: &str,
+    params: Value,
+    result: Value,
+) -> Mock<'a> {
+    let params = serde_json::to_string(&params).expect("params should serialize");
+    server.mock(move |when, then| {
+        when.method(POST)
+            .path("/")
+            .body_contains(&format!("\"method\":\"{method}\""))
+            .body_contains(&format!("\"params\":{params}"));
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": result,
+                })
+                .to_string(),
+            );
+    })
+}
+
 pub fn mock_json_rpc_error<'a>(
     server: &'a MockServer,
     method: &str,

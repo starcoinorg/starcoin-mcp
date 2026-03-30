@@ -3,10 +3,10 @@ use serde_json::{Value, json};
 use starcoin_node_mcp_core::AppContext;
 use starcoin_node_mcp_test_support::{
     mock_abi_methods_not_found, mock_block_lookup_probe, mock_json_rpc_result,
-    mock_method_not_found, mock_probe_metadata, mock_submit_probe_invalid_params,
-    mock_transaction_event_methods_not_found, mock_transaction_info_methods_not_found,
-    mock_transaction_lookup_probe, mock_txpool_sequence_probe, mock_view_methods_not_found,
-    runtime_config,
+    mock_json_rpc_result_with_params, mock_method_not_found, mock_probe_metadata,
+    mock_submit_probe_invalid_params, mock_transaction_event_methods_not_found,
+    mock_transaction_info_methods_not_found, mock_transaction_lookup_probe,
+    mock_txpool_sequence_probe, mock_view_methods_not_found, runtime_config,
 };
 use starcoin_node_mcp_types::{
     GetAccountOverviewInput, GetTransactionInput, ListResourcesInput, Mode, PrepareTransferInput,
@@ -171,6 +171,109 @@ async fn account_overview_degrades_when_sequence_hint_is_unavailable() {
     assert!(overview.onchain_exists);
     assert_eq!(overview.sequence_number, Some(7));
     assert_eq!(overview.next_sequence_number_hint, None);
+}
+
+#[tokio::test]
+async fn account_overview_uses_primary_store_balance_when_resource_page_excludes_it() {
+    let server = MockServer::start();
+    mock_read_only_bootstrap(&server);
+    mock_json_rpc_result(&server, "state.get_account_state", Value::Null);
+    mock_json_rpc_result_with_params(
+        &server,
+        "state.list_resource",
+        json!(["0x00000000000000000000000000000000", {
+            "decode": true,
+            "start_index": 0u64,
+            "max_size": 1u64
+        }]),
+        json!({ "resources": {} }),
+    );
+    mock_json_rpc_result_with_params(
+        &server,
+        "state.list_resource",
+        json!(["0x00000000000000000000000000000000", {
+            "decode": true,
+            "state_root": null,
+            "start_index": 0u64,
+            "max_size": 1u64,
+            "resource_types": null
+        }]),
+        json!({ "resources": {} }),
+    );
+    mock_json_rpc_result_with_params(
+        &server,
+        "state.list_resource",
+        json!(["0x1", {
+            "decode": true,
+            "state_root": null,
+            "start_index": 0u64,
+            "max_size": 2u64,
+            "resource_types": null
+        }]),
+        json!({ "resources": {} }),
+    );
+    mock_json_rpc_result(
+        &server,
+        "state2.list_resource",
+        json!({
+            "resources": {
+                "0x1::account::Account": {
+                    "json": {
+                        "sequence_number": 7
+                    }
+                },
+                "0x1::coin::CoinStore<0x00000000000000000000000000000001::starcoin_coin::STC>": {
+                    "json": {
+                        "coin": { "value": 0 }
+                    }
+                }
+            }
+        }),
+    );
+    mock_json_rpc_result(
+        &server,
+        "state2.get_resource",
+        json!({
+            "raw": "0x01",
+            "json": {
+                "balance": 42
+            }
+        }),
+    );
+    mock_method_not_found(&server, "state.list_code");
+    mock_method_not_found(&server, "txpool.next_sequence_number2");
+    mock_method_not_found(&server, "txpool.next_sequence_number");
+
+    let app = AppContext::bootstrap(runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::Auto,
+        true,
+    ))
+    .await
+    .expect("read_only app should bootstrap");
+
+    let overview = app
+        .get_account_overview(GetAccountOverviewInput {
+            address: "0x1".to_owned(),
+            include_resources: true,
+            include_modules: false,
+            resource_limit: Some(2),
+            module_limit: None,
+        })
+        .await
+        .expect("account overview should use the dedicated primary store balance");
+
+    assert_eq!(overview.sequence_number, Some(7));
+    assert_eq!(overview.balances.len(), 1);
+    assert_eq!(
+        overview.balances[0].get("name").and_then(Value::as_str),
+        Some("0x00000000000000000000000000000001::fungible_asset::FungibleStore")
+    );
+    assert_eq!(
+        overview.accepted_tokens,
+        vec!["0x00000000000000000000000000000001::starcoin_coin::STC".to_owned()]
+    );
 }
 
 #[tokio::test]

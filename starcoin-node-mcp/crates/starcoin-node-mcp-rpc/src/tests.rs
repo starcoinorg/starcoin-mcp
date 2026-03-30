@@ -2,10 +2,10 @@ use super::NodeRpcClient;
 use httpmock::prelude::*;
 use serde_json::{Value, json};
 use starcoin_node_mcp_test_support::{
-    mock_json_rpc_result, mock_method_not_found, mock_probe_metadata,
-    mock_submit_probe_invalid_params, mock_transaction_event_methods_not_found,
-    mock_transaction_info_methods_not_found, mock_txpool_sequence_probe, runtime_config,
-    sample_chain_info,
+    mock_json_rpc_result, mock_json_rpc_result_with_params, mock_method_not_found,
+    mock_probe_metadata, mock_submit_probe_invalid_params,
+    mock_transaction_event_methods_not_found, mock_transaction_info_methods_not_found,
+    mock_txpool_sequence_probe, runtime_config, sample_chain_info,
 };
 use starcoin_node_mcp_types::{Mode, SharedErrorCode, VmProfile};
 
@@ -106,8 +106,25 @@ async fn transaction_probe_detects_submission_and_dry_run_capabilities() {
     mock_json_rpc_result(&server, "chain.get_transaction_info2", Value::Null);
     mock_transaction_event_methods_not_found(&server);
     mock_json_rpc_result(&server, "chain.get_events", json!([]));
-    mock_json_rpc_result(&server, "state2.list_resource", json!({ "resources": {} }));
-    mock_json_rpc_result(&server, "state2.list_code", json!({ "codes": {} }));
+    mock_json_rpc_result_with_params(
+        &server,
+        "state2.list_resource",
+        super::vm2_list_resources_params(
+            "0x00000000000000000000000000000000",
+            true,
+            0,
+            1,
+            None,
+            &[],
+        ),
+        json!({ "resources": {} }),
+    );
+    mock_json_rpc_result_with_params(
+        &server,
+        "state2.list_code",
+        super::vm2_list_code_params("0x00000000000000000000000000000000", true, None),
+        json!({ "codes": {} }),
+    );
     mock_json_rpc_result(
         &server,
         "contract2.resolve_function",
@@ -210,9 +227,10 @@ async fn submit_rejects_non_string_hash_payloads() {
 async fn get_account_state_falls_back_to_vm2_resources_when_legacy_state_is_empty() {
     let server = MockServer::start();
     let legacy = mock_json_rpc_result(&server, "state.get_account_state", Value::Null);
-    let vm2 = mock_json_rpc_result(
+    let vm2 = mock_json_rpc_result_with_params(
         &server,
         "state2.list_resource",
+        super::vm2_list_resources_params("0x1", true, 0, 32, None, &[]),
         json!({
             "resources": {
                 "0x1::account::Account": {
@@ -245,10 +263,16 @@ async fn get_account_state_falls_back_to_vm2_resources_when_legacy_state_is_empt
 #[tokio::test]
 async fn list_resources_falls_back_to_vm2_when_legacy_listing_is_empty() {
     let server = MockServer::start();
-    let legacy = mock_json_rpc_result(&server, "state.list_resource", json!({ "resources": {} }));
-    let vm2 = mock_json_rpc_result(
+    let legacy = mock_json_rpc_result_with_params(
+        &server,
+        "state.list_resource",
+        super::legacy_list_resources_params("0x1", true, 0, 20, None, &[]),
+        json!({ "resources": {} }),
+    );
+    let vm2 = mock_json_rpc_result_with_params(
         &server,
         "state2.list_resource",
+        super::vm2_list_resources_params("0x1", true, 0, 20, None, &[]),
         json!({
             "resources": {
                 "0x1::account::Account": {
@@ -281,6 +305,87 @@ async fn list_resources_falls_back_to_vm2_when_legacy_listing_is_empty() {
     );
     assert_eq!(legacy.hits(), 1);
     assert_eq!(vm2.hits(), 1);
+}
+
+#[tokio::test]
+async fn get_account_state_propagates_vm2_errors_after_legacy_null() {
+    let server = MockServer::start();
+    mock_json_rpc_result(&server, "state.get_account_state", Value::Null);
+    server.mock(|when, then| {
+        when.method(POST)
+            .path("/")
+            .body_contains("\"method\":\"state2.list_resource\"")
+            .body_contains(&format!(
+                "\"params\":{}",
+                serde_json::to_string(&super::vm2_list_resources_params(
+                    "0x1",
+                    true,
+                    0,
+                    32,
+                    None,
+                    &[]
+                ))
+                .expect("params should serialize")
+            ));
+        then.status(503).body("vm2 unavailable");
+    });
+
+    let client = NodeRpcClient::new(&runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::Auto,
+        true,
+    ))
+    .expect("rpc client should build");
+    let error = client
+        .get_account_state("0x1")
+        .await
+        .expect_err("vm2 fallback errors should propagate");
+
+    assert_eq!(error.code, SharedErrorCode::RpcUnavailable);
+}
+
+#[tokio::test]
+async fn list_resources_propagates_vm2_errors_after_legacy_empty() {
+    let server = MockServer::start();
+    mock_json_rpc_result_with_params(
+        &server,
+        "state.list_resource",
+        super::legacy_list_resources_params("0x1", true, 0, 20, None, &[]),
+        json!({ "resources": {} }),
+    );
+    server.mock(|when, then| {
+        when.method(POST)
+            .path("/")
+            .body_contains("\"method\":\"state2.list_resource\"")
+            .body_contains(&format!(
+                "\"params\":{}",
+                serde_json::to_string(&super::vm2_list_resources_params(
+                    "0x1",
+                    true,
+                    0,
+                    20,
+                    None,
+                    &[]
+                ))
+                .expect("params should serialize")
+            ));
+        then.status(503).body("vm2 unavailable");
+    });
+
+    let client = NodeRpcClient::new(&runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::Auto,
+        true,
+    ))
+    .expect("rpc client should build");
+    let error = client
+        .list_resources("0x1", true, 0, 20, None, &[])
+        .await
+        .expect_err("vm2 fallback errors should propagate");
+
+    assert_eq!(error.code, SharedErrorCode::RpcUnavailable);
 }
 
 #[tokio::test]

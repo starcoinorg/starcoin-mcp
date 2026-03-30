@@ -245,7 +245,25 @@ impl AppContext {
                 .list_resources(&input.address, true, 0, effective_limit, None, &[])
                 .await?;
             let mapped = map_named_entries(&listed, "resources");
-            extract_balances_and_tokens(&mapped, &mut balances, &mut accepted_tokens);
+            extract_balance_resources(&mapped, &mut balances);
+            extract_accepted_tokens(&mapped, &mut accepted_tokens);
+            if let Some(primary_store_resource) = self
+                .rpc
+                .get_primary_stc_balance_resource(&input.address)
+                .await?
+            {
+                replace_stc_balance_with_primary_store(
+                    &mut balances,
+                    named_resource_entry(
+                        "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
+                        primary_store_resource,
+                    ),
+                );
+                let stc_token = G_STC_TOKEN_CODE.to_string();
+                if !accepted_tokens.iter().any(|token| token == &stc_token) {
+                    accepted_tokens.push(stc_token);
+                }
+            }
             resources = Some(mapped);
             applied_resource_limit = Some(effective_limit);
         }

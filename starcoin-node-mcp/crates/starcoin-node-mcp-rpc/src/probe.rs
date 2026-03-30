@@ -129,12 +129,14 @@ impl NodeRpcClient {
             return self
                 .probe_method_supported(
                     "state2.list_resource",
-                    json!(["0x00000000000000000000000000000000", {
-                        "decode": true,
-                        "start_index": 0u64,
-                        "max_size": 1u64,
-                        "primary_fungible_store": {}
-                    }]),
+                    vm2_list_resources_params(
+                        "0x00000000000000000000000000000000",
+                        true,
+                        0,
+                        1,
+                        None,
+                        &[],
+                    ),
                 )
                 .await;
         }
@@ -158,12 +160,14 @@ impl NodeRpcClient {
             return self
                 .probe_method_supported(
                     "state2.list_resource",
-                    json!(["0x00000000000000000000000000000000", {
-                        "decode": true,
-                        "start_index": 0u64,
-                        "max_size": 1u64,
-                        "primary_fungible_store": {}
-                    }]),
+                    vm2_list_resources_params(
+                        "0x00000000000000000000000000000000",
+                        true,
+                        0,
+                        1,
+                        None,
+                        &[],
+                    ),
                 )
                 .await;
         }
@@ -183,9 +187,7 @@ impl NodeRpcClient {
             return self
                 .probe_method_supported(
                     "state2.list_code",
-                    json!(["0x00000000000000000000000000000000", {
-                        "resolve": true
-                    }]),
+                    vm2_list_code_params("0x00000000000000000000000000000000", true, None),
                 )
                 .await;
         }
