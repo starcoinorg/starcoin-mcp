@@ -683,7 +683,90 @@ mod tests {
     use rusqlite::{Connection, params};
     use tempfile::tempdir;
 
+    use starmask_core::WalletRepository;
+    use starmask_types::{
+        ApprovalSurface, BackendKind, LockState, TransportKind, WalletCapability, WalletInstanceId,
+    };
+
     use super::SqliteStore;
+
+    #[test]
+    fn v2_migration_backfills_extension_wallet_instances_and_keeps_accounts_readable() {
+        let tempdir = tempdir().unwrap();
+        let database_path = tempdir.path().join("starmaskd.sqlite");
+        let connection = Connection::open(&database_path).unwrap();
+        connection
+            .execute_batch(include_str!("../migrations/0001_initial.sql"))
+            .unwrap();
+        connection.pragma_update(None, "user_version", 1).unwrap();
+        connection
+            .execute(
+                "INSERT INTO wallet_instances (
+                    wallet_instance_id, extension_id, extension_version, protocol_version,
+                    profile_hint, lock_state, connected, last_seen_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+                params![
+                    "wallet-1",
+                    "ext.allowed",
+                    "1.2.3",
+                    1,
+                    "Browser Default",
+                    "unlocked",
+                    1,
+                    42_i64
+                ],
+            )
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO wallet_accounts (
+                    wallet_instance_id, address, label, public_key, is_default, is_locked, last_seen_at
+                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                params!["wallet-1", "0x1", Option::<String>::None, "0xabc", 1, 0, 42_i64],
+            )
+            .unwrap();
+        drop(connection);
+
+        let mut store = SqliteStore::open(&database_path).unwrap();
+        assert_eq!(store.schema_version().unwrap(), 2);
+
+        let wallet_instance_id = WalletInstanceId::new("wallet-1").unwrap();
+        let instance = store
+            .get_wallet_instance(&wallet_instance_id)
+            .unwrap()
+            .expect("wallet instance should survive migration");
+        assert_eq!(instance.backend_kind, BackendKind::StarmaskExtension);
+        assert_eq!(instance.transport_kind, TransportKind::NativeMessaging);
+        assert_eq!(instance.approval_surface, ApprovalSurface::BrowserUi);
+        assert_eq!(instance.instance_label, "Browser Default");
+        assert_eq!(instance.extension_id, "ext.allowed");
+        assert_eq!(instance.extension_version, "1.2.3");
+        assert_eq!(instance.lock_state, LockState::Unlocked);
+        assert_eq!(
+            instance.capabilities,
+            vec![
+                WalletCapability::GetPublicKey,
+                WalletCapability::SignMessage,
+                WalletCapability::SignTransaction,
+            ]
+        );
+        assert_eq!(
+            instance.backend_metadata,
+            serde_json::json!({
+                "extension_id": "ext.allowed",
+                "extension_version": "1.2.3",
+                "profile_hint": "Browser Default",
+            })
+        );
+
+        let account = store
+            .get_wallet_account(&wallet_instance_id, "0x1")
+            .unwrap()
+            .expect("wallet account should survive migration");
+        assert!(!account.is_read_only);
+        assert!(!account.is_locked);
+        assert_eq!(account.public_key.as_deref(), Some("0xabc"));
+    }
 
     #[test]
     fn v2_migration_rolls_back_schema_when_backfill_fails() {

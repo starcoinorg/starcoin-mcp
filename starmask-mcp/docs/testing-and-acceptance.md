@@ -7,6 +7,14 @@ This document defines acceptance criteria for the current `v1` extension-backed 
 Future multi-backend expansion has additional requirements, but those are not part of the current
 release contract unless explicitly called out below.
 
+The current phase-2 multi-backend contract is defined separately in:
+
+- `docs/wallet-backend-testing-and-acceptance.md`
+
+Current repository evidence status is tracked in:
+
+- `../../docs/testing-coverage-assessment.md`
+
 ## 1. Current `v1` Scope
 
 The current acceptance scope covers:
@@ -155,3 +163,4 @@ Those additions are gated by:
 
 - `docs/unified-wallet-coordinator-evolution.md`
 - `docs/wallet-backend-testing-and-acceptance.md`
+- `../../docs/testing-coverage-assessment.md`

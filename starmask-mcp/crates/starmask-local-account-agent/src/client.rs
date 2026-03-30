@@ -2,6 +2,7 @@ use std::{
     io::{Read, Write},
     os::unix::net::UnixStream,
     path::PathBuf,
+    thread,
     time::Duration,
 };
 
@@ -15,9 +16,11 @@ use starmask_types::{
 };
 
 const RESPONSE_READ_TIMEOUT: Duration = Duration::from_secs(5);
+const CONNECT_RETRY_DELAY: Duration = Duration::from_millis(10);
+const CONNECT_RETRY_ATTEMPTS: usize = 20;
 const MAX_RESPONSE_BYTES: u64 = 1024 * 1024;
 
-pub trait DaemonRpc {
+pub trait DaemonRpc: Send + Sync {
     fn backend_register(
         &self,
         params: BackendRegisterParams,
@@ -60,7 +63,7 @@ impl LocalDaemonClient {
         let request = JsonRpcRequest::new("local-account-agent", method, params);
         let encoded = serde_json::to_vec(&request).map_err(shared_internal_error)?;
 
-        let mut stream = UnixStream::connect(&self.socket_path).map_err(shared_transport_error)?;
+        let mut stream = connect_with_retry(&self.socket_path).map_err(shared_transport_error)?;
         stream
             .set_read_timeout(Some(RESPONSE_READ_TIMEOUT))
             .map_err(shared_transport_error)?;
@@ -135,6 +138,33 @@ impl DaemonRpc for LocalDaemonClient {
 
 pub fn daemon_protocol_version() -> u32 {
     GENERIC_BACKEND_PROTOCOL_VERSION
+}
+
+fn connect_with_retry(socket_path: &PathBuf) -> std::io::Result<UnixStream> {
+    let mut last_error = None;
+    for attempt in 0..CONNECT_RETRY_ATTEMPTS {
+        match UnixStream::connect(socket_path) {
+            Ok(stream) => return Ok(stream),
+            Err(error) if should_retry_connect(&error) && attempt + 1 < CONNECT_RETRY_ATTEMPTS => {
+                last_error = Some(error);
+                thread::sleep(CONNECT_RETRY_DELAY);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    Err(last_error
+        .unwrap_or_else(|| std::io::Error::other("daemon socket connection retries exhausted")))
+}
+
+fn should_retry_connect(error: &std::io::Error) -> bool {
+    matches!(
+        error.kind(),
+        std::io::ErrorKind::WouldBlock
+            | std::io::ErrorKind::Interrupted
+            | std::io::ErrorKind::ConnectionRefused
+            | std::io::ErrorKind::NotFound
+    )
 }
 
 fn shared_internal_error(error: impl std::fmt::Display) -> SharedError {
