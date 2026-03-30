@@ -130,10 +130,19 @@ async fn submit_policy_requires_local_simulation_attestation() {
 async fn account_overview_degrades_when_sequence_hint_is_unavailable() {
     let server = MockServer::start();
     mock_read_only_bootstrap(&server);
+    mock_json_rpc_result(&server, "state.get_account_state", Value::Null);
     mock_json_rpc_result(
         &server,
-        "state.get_account_state",
-        json!({ "sequence_number": "7" }),
+        "state2.list_resource",
+        json!({
+            "resources": {
+                "0x1::account::Account": {
+                    "json": {
+                        "sequence_number": 7
+                    }
+                }
+            }
+        }),
     );
     mock_method_not_found(&server, "state.list_resource");
     mock_method_not_found(&server, "state.list_code");

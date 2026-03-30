@@ -1,7 +1,8 @@
 use super::{
     AppContext, CachedProbe, SignedUserTransaction, accepted_submission_output,
-    effective_submit_timeout_seconds, enforce_transaction_head_lag, extract_chain_context,
-    extract_optional_string, is_terminal_watch_status, status_summary_from_parts,
+    effective_submit_timeout_seconds, enforce_transaction_head_lag, extract_balances_and_tokens,
+    extract_chain_context, extract_optional_string, is_terminal_watch_status,
+    status_summary_from_parts,
     submission_unknown_output, validate_chain_identity, validate_signed_transaction_submission,
     validate_transaction_probe,
 };
@@ -106,6 +107,46 @@ fn extract_optional_string_rejects_non_string_values() {
     assert_eq!(extract_optional_string(&value, &["array"]), None);
     assert_eq!(extract_optional_string(&value, &["object"]), None);
     assert_eq!(extract_optional_string(&value, &["null_value"]), None);
+}
+
+#[test]
+fn extract_balances_and_tokens_recognizes_coin_store_resources() {
+    let resources = vec![
+        json!({
+            "name": "0x00000000000000000000000000000001::account::Account",
+            "value": {}
+        }),
+        json!({
+            "name": "0x00000000000000000000000000000001::coin::CoinStore<0x00000000000000000000000000000001::starcoin_coin::STC>",
+            "value": {
+                "json": {
+                    "coin": { "value": 7 }
+                }
+            }
+        }),
+        json!({
+            "name": "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
+            "value": {
+                "json": {
+                    "balance": 42
+                }
+            }
+        }),
+    ];
+    let mut balances = Vec::new();
+    let mut accepted_tokens = Vec::new();
+
+    extract_balances_and_tokens(&resources, &mut balances, &mut accepted_tokens);
+
+    assert_eq!(balances.len(), 1);
+    assert_eq!(
+        balances[0].get("name").and_then(Value::as_str),
+        Some("0x00000000000000000000000000000001::fungible_asset::FungibleStore")
+    );
+    assert_eq!(
+        accepted_tokens,
+        vec!["0x00000000000000000000000000000001::starcoin_coin::STC".to_owned()]
+    );
 }
 
 #[test]
@@ -325,6 +366,69 @@ async fn submit_unknown_blocks_blind_resubmission_before_second_txpool_call() {
 }
 
 #[tokio::test]
+async fn submit_signed_transaction_degrades_when_sequence_lookup_returns_no_sender_state() {
+    let server = MockServer::start();
+    let signed_txn = sample_signed_transaction(254, 1);
+    let signed_txn_bcs_hex = format!(
+        "0x{}",
+        hex::encode(bcs_ext::to_bytes(&signed_txn).expect("sample tx should serialize"))
+    );
+    mock_probe_metadata(&server);
+    mock_json_rpc_result(&server, "chain.get_block_by_number", Value::Null);
+    mock_json_rpc_result(&server, "chain.get_blocks_by_number", json!([]));
+    mock_json_rpc_result(&server, "chain.get_transaction2", Value::Null);
+    mock_transaction_info_methods_not_found(&server);
+    mock_transaction_event_methods_not_found(&server);
+    mock_method_not_found(&server, "chain.get_events");
+    mock_method_not_found(&server, "state.list_resource");
+    mock_method_not_found(&server, "state.list_code");
+    mock_abi_methods_not_found(&server);
+    mock_view_methods_not_found(&server);
+    mock_json_rpc_result(&server, "txpool.gas_price", json!("1"));
+    mock_json_rpc_result(&server, "txpool.next_sequence_number2", Value::Null);
+    mock_submit_probe_invalid_params(&server, "txpool.submit_hex_transaction2");
+    mock_json_rpc_result(
+        &server,
+        "contract2.dry_run_raw",
+        json!({ "status": "Executed" }),
+    );
+    mock_json_rpc_result(&server, "state.get_account_state", Value::Null);
+    let submit = server.mock(|when, then| {
+        when.method(POST)
+            .path("/")
+            .body_contains("\"method\":\"txpool.submit_hex_transaction2\"")
+            .body_contains(&signed_txn_bcs_hex);
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": signed_txn.id().to_string(),
+                })
+                .to_string(),
+            );
+    });
+
+    let app = AppContext::bootstrap(sample_runtime_config_with_endpoint(&server.url("/")))
+        .await
+        .expect("bootstrap should succeed");
+    let result = app
+        .submit_signed_transaction(SubmitSignedTransactionInput {
+            signed_txn_bcs_hex,
+            prepared_chain_context: sample_chain_context(254, "main", "0x1"),
+            blocking: false,
+            timeout_seconds: None,
+        })
+        .await
+        .expect("submit should degrade stale-check when sequence sources are unavailable");
+
+    assert_eq!(result.submission_state, SubmissionState::Accepted);
+    assert!(result.submitted);
+    assert_eq!(submit.hits(), 1);
+}
+
+#[tokio::test]
 async fn resolve_sequence_number_degrades_when_txpool_sequence_hint_is_unavailable() {
     let server = MockServer::start();
     mock_json_rpc_error(
@@ -339,10 +443,19 @@ async fn resolve_sequence_number_degrades_when_txpool_sequence_hint_is_unavailab
         -32601,
         "method not found",
     );
+    mock_json_rpc_result(&server, "state.get_account_state", Value::Null);
     mock_json_rpc_result(
         &server,
-        "state.get_account_state",
-        json!({ "sequence_number": "9" }),
+        "state2.list_resource",
+        json!({
+            "resources": {
+                "0x1::account::Account": {
+                    "json": {
+                        "sequence_number": 9
+                    }
+                }
+            }
+        }),
     );
     let config = sample_runtime_config_with_endpoint(&server.url("/"));
     let app = AppContext {

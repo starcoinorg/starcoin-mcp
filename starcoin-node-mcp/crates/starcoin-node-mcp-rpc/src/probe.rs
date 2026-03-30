@@ -125,6 +125,19 @@ impl NodeRpcClient {
     }
 
     async fn supports_account_state_lookup(&self) -> Result<bool, SharedError> {
+        if self.vm_profile == VmProfile::Vm2Only {
+            return self
+                .probe_method_supported(
+                    "state2.list_resource",
+                    json!(["0x00000000000000000000000000000000", {
+                        "decode": true,
+                        "start_index": 0u64,
+                        "max_size": 1u64,
+                        "primary_fungible_store": {}
+                    }]),
+                )
+                .await;
+        }
         self.probe_method_supported(
             "state.get_account_state",
             json!(["0x00000000000000000000000000000000"]),
@@ -141,6 +154,19 @@ impl NodeRpcClient {
     }
 
     async fn supports_resource_listing(&self) -> Result<bool, SharedError> {
+        if self.vm_profile == VmProfile::Vm2Only {
+            return self
+                .probe_method_supported(
+                    "state2.list_resource",
+                    json!(["0x00000000000000000000000000000000", {
+                        "decode": true,
+                        "start_index": 0u64,
+                        "max_size": 1u64,
+                        "primary_fungible_store": {}
+                    }]),
+                )
+                .await;
+        }
         self.probe_method_supported(
             "state.list_resource",
             json!(["0x00000000000000000000000000000000", {
@@ -153,6 +179,16 @@ impl NodeRpcClient {
     }
 
     async fn supports_module_listing(&self) -> Result<bool, SharedError> {
+        if self.vm_profile == VmProfile::Vm2Only {
+            return self
+                .probe_method_supported(
+                    "state2.list_code",
+                    json!(["0x00000000000000000000000000000000", {
+                        "resolve": true
+                    }]),
+                )
+                .await;
+        }
         self.probe_method_supported(
             "state.list_code",
             json!(["0x00000000000000000000000000000000", {

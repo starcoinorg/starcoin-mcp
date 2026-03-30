@@ -105,10 +105,9 @@ async fn transaction_probe_detects_submission_and_dry_run_capabilities() {
     mock_json_rpc_result(&server, "chain.get_transaction2", Value::Null);
     mock_json_rpc_result(&server, "chain.get_transaction_info2", Value::Null);
     mock_transaction_event_methods_not_found(&server);
-    mock_method_not_found(&server, "state.get_account_state");
     mock_json_rpc_result(&server, "chain.get_events", json!([]));
-    mock_json_rpc_result(&server, "state.list_resource", json!({ "resources": {} }));
-    mock_json_rpc_result(&server, "state.list_code", json!({ "codes": {} }));
+    mock_json_rpc_result(&server, "state2.list_resource", json!({ "resources": {} }));
+    mock_json_rpc_result(&server, "state2.list_code", json!({ "codes": {} }));
     mock_json_rpc_result(
         &server,
         "contract2.resolve_function",
@@ -149,7 +148,9 @@ async fn transaction_probe_detects_submission_and_dry_run_capabilities() {
     assert!(probe.supports_block_listing);
     assert!(probe.supports_transaction_info_lookup);
     assert!(!probe.supports_transaction_events_by_hash);
-    assert!(!probe.supports_account_state_lookup);
+    assert!(probe.supports_account_state_lookup);
+    assert!(probe.supports_resource_listing);
+    assert!(probe.supports_module_listing);
     assert!(probe.supports_transaction_submission);
     assert!(probe.supports_raw_dry_run);
     assert_eq!(submit_probe.hits(), 1);
@@ -203,6 +204,83 @@ async fn submit_rejects_non_string_hash_payloads() {
         .expect_err("non-string submit results should be rejected");
 
     assert_eq!(error.code, SharedErrorCode::RpcUnavailable);
+}
+
+#[tokio::test]
+async fn get_account_state_falls_back_to_vm2_resources_when_legacy_state_is_empty() {
+    let server = MockServer::start();
+    let legacy = mock_json_rpc_result(&server, "state.get_account_state", Value::Null);
+    let vm2 = mock_json_rpc_result(
+        &server,
+        "state2.list_resource",
+        json!({
+            "resources": {
+                "0x1::account::Account": {
+                    "json": {
+                        "sequence_number": 7
+                    }
+                }
+            }
+        }),
+    );
+
+    let client = NodeRpcClient::new(&runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::Auto,
+        true,
+    ))
+    .expect("rpc client should build");
+    let state = client
+        .get_account_state("0x1")
+        .await
+        .expect("vm2 fallback should succeed")
+        .expect("account state should be synthesized");
+
+    assert_eq!(state.get("sequence_number"), Some(&json!(7)));
+    assert_eq!(legacy.hits(), 1);
+    assert_eq!(vm2.hits(), 1);
+}
+
+#[tokio::test]
+async fn list_resources_falls_back_to_vm2_when_legacy_listing_is_empty() {
+    let server = MockServer::start();
+    let legacy = mock_json_rpc_result(&server, "state.list_resource", json!({ "resources": {} }));
+    let vm2 = mock_json_rpc_result(
+        &server,
+        "state2.list_resource",
+        json!({
+            "resources": {
+                "0x1::account::Account": {
+                    "json": {
+                        "sequence_number": 7
+                    }
+                }
+            }
+        }),
+    );
+
+    let client = NodeRpcClient::new(&runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::Auto,
+        true,
+    ))
+    .expect("rpc client should build");
+    let resources = client
+        .list_resources("0x1", true, 0, 20, None, &[])
+        .await
+        .expect("vm2 listing fallback should succeed");
+
+    assert_eq!(
+        resources
+            .get("resources")
+            .and_then(Value::as_object)
+            .map(|entries| entries.len()),
+        Some(1)
+    );
+    assert_eq!(legacy.hits(), 1);
+    assert_eq!(vm2.hits(), 1);
 }
 
 #[tokio::test]

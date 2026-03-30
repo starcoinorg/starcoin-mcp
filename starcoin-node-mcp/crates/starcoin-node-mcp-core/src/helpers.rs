@@ -193,17 +193,46 @@ pub(crate) fn extract_balances_and_tokens(
     balances: &mut Vec<Value>,
     accepted_tokens: &mut Vec<String>,
 ) {
+    let has_primary_fungible_store = resources.iter().any(|resource| {
+        resource
+            .get("name")
+            .and_then(Value::as_str)
+            .map(|name| name.contains("::fungible_asset::FungibleStore"))
+            .unwrap_or(false)
+    });
+
     for resource in resources {
         let Some(name) = resource.get("name").and_then(Value::as_str) else {
             continue;
         };
-        if name.contains("Balance") || name.contains("balance") {
+        let coin_store_token = extract_generic_resource_token(name, "CoinStore");
+        let is_primary_fungible_store = name.contains("::fungible_asset::FungibleStore");
+        let is_balance_resource = name.contains("Balance")
+            || name.contains("balance")
+            || is_primary_fungible_store
+            || (!has_primary_fungible_store && coin_store_token.is_some());
+        if is_balance_resource {
             balances.push(resource.clone());
         }
-        if name.contains("Token") || name.contains("token") {
+        if let Some(token) = coin_store_token {
+            if !accepted_tokens.iter().any(|existing| existing == &token) {
+                accepted_tokens.push(token);
+            }
+            continue;
+        }
+        if (name.contains("Token") || name.contains("token"))
+            && !accepted_tokens.iter().any(|existing| existing == name)
+        {
             accepted_tokens.push(name.to_owned());
         }
     }
+}
+
+fn extract_generic_resource_token(name: &str, container: &str) -> Option<String> {
+    let marker = format!("{container}<");
+    let start = name.find(&marker)? + marker.len();
+    let end = name.rfind('>')?;
+    Some(name[start..end].to_owned())
 }
 
 pub(crate) fn is_transport_error(error: &SharedError) -> bool {

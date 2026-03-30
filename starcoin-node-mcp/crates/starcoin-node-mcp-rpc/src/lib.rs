@@ -219,10 +219,23 @@ impl NodeRpcClient {
     }
 
     pub async fn get_account_state(&self, address: &str) -> Result<Option<Value>, SharedError> {
-        self.call("state.get_account_state", json!([address])).await
+        if self.vm_profile == VmProfile::Vm2Only {
+            return self.account_state_from_vm2_resources(address).await;
+        }
+        match self.call("state.get_account_state", json!([address])).await {
+            Ok(Some(state)) => Ok(Some(state)),
+            Ok(None) => Ok(self.account_state_from_vm2_resources(address).await.unwrap_or(None)),
+            Err(error) if error.code == SharedErrorCode::UnsupportedOperation => {
+                Ok(self.account_state_from_vm2_resources(address).await.unwrap_or(None))
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub async fn get_state_root(&self) -> Result<Value, SharedError> {
+        if self.vm_profile == VmProfile::Vm2Only {
+            return self.call_value("state2.get_state_root", json!([])).await;
+        }
         self.call_value("state.get_state_root", json!([])).await
     }
 
@@ -235,20 +248,63 @@ impl NodeRpcClient {
         state_root: Option<String>,
         resource_types: &[String],
     ) -> Result<Value, SharedError> {
-        self.call_value(
-            "state.list_resource",
-            json!([
-                address,
-                {
-                    "decode": decode,
-                    "state_root": state_root,
-                    "start_index": start_index,
-                    "max_size": max_size,
-                    "resource_types": if resource_types.is_empty() { Value::Null } else { json!(resource_types) }
-                }
-            ]),
-        )
-        .await
+        if self.vm_profile == VmProfile::Vm2Only {
+            return self
+                .list_resources_via_vm2(
+                    address,
+                    decode,
+                    start_index,
+                    max_size,
+                    state_root,
+                    resource_types,
+                )
+                .await;
+        }
+        let legacy_result = self
+            .call_value(
+                "state.list_resource",
+                json!([
+                    address,
+                    {
+                        "decode": decode,
+                        "state_root": state_root.clone(),
+                        "start_index": start_index,
+                        "max_size": max_size,
+                        "resource_types": if resource_types.is_empty() { Value::Null } else { json!(resource_types) }
+                    }
+                ]),
+            )
+            .await;
+
+        match legacy_result {
+            Ok(value) if resource_entries_are_non_empty(&value) => Ok(value),
+            Ok(value) => match self
+                .list_resources_via_vm2(
+                    address,
+                    decode,
+                    start_index,
+                    max_size,
+                    state_root.clone(),
+                    resource_types,
+                )
+                .await
+            {
+                Ok(vm2_value) => Ok(vm2_value),
+                Err(_) => Ok(value),
+            },
+            Err(error) if error.code == SharedErrorCode::UnsupportedOperation => {
+                self.list_resources_via_vm2(
+                    address,
+                    decode,
+                    start_index,
+                    max_size,
+                    state_root,
+                    resource_types,
+                )
+                .await
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub async fn list_code(
@@ -257,6 +313,20 @@ impl NodeRpcClient {
         resolve: bool,
         state_root: Option<String>,
     ) -> Result<Value, SharedError> {
+        if self.vm_profile == VmProfile::Vm2Only {
+            return self
+                .call_value(
+                    "state2.list_code",
+                    json!([
+                        address,
+                        {
+                            "resolve": resolve,
+                            "state_root": state_root,
+                        }
+                    ]),
+                )
+                .await;
+        }
         self.call_value(
             "state.list_code",
             json!([
@@ -399,6 +469,42 @@ impl NodeRpcClient {
         let value = loader().await?;
         cache.insert(key.to_owned(), value.clone()).await;
         Ok(value)
+    }
+
+    async fn list_resources_via_vm2(
+        &self,
+        address: &str,
+        decode: bool,
+        start_index: u64,
+        max_size: u64,
+        state_root: Option<String>,
+        resource_types: &[String],
+    ) -> Result<Value, SharedError> {
+        self.call_value(
+            "state2.list_resource",
+            json!([
+                address,
+                {
+                    "decode": decode,
+                    "state_root": state_root,
+                    "start_index": start_index,
+                    "max_size": max_size,
+                    "resource_types": if resource_types.is_empty() { Value::Null } else { json!(resource_types) },
+                    "primary_fungible_store": {}
+                }
+            ]),
+        )
+        .await
+    }
+
+    async fn account_state_from_vm2_resources(
+        &self,
+        address: &str,
+    ) -> Result<Option<Value>, SharedError> {
+        let resources = self
+            .list_resources_via_vm2(address, true, 0, 32, None, &[])
+            .await?;
+        Ok(synthesize_account_state_from_resources(&resources))
     }
 
     async fn call_first_available_value(
@@ -622,4 +728,32 @@ fn parse_u64(value: &Value) -> Option<u64> {
         Value::String(string) => string.parse().ok(),
         _ => None,
     }
+}
+
+fn resource_entries_are_non_empty(value: &Value) -> bool {
+    value.get("resources")
+        .and_then(Value::as_object)
+        .map(|entries| !entries.is_empty())
+        .unwrap_or(false)
+}
+
+fn synthesize_account_state_from_resources(resources: &Value) -> Option<Value> {
+    let entries = resources.get("resources")?.as_object()?;
+    if entries.is_empty() {
+        return None;
+    }
+
+    let sequence_number = entries
+        .iter()
+        .find(|(name, _)| name.contains("::account::Account"))
+        .and_then(|(_, resource)| resource.get("json"))
+        .and_then(|resource| resource.get("sequence_number"))
+        .and_then(parse_u64);
+
+    let mut summary = serde_json::Map::new();
+    if let Some(sequence_number) = sequence_number {
+        summary.insert("sequence_number".to_owned(), json!(sequence_number));
+    }
+
+    Some(Value::Object(summary))
 }
