@@ -57,10 +57,11 @@ use tracing::warn;
 pub(crate) use bootstrap::{enforce_transaction_head_lag, validate_transaction_probe};
 pub(crate) use helpers::{
     canonical_hex_payload, canonicalize_network_name, decode_hex_bytes, encode_hex_bcs,
-    ensure_capability, extract_balances_and_tokens, extract_chain_context, extract_network,
-    extract_optional_string, extract_optional_u64, extract_string, extract_u8, extract_u64,
-    is_degradable_sequence_lookup_error, is_terminal_watch_status, is_transport_error,
-    map_named_entries, rfc3339_now, status_summary_from_parts, validate_chain_identity,
+    ensure_capability, extract_accepted_tokens, extract_balance_resources, extract_chain_context,
+    extract_network, extract_optional_string, extract_optional_u64, extract_string, extract_u8,
+    extract_u64, is_degradable_sequence_lookup_error, is_terminal_watch_status, is_transport_error,
+    map_named_entries, named_resource_entry, replace_stc_balance_with_primary_store, rfc3339_now,
+    status_summary_from_parts, validate_chain_identity,
 };
 pub(crate) use submission::ensure_transaction_mode;
 #[cfg(test)]

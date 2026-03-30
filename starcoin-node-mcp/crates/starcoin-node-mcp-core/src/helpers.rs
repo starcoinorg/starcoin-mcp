@@ -188,22 +188,94 @@ pub(crate) fn map_named_entries(container: &Value, field: &str) -> Vec<Value> {
         .unwrap_or_default()
 }
 
-pub(crate) fn extract_balances_and_tokens(
-    resources: &[Value],
-    balances: &mut Vec<Value>,
-    accepted_tokens: &mut Vec<String>,
-) {
+pub(crate) fn extract_balance_resources(resources: &[Value], balances: &mut Vec<Value>) {
     for resource in resources {
-        let Some(name) = resource.get("name").and_then(Value::as_str) else {
+        let Some(name) = resource_name(resource) else {
             continue;
         };
-        if name.contains("Balance") || name.contains("balance") {
+        if name.contains("Balance")
+            || name.contains("balance")
+            || name.contains("::fungible_asset::FungibleStore")
+            || extract_generic_resource_token(name, "CoinStore").is_some()
+        {
             balances.push(resource.clone());
         }
-        if name.contains("Token") || name.contains("token") {
+    }
+}
+
+pub(crate) fn extract_accepted_tokens(resources: &[Value], accepted_tokens: &mut Vec<String>) {
+    for resource in resources {
+        let Some(name) = resource_name(resource) else {
+            continue;
+        };
+        if let Some(token) = extract_generic_resource_token(name, "CoinStore") {
+            if !accepted_tokens.iter().any(|existing| existing == &token) {
+                accepted_tokens.push(token);
+            }
+            continue;
+        }
+        if (name.contains("Token") || name.contains("token"))
+            && !accepted_tokens.iter().any(|existing| existing == name)
+        {
             accepted_tokens.push(name.to_owned());
         }
     }
+}
+
+pub(crate) fn replace_stc_balance_with_primary_store(
+    balances: &mut Vec<Value>,
+    primary_store_resource: Value,
+) {
+    let stc_token = G_STC_TOKEN_CODE.to_string();
+    let primary_store_name = resource_name(&primary_store_resource);
+    let primary_store_value = primary_store_resource.get("value");
+    balances.retain(|resource| {
+        let Some(name) = resource_name(resource) else {
+            return true;
+        };
+        if primary_store_name == Some(name)
+            && primary_store_value
+                .map(|value| same_resource_value(resource.get("value"), value))
+                .unwrap_or(false)
+        {
+            return false;
+        }
+        extract_generic_resource_token(name, "CoinStore")
+            .map(|token| token != stc_token)
+            .unwrap_or(true)
+    });
+    balances.insert(0, primary_store_resource);
+}
+
+pub(crate) fn named_resource_entry(name: &str, value: Value) -> Value {
+    json!({ "name": name, "value": value })
+}
+
+fn resource_name(resource: &Value) -> Option<&str> {
+    resource.get("name").and_then(Value::as_str)
+}
+
+fn same_resource_value(candidate: Option<&Value>, expected: &Value) -> bool {
+    let Some(candidate) = candidate else {
+        return false;
+    };
+    if candidate == expected {
+        return true;
+    }
+    match (
+        candidate.get("raw").and_then(Value::as_str),
+        expected.get("raw").and_then(Value::as_str),
+    ) {
+        (Some(candidate_raw), Some(expected_raw)) => candidate_raw == expected_raw,
+        _ => false,
+    }
+}
+
+fn extract_generic_resource_token(name: &str, container: &str) -> Option<String> {
+    let marker = format!("{container}<");
+    let start = name.find(&marker)? + marker.len();
+    let token = name.get(start..)?.strip_suffix('>')?;
+    Some(token.to_owned())
 }
 
 pub(crate) fn is_transport_error(error: &SharedError) -> bool {

@@ -1,9 +1,10 @@
 use super::{
     AppContext, CachedProbe, SignedUserTransaction, accepted_submission_output,
-    effective_submit_timeout_seconds, enforce_transaction_head_lag, extract_chain_context,
-    extract_optional_string, is_terminal_watch_status, status_summary_from_parts,
-    submission_unknown_output, validate_chain_identity, validate_signed_transaction_submission,
-    validate_transaction_probe,
+    effective_submit_timeout_seconds, enforce_transaction_head_lag, extract_accepted_tokens,
+    extract_balance_resources, extract_chain_context, extract_optional_string,
+    is_terminal_watch_status, named_resource_entry, replace_stc_balance_with_primary_store,
+    status_summary_from_parts, submission_unknown_output, validate_chain_identity,
+    validate_signed_transaction_submission, validate_transaction_probe,
 };
 use httpmock::prelude::*;
 use serde_json::{Value, json};
@@ -106,6 +107,155 @@ fn extract_optional_string_rejects_non_string_values() {
     assert_eq!(extract_optional_string(&value, &["array"]), None);
     assert_eq!(extract_optional_string(&value, &["object"]), None);
     assert_eq!(extract_optional_string(&value, &["null_value"]), None);
+}
+
+#[test]
+fn primary_store_balance_replaces_legacy_stc_coin_store_balance() {
+    let resources = vec![
+        json!({
+            "name": "0x00000000000000000000000000000001::account::Account",
+            "value": {}
+        }),
+        json!({
+            "name": "0x00000000000000000000000000000001::coin::CoinStore<0x00000000000000000000000000000001::starcoin_coin::STC>",
+            "value": {
+                "json": {
+                    "coin": { "value": 7 }
+                }
+            }
+        }),
+        json!({
+            "name": "0x00000000000000000000000000000001::coin::CoinStore<0x00000000000000000000000000000042::usdt::USDT>",
+            "value": {
+                "json": {
+                    "coin": { "value": 9 }
+                }
+            }
+        }),
+    ];
+    let mut balances = Vec::new();
+    let mut accepted_tokens = Vec::new();
+
+    extract_balance_resources(&resources, &mut balances);
+    extract_accepted_tokens(&resources, &mut accepted_tokens);
+    replace_stc_balance_with_primary_store(
+        &mut balances,
+        named_resource_entry(
+            "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
+            json!({
+                "raw": "0x01",
+                "json": {
+                    "balance": 42
+                }
+            }),
+        ),
+    );
+
+    assert_eq!(
+        balances,
+        vec![
+            named_resource_entry(
+                "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
+                json!({
+                    "raw": "0x01",
+                    "json": {
+                        "balance": 42
+                    }
+                }),
+            ),
+            named_resource_entry(
+                "0x00000000000000000000000000000001::coin::CoinStore<0x00000000000000000000000000000042::usdt::USDT>",
+                json!({
+                    "json": {
+                        "coin": { "value": 9 }
+                    }
+                }),
+            )
+        ]
+    );
+    assert_eq!(
+        accepted_tokens,
+        vec![
+            "0x00000000000000000000000000000001::starcoin_coin::STC".to_owned(),
+            "0x00000000000000000000000000000042::usdt::USDT".to_owned()
+        ]
+    );
+}
+
+#[test]
+fn primary_store_balance_preserves_non_stc_fungible_store_balances() {
+    let mut balances = vec![
+        named_resource_entry(
+            "0x00000000000000000000000000000001::coin::CoinStore<0x00000000000000000000000000000001::starcoin_coin::STC>",
+            json!({
+                "json": {
+                    "coin": { "value": 7 }
+                }
+            }),
+        ),
+        named_resource_entry(
+            "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
+            json!({
+                "json": {
+                    "balance": 9,
+                    "token": "USDT"
+                }
+            }),
+        ),
+    ];
+
+    replace_stc_balance_with_primary_store(
+        &mut balances,
+        named_resource_entry(
+            "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
+            json!({
+                "json": {
+                    "balance": 42,
+                    "token": "STC"
+                }
+            }),
+        ),
+    );
+
+    assert_eq!(
+        balances,
+        vec![
+            named_resource_entry(
+                "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
+                json!({
+                    "json": {
+                        "balance": 42,
+                        "token": "STC"
+                    }
+                }),
+            ),
+            named_resource_entry(
+                "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
+                json!({
+                    "json": {
+                        "balance": 9,
+                        "token": "USDT"
+                    }
+                }),
+            )
+        ]
+    );
+}
+
+#[test]
+fn malformed_coin_store_names_fail_closed_during_extraction() {
+    let resources = vec![json!({
+        "name": "0x00000000000000000000000000000001::coin::CoinStore<",
+        "value": {}
+    })];
+    let mut balances = Vec::new();
+    let mut accepted_tokens = Vec::new();
+
+    extract_balance_resources(&resources, &mut balances);
+    extract_accepted_tokens(&resources, &mut accepted_tokens);
+
+    assert!(balances.is_empty());
+    assert!(accepted_tokens.is_empty());
 }
 
 #[test]
@@ -325,6 +475,69 @@ async fn submit_unknown_blocks_blind_resubmission_before_second_txpool_call() {
 }
 
 #[tokio::test]
+async fn submit_signed_transaction_degrades_when_sequence_lookup_returns_no_sender_state() {
+    let server = MockServer::start();
+    let signed_txn = sample_signed_transaction(254, 1);
+    let signed_txn_bcs_hex = format!(
+        "0x{}",
+        hex::encode(bcs_ext::to_bytes(&signed_txn).expect("sample tx should serialize"))
+    );
+    mock_probe_metadata(&server);
+    mock_json_rpc_result(&server, "chain.get_block_by_number", Value::Null);
+    mock_json_rpc_result(&server, "chain.get_blocks_by_number", json!([]));
+    mock_json_rpc_result(&server, "chain.get_transaction2", Value::Null);
+    mock_transaction_info_methods_not_found(&server);
+    mock_transaction_event_methods_not_found(&server);
+    mock_method_not_found(&server, "chain.get_events");
+    mock_method_not_found(&server, "state.list_resource");
+    mock_method_not_found(&server, "state.list_code");
+    mock_abi_methods_not_found(&server);
+    mock_view_methods_not_found(&server);
+    mock_json_rpc_result(&server, "txpool.gas_price", json!("1"));
+    mock_json_rpc_result(&server, "txpool.next_sequence_number2", Value::Null);
+    mock_submit_probe_invalid_params(&server, "txpool.submit_hex_transaction2");
+    mock_json_rpc_result(
+        &server,
+        "contract2.dry_run_raw",
+        json!({ "status": "Executed" }),
+    );
+    mock_json_rpc_result(&server, "state.get_account_state", Value::Null);
+    let submit = server.mock(|when, then| {
+        when.method(POST)
+            .path("/")
+            .body_contains("\"method\":\"txpool.submit_hex_transaction2\"")
+            .body_contains(&signed_txn_bcs_hex);
+        then.status(200)
+            .header("content-type", "application/json")
+            .body(
+                json!({
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": signed_txn.id().to_string(),
+                })
+                .to_string(),
+            );
+    });
+
+    let app = AppContext::bootstrap(sample_runtime_config_with_endpoint(&server.url("/")))
+        .await
+        .expect("bootstrap should succeed");
+    let result = app
+        .submit_signed_transaction(SubmitSignedTransactionInput {
+            signed_txn_bcs_hex,
+            prepared_chain_context: sample_chain_context(254, "main", "0x1"),
+            blocking: false,
+            timeout_seconds: None,
+        })
+        .await
+        .expect("submit should degrade stale-check when sequence sources are unavailable");
+
+    assert_eq!(result.submission_state, SubmissionState::Accepted);
+    assert!(result.submitted);
+    assert_eq!(submit.hits(), 1);
+}
+
+#[tokio::test]
 async fn resolve_sequence_number_degrades_when_txpool_sequence_hint_is_unavailable() {
     let server = MockServer::start();
     mock_json_rpc_error(
@@ -339,10 +552,19 @@ async fn resolve_sequence_number_degrades_when_txpool_sequence_hint_is_unavailab
         -32601,
         "method not found",
     );
+    mock_json_rpc_result(&server, "state.get_account_state", Value::Null);
     mock_json_rpc_result(
         &server,
-        "state.get_account_state",
-        json!({ "sequence_number": "9" }),
+        "state2.list_resource",
+        json!({
+            "resources": {
+                "0x1::account::Account": {
+                    "json": {
+                        "sequence_number": 9
+                    }
+                }
+            }
+        }),
     );
     let config = sample_runtime_config_with_endpoint(&server.url("/"));
     let app = AppContext {

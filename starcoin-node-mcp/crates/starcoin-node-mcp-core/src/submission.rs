@@ -217,8 +217,21 @@ impl AppContext {
         signed_txn: &SignedUserTransaction,
     ) -> Result<bool, SharedError> {
         let sender = signed_txn.sender().to_string();
-        let current_sequence = self.resolve_sequence_number(&sender, None).await?.0;
-        Ok(signed_txn.sequence_number() < current_sequence)
+        match self.resolve_sequence_number(&sender, None).await {
+            Ok((current_sequence, _)) => Ok(signed_txn.sequence_number() < current_sequence),
+            Err(error)
+                if error.code == SharedErrorCode::MissingSender
+                    || is_degradable_sequence_lookup_error(&error) =>
+            {
+                warn!(
+                    sender = %sender,
+                    error = %error,
+                    "unable to derive current sequence during submit stale-check; deferring validation to the node",
+                );
+                Ok(false)
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub(crate) async fn load_prepared_transaction_record(

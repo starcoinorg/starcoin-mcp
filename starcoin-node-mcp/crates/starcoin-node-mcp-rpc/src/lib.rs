@@ -5,6 +5,7 @@ mod probe;
 #[cfg(test)]
 mod tests;
 mod tls;
+mod vm2_helpers;
 
 use std::{
     collections::HashMap,
@@ -43,6 +44,11 @@ use url::Url;
 use x509_parser::{certificate::X509Certificate, prelude::FromDer};
 
 use tls::build_http_client;
+use vm2_helpers::{
+    PRIMARY_FUNGIBLE_STORE_STRUCT_TAG, synthesize_account_state_from_resources,
+    validate_list_resources_response, vm2_get_resource_params, vm2_list_code_params,
+    vm2_list_resources_params,
+};
 
 pub(crate) use cache::TimedValueCache;
 
@@ -219,10 +225,27 @@ impl NodeRpcClient {
     }
 
     pub async fn get_account_state(&self, address: &str) -> Result<Option<Value>, SharedError> {
-        self.call("state.get_account_state", json!([address])).await
+        if self.vm_profile == VmProfile::Vm2Only {
+            return self.account_state_from_vm2_resources(address).await;
+        }
+        match self.call("state.get_account_state", json!([address])).await {
+            Ok(Some(state)) => Ok(Some(state)),
+            Ok(None) => match self.account_state_from_vm2_resources(address).await {
+                Ok(state) => Ok(state),
+                Err(error) if error.code == SharedErrorCode::UnsupportedOperation => Ok(None),
+                Err(error) => Err(error),
+            },
+            Err(error) if error.code == SharedErrorCode::UnsupportedOperation => {
+                self.account_state_from_vm2_resources(address).await
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub async fn get_state_root(&self) -> Result<Value, SharedError> {
+        if self.vm_profile == VmProfile::Vm2Only {
+            return self.call_value("state2.get_state_root", json!([])).await;
+        }
         self.call_value("state.get_state_root", json!([])).await
     }
 
@@ -235,20 +258,62 @@ impl NodeRpcClient {
         state_root: Option<String>,
         resource_types: &[String],
     ) -> Result<Value, SharedError> {
-        self.call_value(
-            "state.list_resource",
-            json!([
-                address,
-                {
-                    "decode": decode,
-                    "state_root": state_root,
-                    "start_index": start_index,
-                    "max_size": max_size,
-                    "resource_types": if resource_types.is_empty() { Value::Null } else { json!(resource_types) }
-                }
-            ]),
-        )
-        .await
+        if self.vm_profile == VmProfile::Vm2Only {
+            return self
+                .list_resources_via_vm2(
+                    address,
+                    decode,
+                    start_index,
+                    max_size,
+                    state_root,
+                    resource_types,
+                )
+                .await;
+        }
+        let legacy_result = self
+            .call_value(
+                "state.list_resource",
+                legacy_list_resources_params(
+                    address,
+                    decode,
+                    start_index,
+                    max_size,
+                    state_root.clone(),
+                    resource_types,
+                ),
+            )
+            .await;
+
+        match legacy_result {
+            Ok(value) if resource_entries_are_non_empty(&value) => Ok(value),
+            Ok(value) => match self
+                .list_resources_via_vm2(
+                    address,
+                    decode,
+                    start_index,
+                    max_size,
+                    state_root.clone(),
+                    resource_types,
+                )
+                .await
+            {
+                Ok(vm2_value) => Ok(vm2_value),
+                Err(error) if error.code == SharedErrorCode::UnsupportedOperation => Ok(value),
+                Err(error) => Err(error),
+            },
+            Err(error) if error.code == SharedErrorCode::UnsupportedOperation => {
+                self.list_resources_via_vm2(
+                    address,
+                    decode,
+                    start_index,
+                    max_size,
+                    state_root,
+                    resource_types,
+                )
+                .await
+            }
+            Err(error) => Err(error),
+        }
     }
 
     pub async fn list_code(
@@ -257,17 +322,42 @@ impl NodeRpcClient {
         resolve: bool,
         state_root: Option<String>,
     ) -> Result<Value, SharedError> {
+        if self.vm_profile == VmProfile::Vm2Only {
+            return self
+                .call_value(
+                    "state2.list_code",
+                    vm2_list_code_params(address, resolve, state_root),
+                )
+                .await;
+        }
         self.call_value(
             "state.list_code",
-            json!([
-                address,
-                {
-                    "resolve": resolve,
-                    "state_root": state_root,
-                }
-            ]),
+            legacy_list_code_params(address, resolve, state_root),
         )
         .await
+    }
+
+    pub async fn get_primary_stc_balance_resource(
+        &self,
+        address: &str,
+    ) -> Result<Option<Value>, SharedError> {
+        match self
+            .call(
+                "state2.get_resource",
+                vm2_get_resource_params(
+                    address,
+                    PRIMARY_FUNGIBLE_STORE_STRUCT_TAG,
+                    true,
+                    None,
+                    true,
+                ),
+            )
+            .await
+        {
+            Ok(resource) => Ok(resource),
+            Err(error) if error.code == SharedErrorCode::UnsupportedOperation => Ok(None),
+            Err(error) => Err(error),
+        }
     }
 
     pub async fn resolve_function_abi(&self, function_id: &str) -> Result<Value, SharedError> {
@@ -399,6 +489,43 @@ impl NodeRpcClient {
         let value = loader().await?;
         cache.insert(key.to_owned(), value.clone()).await;
         Ok(value)
+    }
+
+    async fn list_resources_via_vm2(
+        &self,
+        address: &str,
+        decode: bool,
+        start_index: u64,
+        max_size: u64,
+        state_root: Option<String>,
+        resource_types: &[String],
+    ) -> Result<Value, SharedError> {
+        self.call_value(
+            "state2.list_resource",
+            vm2_list_resources_params(
+                address,
+                decode,
+                start_index,
+                max_size,
+                state_root,
+                resource_types,
+            ),
+        )
+        .await
+        .and_then(|value| {
+            validate_list_resources_response(&value)?;
+            Ok(value)
+        })
+    }
+
+    async fn account_state_from_vm2_resources(
+        &self,
+        address: &str,
+    ) -> Result<Option<Value>, SharedError> {
+        let resources = self
+            .list_resources_via_vm2(address, true, 0, 32, None, &[])
+            .await?;
+        Ok(synthesize_account_state_from_resources(&resources))
     }
 
     async fn call_first_available_value(
@@ -599,6 +726,36 @@ struct RpcFailure {
     data: Option<Value>,
 }
 
+fn legacy_list_resources_params(
+    address: &str,
+    decode: bool,
+    start_index: u64,
+    max_size: u64,
+    state_root: Option<String>,
+    resource_types: &[String],
+) -> Value {
+    json!([
+        address,
+        {
+            "decode": decode,
+            "state_root": state_root,
+            "start_index": start_index,
+            "max_size": max_size,
+            "resource_types": if resource_types.is_empty() { Value::Null } else { json!(resource_types) }
+        }
+    ])
+}
+
+fn legacy_list_code_params(address: &str, resolve: bool, state_root: Option<String>) -> Value {
+    json!([
+        address,
+        {
+            "resolve": resolve,
+            "state_root": state_root,
+        }
+    ])
+}
+
 fn map_rpc_error_code(message: &str) -> SharedErrorCode {
     let lower = message.to_ascii_lowercase();
     if lower.contains("expired") {
@@ -622,4 +779,12 @@ fn parse_u64(value: &Value) -> Option<u64> {
         Value::String(string) => string.parse().ok(),
         _ => None,
     }
+}
+
+fn resource_entries_are_non_empty(value: &Value) -> bool {
+    value
+        .get("resources")
+        .and_then(Value::as_object)
+        .map(|entries| !entries.is_empty())
+        .unwrap_or(false)
 }

@@ -125,6 +125,21 @@ impl NodeRpcClient {
     }
 
     async fn supports_account_state_lookup(&self) -> Result<bool, SharedError> {
+        if self.vm_profile == VmProfile::Vm2Only {
+            return self
+                .probe_method_supported(
+                    "state2.list_resource",
+                    vm2_list_resources_params(
+                        "0x00000000000000000000000000000000",
+                        true,
+                        0,
+                        1,
+                        None,
+                        &[],
+                    ),
+                )
+                .await;
+        }
         self.probe_method_supported(
             "state.get_account_state",
             json!(["0x00000000000000000000000000000000"]),
@@ -141,6 +156,21 @@ impl NodeRpcClient {
     }
 
     async fn supports_resource_listing(&self) -> Result<bool, SharedError> {
+        if self.vm_profile == VmProfile::Vm2Only {
+            return self
+                .probe_method_supported(
+                    "state2.list_resource",
+                    vm2_list_resources_params(
+                        "0x00000000000000000000000000000000",
+                        true,
+                        0,
+                        1,
+                        None,
+                        &[],
+                    ),
+                )
+                .await;
+        }
         self.probe_method_supported(
             "state.list_resource",
             json!(["0x00000000000000000000000000000000", {
@@ -153,6 +183,14 @@ impl NodeRpcClient {
     }
 
     async fn supports_module_listing(&self) -> Result<bool, SharedError> {
+        if self.vm_profile == VmProfile::Vm2Only {
+            return self
+                .probe_method_supported(
+                    "state2.list_code",
+                    vm2_list_code_params("0x00000000000000000000000000000000", true, None),
+                )
+                .await;
+        }
         self.probe_method_supported(
             "state.list_code",
             json!(["0x00000000000000000000000000000000", {
