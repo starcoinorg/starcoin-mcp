@@ -38,7 +38,7 @@ use crate::{
 use starmask_core::{CoordinatorCommand, CoordinatorConfig};
 use starmask_types::{
     JsonRpcRequest, JsonRpcResponse, PresentationId, PulledRequest, RequestHasAvailableParams,
-    RequestPresentedParams, RequestPullNextParams, WalletCapability, WalletInstanceId,
+    RequestPresentedParams, WalletCapability, WalletInstanceId,
 };
 use starmaskd::{
     config::{LocalAccountDirBackendConfig, LocalPromptMode, WalletBackendConfig},
@@ -139,41 +139,21 @@ fn test_log_capture() -> TestLogCapture {
     }
 }
 
-async fn register_backend_on_blocking_thread(
-    mut harness: RealStackHarness,
-    dispatch: Dispatch,
-) -> (RealStackHarness, Snapshot) {
+// LocalDaemonClient uses blocking Unix sockets, so drive agent-side RPC on the
+// blocking pool instead of stalling the async daemon runtime.
+async fn run_agent_action_on_blocking_thread<R, F>(
+    mut agent: LocalAccountAgent,
+    dispatch: Option<Dispatch>,
+    action: F,
+) -> (LocalAccountAgent, R)
+where
+    R: Send + 'static,
+    F: FnOnce(&mut LocalAccountAgent) -> R + Send + 'static,
+{
     tokio::task::spawn_blocking(move || {
-        let _guard = tracing::dispatcher::set_default(&dispatch);
-        let snapshot = harness.register_backend();
-        (harness, snapshot)
-    })
-    .await
-    .unwrap()
-}
-
-async fn handle_next_request_on_blocking_thread(
-    mut harness: RealStackHarness,
-    snapshot: Snapshot,
-    dispatch: Dispatch,
-) -> RealStackHarness {
-    tokio::task::spawn_blocking(move || {
-        let _guard = tracing::dispatcher::set_default(&dispatch);
-        let pulled = harness
-            .agent_mut()
-            .client
-            .request_pull_next(RequestPullNextParams {
-                protocol_version: daemon_protocol_version(),
-                wallet_instance_id: WalletInstanceId::new("local-main").unwrap(),
-            })
-            .unwrap()
-            .request
-            .unwrap();
-        harness
-            .agent_mut()
-            .handle_request(pulled, &snapshot)
-            .unwrap();
-        harness
+        let _guard = dispatch.as_ref().map(tracing::dispatcher::set_default);
+        let result = action(&mut agent);
+        (agent, result)
     })
     .await
     .unwrap()
@@ -245,12 +225,29 @@ impl RealStackHarness {
         }
     }
 
-    fn register_backend(&mut self) -> Snapshot {
-        self.agent_mut().register_backend().unwrap()
-    }
-
     fn agent_mut(&mut self) -> &mut LocalAccountAgent {
         self.agent.as_mut().expect("agent should still be running")
+    }
+
+    async fn run_agent_action<R, F>(mut self, dispatch: Option<Dispatch>, action: F) -> (Self, R)
+    where
+        R: Send + 'static,
+        F: FnOnce(&mut LocalAccountAgent) -> R + Send + 'static,
+    {
+        let agent = self.agent.take().expect("agent should still be running");
+        let (agent, result) = run_agent_action_on_blocking_thread(agent, dispatch, action).await;
+        self.agent = Some(agent);
+        (self, result)
+    }
+
+    async fn register_backend(self) -> (Self, Snapshot) {
+        self.run_agent_action(None, |agent| agent.register_backend().unwrap())
+            .await
+    }
+
+    async fn register_backend_with_dispatch(self, dispatch: Dispatch) -> (Self, Snapshot) {
+        self.run_agent_action(Some(dispatch), |agent| agent.register_backend().unwrap())
+            .await
     }
 
     fn spawn_restarted_agent(&mut self) -> LocalAccountAgent {
@@ -267,6 +264,33 @@ impl RealStackHarness {
             Duration::from_secs(1),
         )
         .unwrap()
+    }
+
+    async fn handle_next_request(self, snapshot: Snapshot) -> Self {
+        self.handle_next_request_inner(snapshot, None).await
+    }
+
+    async fn handle_next_request_with_dispatch(
+        self,
+        snapshot: Snapshot,
+        dispatch: Dispatch,
+    ) -> Self {
+        self.handle_next_request_inner(snapshot, Some(dispatch))
+            .await
+    }
+
+    async fn handle_next_request_inner(
+        self,
+        snapshot: Snapshot,
+        dispatch: Option<Dispatch>,
+    ) -> Self {
+        let (harness, ()) = self
+            .run_agent_action(dispatch, move |agent| {
+                let pulled = agent.pull_next_request().unwrap().unwrap();
+                agent.handle_request(pulled, &snapshot).unwrap();
+            })
+            .await;
+        harness
     }
 
     fn raw_sign_transaction_hex(&self) -> String {
@@ -341,8 +365,8 @@ async fn call_daemon(
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_socket_stack_round_trips_sign_message_and_has_available() {
-    let mut harness = RealStackHarness::new(false, 30).await;
-    let snapshot = harness.register_backend();
+    let harness = RealStackHarness::new(false, 30).await;
+    let (mut harness, snapshot) = harness.register_backend().await;
 
     let created = call_daemon(
         &harness.socket_path,
@@ -378,20 +402,7 @@ async fn local_socket_stack_round_trips_sign_message_and_has_available() {
     };
     assert_eq!(has_available.result["available"], json!(true));
 
-    let pulled = harness
-        .agent_mut()
-        .client
-        .request_pull_next(RequestPullNextParams {
-            protocol_version: daemon_protocol_version(),
-            wallet_instance_id: WalletInstanceId::new("local-main").unwrap(),
-        })
-        .unwrap()
-        .request
-        .unwrap();
-    harness
-        .agent_mut()
-        .handle_request(pulled, &snapshot)
-        .unwrap();
+    harness = harness.handle_next_request(snapshot).await;
 
     let status = call_daemon(
         &harness.socket_path,
@@ -430,8 +441,8 @@ async fn local_socket_stack_round_trips_sign_message_and_has_available() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_socket_stack_round_trips_sign_transaction() {
-    let mut harness = RealStackHarness::new(false, 30).await;
-    let snapshot = harness.register_backend();
+    let harness = RealStackHarness::new(false, 30).await;
+    let (mut harness, snapshot) = harness.register_backend().await;
 
     let created = call_daemon(
         &harness.socket_path,
@@ -453,20 +464,7 @@ async fn local_socket_stack_round_trips_sign_transaction() {
     };
     let request_id = created.result["request_id"].as_str().unwrap();
 
-    let pulled = harness
-        .agent_mut()
-        .client
-        .request_pull_next(RequestPullNextParams {
-            protocol_version: daemon_protocol_version(),
-            wallet_instance_id: WalletInstanceId::new("local-main").unwrap(),
-        })
-        .unwrap()
-        .request
-        .unwrap();
-    harness
-        .agent_mut()
-        .handle_request(pulled, &snapshot)
-        .unwrap();
+    harness = harness.handle_next_request(snapshot).await;
 
     let status = call_daemon(
         &harness.socket_path,
@@ -496,12 +494,12 @@ async fn local_socket_stack_round_trips_sign_transaction() {
 #[tokio::test(flavor = "current_thread")]
 async fn local_socket_stack_logs_omit_sensitive_signing_material() {
     let captured_logs = test_log_capture();
-    let dispatch = captured_logs.dispatch.clone();
     let _guard = tracing::dispatcher::set_default(&captured_logs.dispatch);
 
     let harness = RealStackHarness::new(true, 30).await;
-    let (mut harness, snapshot) =
-        register_backend_on_blocking_thread(harness, dispatch.clone()).await;
+    let (mut harness, snapshot) = harness
+        .register_backend_with_dispatch(captured_logs.dispatch.clone())
+        .await;
     let password = "hello";
     let secret_message = "message-do-not-log";
     let raw_txn_bcs_hex = harness.raw_sign_transaction_hex();
@@ -525,8 +523,9 @@ async fn local_socket_stack_logs_omit_sensitive_signing_material() {
         panic!("expected create success");
     };
 
-    harness =
-        handle_next_request_on_blocking_thread(harness, snapshot.clone(), dispatch.clone()).await;
+    harness = harness
+        .handle_next_request_with_dispatch(snapshot.clone(), captured_logs.dispatch.clone())
+        .await;
 
     let created = call_daemon(
         &harness.socket_path,
@@ -547,7 +546,9 @@ async fn local_socket_stack_logs_omit_sensitive_signing_material() {
         panic!("expected create success");
     };
 
-    harness = handle_next_request_on_blocking_thread(harness, snapshot, dispatch).await;
+    harness = harness
+        .handle_next_request_with_dispatch(snapshot, captured_logs.dispatch.clone())
+        .await;
 
     let logs = captured_logs.snapshot();
     assert!(logs.contains("received daemon rpc request"));
@@ -561,8 +562,8 @@ async fn local_socket_stack_logs_omit_sensitive_signing_material() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_backend_restart_before_presented_requeues_after_lease_expiry() {
-    let mut harness = RealStackHarness::new(false, 1).await;
-    harness.register_backend();
+    let harness = RealStackHarness::new(false, 1).await;
+    let (mut harness, _) = harness.register_backend().await;
 
     let created = call_daemon(
         &harness.socket_path,
@@ -583,28 +584,21 @@ async fn local_backend_restart_before_presented_requeues_after_lease_expiry() {
     };
     let request_id = created.result["request_id"].as_str().unwrap().to_owned();
 
-    let first_pull = harness
-        .agent_mut()
-        .client
-        .request_pull_next(RequestPullNextParams {
-            protocol_version: daemon_protocol_version(),
-            wallet_instance_id: WalletInstanceId::new("local-main").unwrap(),
-        })
-        .unwrap()
-        .request
-        .unwrap();
+    let first_pull = harness.agent_mut().pull_next_request().unwrap().unwrap();
     assert_eq!(first_pull.request_id.as_str(), request_id);
 
     let mut restarted_agent = harness.spawn_restarted_agent();
-    restarted_agent.register_backend().unwrap();
-    let second_pull = restarted_agent
-        .client
-        .request_pull_next(RequestPullNextParams {
-            protocol_version: daemon_protocol_version(),
-            wallet_instance_id: WalletInstanceId::new("local-main").unwrap(),
+    (restarted_agent, _) = run_agent_action_on_blocking_thread(restarted_agent, None, |agent| {
+        agent.register_backend().unwrap()
+    })
+    .await;
+    let (restarted_agent_after_pull, second_pull) =
+        run_agent_action_on_blocking_thread(restarted_agent, None, |agent| {
+            agent.pull_next_request().unwrap()
         })
-        .unwrap();
-    assert!(second_pull.request.is_none());
+        .await;
+    let restarted_agent = restarted_agent_after_pull;
+    assert!(second_pull.is_none());
 
     sleep(Duration::from_secs(2)).await;
     harness
@@ -613,15 +607,11 @@ async fn local_backend_restart_before_presented_requeues_after_lease_expiry() {
         .await
         .unwrap();
 
-    let requeued = restarted_agent
-        .client
-        .request_pull_next(RequestPullNextParams {
-            protocol_version: daemon_protocol_version(),
-            wallet_instance_id: WalletInstanceId::new("local-main").unwrap(),
+    let (_restarted_agent, requeued) =
+        run_agent_action_on_blocking_thread(restarted_agent, None, |agent| {
+            agent.pull_next_request().unwrap().unwrap()
         })
-        .unwrap()
-        .request
-        .unwrap();
+        .await;
     assert_eq!(requeued.request_id.as_str(), request_id);
     assert!(!requeued.resume_required);
     assert!(requeued.delivery_lease_id.is_some());
@@ -631,8 +621,8 @@ async fn local_backend_restart_before_presented_requeues_after_lease_expiry() {
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
 async fn local_backend_restart_after_presented_resumes_same_instance() {
-    let mut harness = RealStackHarness::new(false, 30).await;
-    harness.register_backend();
+    let harness = RealStackHarness::new(false, 30).await;
+    let (mut harness, _) = harness.register_backend().await;
 
     let created = call_daemon(
         &harness.socket_path,
@@ -653,23 +643,15 @@ async fn local_backend_restart_after_presented_resumes_same_instance() {
     };
     let request_id = created.result["request_id"].as_str().unwrap().to_owned();
 
-    let first_pull = harness
-        .agent_mut()
-        .client
-        .request_pull_next(RequestPullNextParams {
-            protocol_version: daemon_protocol_version(),
-            wallet_instance_id: WalletInstanceId::new("local-main").unwrap(),
-        })
-        .unwrap()
-        .request
-        .unwrap();
+    let first_pull = harness.agent_mut().pull_next_request().unwrap().unwrap();
     let presentation_id = PresentationId::new("presentation-restart").unwrap();
+    let wallet_instance_id = harness.agent_mut().wallet_instance_id.clone();
     harness
         .agent_mut()
         .client
         .request_presented(RequestPresentedParams {
             protocol_version: daemon_protocol_version(),
-            wallet_instance_id: WalletInstanceId::new("local-main").unwrap(),
+            wallet_instance_id,
             request_id: first_pull.request_id.clone(),
             delivery_lease_id: first_pull.delivery_lease_id.clone(),
             presentation_id: presentation_id.clone(),
@@ -677,16 +659,15 @@ async fn local_backend_restart_after_presented_resumes_same_instance() {
         .unwrap();
 
     let mut restarted_agent = harness.spawn_restarted_agent();
-    restarted_agent.register_backend().unwrap();
-    let resumed = restarted_agent
-        .client
-        .request_pull_next(RequestPullNextParams {
-            protocol_version: daemon_protocol_version(),
-            wallet_instance_id: WalletInstanceId::new("local-main").unwrap(),
+    (restarted_agent, _) = run_agent_action_on_blocking_thread(restarted_agent, None, |agent| {
+        agent.register_backend().unwrap()
+    })
+    .await;
+    let (_restarted_agent, resumed) =
+        run_agent_action_on_blocking_thread(restarted_agent, None, |agent| {
+            agent.pull_next_request().unwrap().unwrap()
         })
-        .unwrap()
-        .request
-        .unwrap();
+        .await;
     assert_eq!(resumed.request_id.as_str(), request_id);
     assert!(resumed.resume_required);
     assert_eq!(resumed.presentation_id, Some(presentation_id));

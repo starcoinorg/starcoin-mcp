@@ -16,7 +16,7 @@ use starcoin_types::genesis_config::ChainId;
 use starmask_types::{
     BackendAccount, BackendHeartbeatParams, BackendRegisterParams, BackendUpdateAccountsParams,
     LockState, PresentationId, PulledRequest, RejectReasonCode, RequestId, RequestResolveParams,
-    RequestResult, ResultKind, TransportKind, WalletCapability, WalletInstanceId,
+    RequestResult, ResultKind, SharedError, TransportKind, WalletCapability, WalletInstanceId,
 };
 use starmaskd::config::{LocalAccountDirBackendConfig, LocalPromptMode};
 use tracing::{info, warn};
@@ -112,19 +112,13 @@ impl LocalAccountAgent {
         loop {
             self.sync_snapshot(&mut snapshot)?;
 
-            match self
-                .client
-                .request_pull_next(starmask_types::RequestPullNextParams {
-                    protocol_version: daemon_protocol_version(),
-                    wallet_instance_id: self.wallet_instance_id.clone(),
-                }) {
-                Ok(result) => {
-                    if let Some(request) = result.request {
-                        self.handle_request(request, &snapshot)?;
-                        self.sync_snapshot(&mut snapshot)?;
-                        continue;
-                    }
+            match self.pull_next_request() {
+                Ok(Some(request)) => {
+                    self.handle_request(request, &snapshot)?;
+                    self.sync_snapshot(&mut snapshot)?;
+                    continue;
                 }
+                Ok(None) => {}
                 Err(error) => warn!("request.pullNext failed: {}", error.message),
             }
 
@@ -208,6 +202,15 @@ impl LocalAccountAgent {
             capabilities,
             accounts,
         })
+    }
+
+    fn pull_next_request(&self) -> std::result::Result<Option<PulledRequest>, SharedError> {
+        self.client
+            .request_pull_next(starmask_types::RequestPullNextParams {
+                protocol_version: daemon_protocol_version(),
+                wallet_instance_id: self.wallet_instance_id.clone(),
+            })
+            .map(|result| result.request)
     }
 
     fn handle_request(&mut self, request: PulledRequest, snapshot: &Snapshot) -> Result<()> {
