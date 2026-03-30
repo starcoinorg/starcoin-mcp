@@ -101,11 +101,13 @@ Cover:
 - `request.pullNext`, `request.presented`, `request.resolve`, and `request.reject`
 - disabled-backend and unknown-instance rejection
 
-### Layer 4: Extension Bridge Tests
+### Layer 4: Native Messaging Bridge Tests
 
 Target:
 
-- `starmask-native-host`
+- `starmask-native-host` Chrome Native Messaging bridge
+
+Keep ownership explicit: `starmask-mcp` is the MCP stdio adapter, `starmaskd` owns lifecycle and persistence, `starmask-native-host` is the bridge, and `Starmask` extension is the approval UI and signing authority.
 
 Use:
 
@@ -274,6 +276,6 @@ This harness plan is ready to implement when:
 2. a fake id generator exists
 3. a fake extension runtime contract exists
 4. temp-directory SQLite bootstrap exists
-5. at least one end-to-end local integration harness exists
+5. at least one End-To-End Local Stack Test exists
 
 At that point, implementation can move directly toward integration and acceptance instead of inventing test strategy ad hoc.

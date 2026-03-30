@@ -111,6 +111,7 @@ fn sanitize_for_tty(input: &str) -> String {
     let mut sanitized = String::with_capacity(input.len());
     for character in input.chars() {
         match character {
+            '\\' => sanitized.push_str("\\\\"),
             '\n' => sanitized.push_str("\\n"),
             '\r' => sanitized.push_str("\\r"),
             '\t' => sanitized.push_str("\\t"),
@@ -238,6 +239,11 @@ mod tests {
             sanitize_for_tty("hi\nthere\x1b[31m\t\u{202e}你好\u{2066}"),
             "hi\\nthere\\u{1b}[31m\\t\\u{202e}你好\\u{2066}"
         );
+    }
+
+    #[test]
+    fn sanitize_for_tty_escapes_literal_backslashes() {
+        assert_eq!(sanitize_for_tty("\\n\\u{1b}"), "\\\\n\\\\u{1b}");
     }
 
     #[test]

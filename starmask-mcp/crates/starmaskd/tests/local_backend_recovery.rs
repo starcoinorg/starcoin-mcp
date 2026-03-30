@@ -5,8 +5,7 @@ use tempfile::tempdir;
 
 use starmask_core::{CoordinatorCommand, CoordinatorResponse};
 use starmask_types::{
-    GetRequestStatusResult, LockState, PresentationId, RequestStatus, TimestampMs,
-    WalletInstanceId,
+    GetRequestStatusResult, LockState, PresentationId, RequestStatus, TimestampMs, WalletInstanceId,
 };
 
 use support::{
@@ -45,7 +44,10 @@ fn local_backend_registration_record_survives_restart() {
     };
 
     assert_eq!(listed.wallet_instances.len(), 1);
-    assert_eq!(listed.wallet_instances[0].wallet_instance_id, wallet_instance_id);
+    assert_eq!(
+        listed.wallet_instances[0].wallet_instance_id,
+        wallet_instance_id
+    );
     assert_eq!(listed.wallet_instances[0].lock_state, LockState::Unlocked);
 }
 
@@ -64,8 +66,12 @@ fn local_backend_created_request_survives_restart_and_can_be_polled_by_id() {
             LockState::Unlocked,
             vec![wallet_account(&wallet_instance_id, "0x1", true)],
         );
-        create_sign_transaction(&mut coordinator, "client-created-local", &wallet_instance_id)
-            .request_id
+        create_sign_transaction(
+            &mut coordinator,
+            "client-created-local",
+            &wallet_instance_id,
+        )
+        .request_id
     };
 
     let mut restarted = open_coordinator(
@@ -105,8 +111,11 @@ fn local_backend_dispatched_request_requeues_after_restart_and_lease_expiry() {
             LockState::Unlocked,
             vec![wallet_account(&wallet_instance_id, "0x1", true)],
         );
-        let created =
-            create_sign_transaction(&mut coordinator, "client-dispatched-local", &wallet_instance_id);
+        let created = create_sign_transaction(
+            &mut coordinator,
+            "client-dispatched-local",
+            &wallet_instance_id,
+        );
         let pulled = pull_next_request(&mut coordinator, &wallet_instance_id);
         assert_eq!(pulled.request_id, created.request_id);
         created.request_id
@@ -156,14 +165,19 @@ fn local_backend_pending_request_resumes_for_same_instance_after_restart() {
             LockState::Unlocked,
             vec![wallet_account(&wallet_instance_id, "0x1", true)],
         );
-        let created =
-            create_sign_transaction(&mut coordinator, "client-pending-local", &wallet_instance_id);
+        let created = create_sign_transaction(
+            &mut coordinator,
+            "client-pending-local",
+            &wallet_instance_id,
+        );
         let pulled = pull_next_request(&mut coordinator, &wallet_instance_id);
         mark_presented(
             &mut coordinator,
             &created.request_id,
             &wallet_instance_id,
-            pulled.delivery_lease_id.expect("delivery lease should exist"),
+            pulled
+                .delivery_lease_id
+                .expect("delivery lease should exist"),
             presentation_id.clone(),
         );
         created.request_id
@@ -209,7 +223,9 @@ fn local_backend_pending_request_is_not_redelivered_to_other_backend_after_resta
             &mut coordinator,
             &created.request_id,
             &wallet_instance_id,
-            pulled.delivery_lease_id.expect("delivery lease should exist"),
+            pulled
+                .delivery_lease_id
+                .expect("delivery lease should exist"),
             PresentationId::new("presentation-owned-local").unwrap(),
         );
     }

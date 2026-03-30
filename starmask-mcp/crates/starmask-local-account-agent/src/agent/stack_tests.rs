@@ -1,7 +1,9 @@
+#![forbid(unsafe_code)]
+
 use std::{
     io,
     path::{Path, PathBuf},
-    sync::{Arc, Mutex, OnceLock},
+    sync::{Arc, Mutex},
     time::Duration,
 };
 
@@ -24,7 +26,7 @@ use tokio::{
     task::JoinHandle,
     time::sleep,
 };
-use tracing::Level;
+use tracing::{Dispatch, Level};
 use tracing_subscriber::fmt::writer::MakeWriter;
 
 use super::{LocalAccountAgent, Snapshot};
@@ -86,15 +88,20 @@ struct SharedLogBuffer(Arc<Mutex<Vec<u8>>>);
 
 struct SharedLogWriter(SharedLogBuffer);
 
-static TEST_LOG_BUFFER: OnceLock<SharedLogBuffer> = OnceLock::new();
+struct TestLogCapture {
+    buffer: SharedLogBuffer,
+    dispatch: Dispatch,
+}
 
 impl SharedLogBuffer {
-    fn clear(&self) {
-        self.0.lock().unwrap().clear();
-    }
-
     fn snapshot(&self) -> String {
         String::from_utf8(self.0.lock().unwrap().clone()).unwrap()
+    }
+}
+
+impl TestLogCapture {
+    fn snapshot(&self) -> String {
+        self.buffer.snapshot()
     }
 }
 
@@ -117,22 +124,59 @@ impl io::Write for SharedLogWriter {
     }
 }
 
-fn test_log_buffer() -> SharedLogBuffer {
-    TEST_LOG_BUFFER
-        .get_or_init(|| {
-            let buffer = SharedLogBuffer::default();
-            let subscriber = tracing_subscriber::fmt()
-                .with_ansi(false)
-                .without_time()
-                .with_max_level(Level::DEBUG)
-                .with_target(false)
-                .with_writer(buffer.clone())
-                .finish();
-            tracing::subscriber::set_global_default(subscriber)
-                .expect("test log subscriber should initialize once");
-            buffer
-        })
-        .clone()
+fn test_log_capture() -> TestLogCapture {
+    let buffer = SharedLogBuffer::default();
+    let subscriber = tracing_subscriber::fmt()
+        .with_ansi(false)
+        .without_time()
+        .with_max_level(Level::DEBUG)
+        .with_target(false)
+        .with_writer(buffer.clone())
+        .finish();
+    TestLogCapture {
+        buffer,
+        dispatch: Dispatch::new(subscriber),
+    }
+}
+
+async fn register_backend_on_blocking_thread(
+    mut harness: RealStackHarness,
+    dispatch: Dispatch,
+) -> (RealStackHarness, Snapshot) {
+    tokio::task::spawn_blocking(move || {
+        let _guard = tracing::dispatcher::set_default(&dispatch);
+        let snapshot = harness.register_backend();
+        (harness, snapshot)
+    })
+    .await
+    .unwrap()
+}
+
+async fn handle_next_request_on_blocking_thread(
+    mut harness: RealStackHarness,
+    snapshot: Snapshot,
+    dispatch: Dispatch,
+) -> RealStackHarness {
+    tokio::task::spawn_blocking(move || {
+        let _guard = tracing::dispatcher::set_default(&dispatch);
+        let pulled = harness
+            .agent_mut()
+            .client
+            .request_pull_next(RequestPullNextParams {
+                protocol_version: daemon_protocol_version(),
+                wallet_instance_id: WalletInstanceId::new("local-main").unwrap(),
+            })
+            .unwrap()
+            .request
+            .unwrap();
+        harness
+            .agent_mut()
+            .handle_request(pulled, &snapshot)
+            .unwrap();
+        harness
+    })
+    .await
+    .unwrap()
 }
 
 impl RealStackHarness {
@@ -449,13 +493,15 @@ async fn local_socket_stack_round_trips_sign_transaction() {
     harness.shutdown().await;
 }
 
-#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+#[tokio::test(flavor = "current_thread")]
 async fn local_socket_stack_logs_omit_sensitive_signing_material() {
-    let captured_logs = test_log_buffer();
-    captured_logs.clear();
+    let captured_logs = test_log_capture();
+    let dispatch = captured_logs.dispatch.clone();
+    let _guard = tracing::dispatcher::set_default(&captured_logs.dispatch);
 
-    let mut harness = RealStackHarness::new(true, 30).await;
-    let snapshot = harness.register_backend();
+    let harness = RealStackHarness::new(true, 30).await;
+    let (mut harness, snapshot) =
+        register_backend_on_blocking_thread(harness, dispatch.clone()).await;
     let password = "hello";
     let secret_message = "message-do-not-log";
     let raw_txn_bcs_hex = harness.raw_sign_transaction_hex();
@@ -479,20 +525,8 @@ async fn local_socket_stack_logs_omit_sensitive_signing_material() {
         panic!("expected create success");
     };
 
-    let pulled = harness
-        .agent_mut()
-        .client
-        .request_pull_next(RequestPullNextParams {
-            protocol_version: daemon_protocol_version(),
-            wallet_instance_id: WalletInstanceId::new("local-main").unwrap(),
-        })
-        .unwrap()
-        .request
-        .unwrap();
-    harness
-        .agent_mut()
-        .handle_request(pulled, &snapshot)
-        .unwrap();
+    harness =
+        handle_next_request_on_blocking_thread(harness, snapshot.clone(), dispatch.clone()).await;
 
     let created = call_daemon(
         &harness.socket_path,
@@ -513,20 +547,7 @@ async fn local_socket_stack_logs_omit_sensitive_signing_material() {
         panic!("expected create success");
     };
 
-    let pulled = harness
-        .agent_mut()
-        .client
-        .request_pull_next(RequestPullNextParams {
-            protocol_version: daemon_protocol_version(),
-            wallet_instance_id: WalletInstanceId::new("local-main").unwrap(),
-        })
-        .unwrap()
-        .request
-        .unwrap();
-    harness
-        .agent_mut()
-        .handle_request(pulled, &snapshot)
-        .unwrap();
+    harness = handle_next_request_on_blocking_thread(harness, snapshot, dispatch).await;
 
     let logs = captured_logs.snapshot();
     assert!(logs.contains("received daemon rpc request"));

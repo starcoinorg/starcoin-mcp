@@ -78,7 +78,10 @@ fn migrated_extension_wallets_still_route_requests_and_evict_results() {
             panic!("unexpected response");
         };
         assert_eq!(listed.wallet_instances.len(), 1);
-        assert_eq!(listed.wallet_instances[0].wallet_instance_id, wallet_instance_id);
+        assert_eq!(
+            listed.wallet_instances[0].wallet_instance_id,
+            wallet_instance_id
+        );
         assert_eq!(listed.wallet_instances[0].accounts.len(), 1);
         assert_eq!(listed.wallet_instances[0].accounts[0].address, "0x1");
         assert_eq!(
@@ -86,14 +89,19 @@ fn migrated_extension_wallets_still_route_requests_and_evict_results() {
             Some("0xabc")
         );
 
-        let created =
-            create_sign_transaction(&mut coordinator, "client-migrated-extension", &wallet_instance_id);
+        let created = create_sign_transaction(
+            &mut coordinator,
+            "client-migrated-extension",
+            &wallet_instance_id,
+        );
         let pulled = pull_next_request(&mut coordinator, &wallet_instance_id);
         mark_presented(
             &mut coordinator,
             &created.request_id,
             &wallet_instance_id,
-            pulled.delivery_lease_id.expect("delivery lease should exist"),
+            pulled
+                .delivery_lease_id
+                .expect("delivery lease should exist"),
             PresentationId::new("presentation-migrated-extension").unwrap(),
         );
         resolve_transaction_request(

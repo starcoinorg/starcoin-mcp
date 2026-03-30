@@ -120,17 +120,22 @@ async fn register_wallet(socket_path: &std::path::Path, wallet_instance_id: &str
 fn local_backend_account(
     address: &str,
     public_key: &str,
-    is_default: bool,
-    is_locked: bool,
+    options: LocalBackendAccountOptions,
 ) -> serde_json::Value {
     json!({
         "address": address,
         "label": null,
         "public_key": public_key,
-        "is_default": is_default,
+        "is_default": options.is_default,
         "is_read_only": false,
-        "is_locked": is_locked,
+        "is_locked": options.is_locked,
     })
+}
+
+#[derive(Clone, Copy)]
+struct LocalBackendAccountOptions {
+    is_default: bool,
+    is_locked: bool,
 }
 
 async fn register_local_backend(
@@ -376,7 +381,14 @@ async fn unix_server_round_trips_generic_backend_register_and_resolve() {
     register_local_backend(
         &socket_path,
         "unlocked",
-        vec![local_backend_account("0x1", "0xabc", true, false)],
+        vec![local_backend_account(
+            "0x1",
+            "0xabc",
+            LocalBackendAccountOptions {
+                is_default: true,
+                is_locked: false,
+            },
+        )],
     )
     .await;
 
@@ -486,7 +498,14 @@ async fn unix_server_round_trips_generic_backend_reject() {
     register_local_backend(
         &socket_path,
         "unlocked",
-        vec![local_backend_account("0x1", "0xabc", true, false)],
+        vec![local_backend_account(
+            "0x1",
+            "0xabc",
+            LocalBackendAccountOptions {
+                is_default: true,
+                is_locked: false,
+            },
+        )],
     )
     .await;
 
@@ -594,7 +613,14 @@ async fn unix_server_reports_request_has_available_for_local_backend() {
     register_local_backend(
         &socket_path,
         "unlocked",
-        vec![local_backend_account("0x1", "0xabc", true, false)],
+        vec![local_backend_account(
+            "0x1",
+            "0xabc",
+            LocalBackendAccountOptions {
+                is_default: true,
+                is_locked: false,
+            },
+        )],
     )
     .await;
 
@@ -634,7 +660,14 @@ async fn unix_server_repeated_empty_pull_next_remains_stable_for_local_backend()
     register_local_backend(
         &socket_path,
         "unlocked",
-        vec![local_backend_account("0x1", "0xabc", true, false)],
+        vec![local_backend_account(
+            "0x1",
+            "0xabc",
+            LocalBackendAccountOptions {
+                is_default: true,
+                is_locked: false,
+            },
+        )],
     )
     .await;
 
@@ -781,7 +814,14 @@ async fn unix_server_backend_heartbeat_updates_lock_state() {
     register_local_backend(
         &socket_path,
         "unlocked",
-        vec![local_backend_account("0x1", "0xabc", true, false)],
+        vec![local_backend_account(
+            "0x1",
+            "0xabc",
+            LocalBackendAccountOptions {
+                is_default: true,
+                is_locked: false,
+            },
+        )],
     )
     .await;
 
@@ -823,7 +863,14 @@ async fn unix_server_backend_update_accounts_replaces_snapshot() {
     register_local_backend(
         &socket_path,
         "unlocked",
-        vec![local_backend_account("0x1", "0xabc", true, false)],
+        vec![local_backend_account(
+            "0x1",
+            "0xabc",
+            LocalBackendAccountOptions {
+                is_default: true,
+                is_locked: false,
+            },
+        )],
     )
     .await;
 
@@ -837,7 +884,14 @@ async fn unix_server_backend_update_accounts_replaces_snapshot() {
             "lock_state": "locked",
             "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction"],
             "accounts": [
-                local_backend_account("0x2", "0xdef", true, false)
+                local_backend_account(
+                    "0x2",
+                    "0xdef",
+                    LocalBackendAccountOptions {
+                        is_default: true,
+                        is_locked: false,
+                    },
+                )
             ],
         }),
     )

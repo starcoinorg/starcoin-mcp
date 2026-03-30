@@ -466,7 +466,7 @@ fn new_presentation_id() -> PresentationId {
         .expect("generated presentation id should be valid")
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod stack_tests;
 
 #[cfg(test)]

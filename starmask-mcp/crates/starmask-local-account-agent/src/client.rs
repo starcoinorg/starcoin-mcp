@@ -153,9 +153,8 @@ fn connect_with_retry(socket_path: &PathBuf) -> std::io::Result<UnixStream> {
         }
     }
 
-    Err(last_error.unwrap_or_else(|| {
-        std::io::Error::other("daemon socket connection retries exhausted")
-    }))
+    Err(last_error
+        .unwrap_or_else(|| std::io::Error::other("daemon socket connection retries exhausted")))
 }
 
 fn should_retry_connect(error: &std::io::Error) -> bool {
