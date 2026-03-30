@@ -93,7 +93,7 @@ pub(crate) fn synthesize_account_state_from_resources(resources: &Value) -> Opti
         summary.insert("sequence_number".to_owned(), json!(sequence_number));
     }
 
-    Some(Value::Object(summary))
+    (!summary.is_empty()).then_some(Value::Object(summary))
 }
 
 fn extract_sequence_number_from_object_entries(entries: &Map<String, Value>) -> Option<u64> {
@@ -115,7 +115,7 @@ fn extract_sequence_number_from_array_entries(entries: &[Value]) -> Option<u64> 
                 .map(|name| name.contains("::account::Account"))
                 .unwrap_or(false)
         })
-        .and_then(|resource| resource.get("value").or(Some(resource)))
+        .and_then(|resource| Some(resource.get("value").unwrap_or(resource)))
         .and_then(|resource| resource.get("json"))
         .and_then(|resource| resource.get("sequence_number"))
         .and_then(parse_u64)

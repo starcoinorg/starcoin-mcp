@@ -262,14 +262,20 @@ fn same_resource_value(candidate: Option<&Value>, expected: &Value) -> bool {
     if candidate == expected {
         return true;
     }
-    candidate.get("raw").and_then(Value::as_str) == expected.get("raw").and_then(Value::as_str)
+    match (
+        candidate.get("raw").and_then(Value::as_str),
+        expected.get("raw").and_then(Value::as_str),
+    ) {
+        (Some(candidate_raw), Some(expected_raw)) => candidate_raw == expected_raw,
+        _ => false,
+    }
 }
 
 fn extract_generic_resource_token(name: &str, container: &str) -> Option<String> {
     let marker = format!("{container}<");
     let start = name.find(&marker)? + marker.len();
-    let end = name.rfind('>')?;
-    Some(name[start..end].to_owned())
+    let token = name.get(start..)?.strip_suffix('>')?;
+    Some(token.to_owned())
 }
 
 pub(crate) fn is_transport_error(error: &SharedError) -> bool {

@@ -151,10 +151,27 @@ fn primary_store_balance_replaces_legacy_stc_coin_store_balance() {
         ),
     );
 
-    assert_eq!(balances.len(), 2);
     assert_eq!(
-        balances[0].get("name").and_then(Value::as_str),
-        Some("0x00000000000000000000000000000001::fungible_asset::FungibleStore")
+        balances,
+        vec![
+            named_resource_entry(
+                "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
+                json!({
+                    "raw": "0x01",
+                    "json": {
+                        "balance": 42
+                    }
+                }),
+            ),
+            named_resource_entry(
+                "0x00000000000000000000000000000001::coin::CoinStore<0x00000000000000000000000000000042::usdt::USDT>",
+                json!({
+                    "json": {
+                        "coin": { "value": 9 }
+                    }
+                }),
+            )
+        ]
     );
     assert_eq!(
         accepted_tokens,
@@ -179,18 +196,9 @@ fn primary_store_balance_preserves_non_stc_fungible_store_balances() {
         named_resource_entry(
             "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
             json!({
-                "raw": "0x01",
                 "json": {
-                    "balance": 7
-                }
-            }),
-        ),
-        named_resource_entry(
-            "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
-            json!({
-                "raw": "0x99",
-                "json": {
-                    "balance": 9
+                    "balance": 9,
+                    "token": "USDT"
                 }
             }),
         ),
@@ -201,29 +209,53 @@ fn primary_store_balance_preserves_non_stc_fungible_store_balances() {
         named_resource_entry(
             "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
             json!({
-                "raw": "0x01",
                 "json": {
-                    "balance": 42
+                    "balance": 42,
+                    "token": "STC"
                 }
             }),
         ),
     );
 
-    assert_eq!(balances.len(), 2);
     assert_eq!(
-        balances[0]
-            .get("value")
-            .and_then(|value| value.get("raw"))
-            .and_then(Value::as_str),
-        Some("0x01")
+        balances,
+        vec![
+            named_resource_entry(
+                "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
+                json!({
+                    "json": {
+                        "balance": 42,
+                        "token": "STC"
+                    }
+                }),
+            ),
+            named_resource_entry(
+                "0x00000000000000000000000000000001::fungible_asset::FungibleStore",
+                json!({
+                    "json": {
+                        "balance": 9,
+                        "token": "USDT"
+                    }
+                }),
+            )
+        ]
     );
-    assert_eq!(
-        balances[1]
-            .get("value")
-            .and_then(|value| value.get("raw"))
-            .and_then(Value::as_str),
-        Some("0x99")
-    );
+}
+
+#[test]
+fn malformed_coin_store_names_fail_closed_during_extraction() {
+    let resources = vec![json!({
+        "name": "0x00000000000000000000000000000001::coin::CoinStore<",
+        "value": {}
+    })];
+    let mut balances = Vec::new();
+    let mut accepted_tokens = Vec::new();
+
+    extract_balance_resources(&resources, &mut balances);
+    extract_accepted_tokens(&resources, &mut accepted_tokens);
+
+    assert!(balances.is_empty());
+    assert!(accepted_tokens.is_empty());
 }
 
 #[test]
