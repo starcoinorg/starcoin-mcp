@@ -3,20 +3,31 @@
 #   Linux: ~/.config/starcoin-mcp/node-mcp.toml
 #
 # Replace the placeholder RPC URL and genesis hash with the chain you actually intend to use.
+# In transaction mode, rpc_endpoint_url, mode, expected_chain_id, and expected_network are required.
 
+# Required. Must point at the chain RPC you intend to use.
 rpc_endpoint_url = "https://barnard.seed.example.org"
+# Required for the transfer workflow. Optional values: "read_only", "transaction".
+# If omitted, the runtime default is "read_only".
 mode = "transaction"
+# Optional values: "auto", "vm2_only", "legacy_compatible".
+# Runtime default: "auto".
 vm_profile = "auto"
 
-# Barnard example pins.
+# Required in transaction mode. Barnard example pins below.
 expected_chain_id = 251
+# Required in transaction mode.
 expected_network = "barnard"
+# Required for remote HTTPS endpoints while require_genesis_hash_match = true.
 expected_genesis_hash = "0xREPLACE_WITH_REAL_GENESIS_HASH"
+# Optional values: true, false. Runtime default: true.
 require_genesis_hash_match = true
 
+# Optional tuning below. These values match the current built-in defaults, so you can
+# omit them unless you want to override the runtime behavior explicitly.
 connect_timeout_ms = 3000
 request_timeout_ms = 10000
-startup_probe_timeout_ms = 5000
+startup_probe_timeout_ms = 10000
 
 default_expiration_ttl_seconds = 600
 max_expiration_ttl_seconds = 3600
@@ -44,4 +55,5 @@ max_publish_package_bytes = 524288
 max_concurrent_watch_requests = 8
 max_inflight_expensive_requests = 16
 
+# Optional. Runtime default: "info".
 log_level = "info"

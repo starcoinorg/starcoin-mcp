@@ -7,6 +7,7 @@ import os
 import platform
 import shutil
 import socket
+import stat
 import sys
 from pathlib import Path
 
@@ -125,6 +126,31 @@ def socket_reachable(path: Path) -> tuple[bool, str]:
         client.close()
 
 
+def is_unix_socket(path: Path) -> bool:
+    try:
+        return stat.S_ISSOCK(path.stat().st_mode)
+    except OSError:
+        return False
+
+
+def stale_socket_cleanup_candidate(path: Path, detail: str) -> bool:
+    if platform.system() == "Windows":
+        return False
+    if not path.exists() or not is_unix_socket(path):
+        return False
+    return "connection refused" in detail.lower()
+
+
+def cleanup_stale_socket(path: Path, detail: str) -> tuple[bool, str] | None:
+    if not stale_socket_cleanup_candidate(path, detail):
+        return None
+    try:
+        path.unlink()
+        return True, f"removed stale socket {path}"
+    except OSError as exc:
+        return False, f"failed to remove stale socket {path}: {exc}"
+
+
 def check(name: str, ok: bool, detail: str, hint: str | None = None) -> dict:
     return {
         "name": name,
@@ -186,6 +212,11 @@ def resolve_daemon_socket_path(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check the Starcoin transfer workflow plugin runtime.")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    parser.add_argument(
+        "--cleanup-stale-socket",
+        action="store_true",
+        help="Remove the daemon socket when it exists but refuses connections, then probe again.",
+    )
     parser.add_argument(
         "--runtime-dir",
         default=None,
@@ -291,6 +322,11 @@ def main() -> int:
         )
 
     daemon_ok, daemon_detail = socket_reachable(daemon_socket_path)
+    socket_cleanup_result = None
+    if args.cleanup_stale_socket and not daemon_ok:
+        socket_cleanup_result = cleanup_stale_socket(daemon_socket_path, daemon_detail)
+        if socket_cleanup_result is not None:
+            daemon_ok, daemon_detail = socket_reachable(daemon_socket_path)
 
     if not daemon_ok:
         results.extend(
@@ -359,14 +395,32 @@ def main() -> int:
                 f"Use the [[wallet_backends]] entry from {WALLET_EXAMPLE_PATH}.",
             ),
         ]
-    )
+        )
+
+    if socket_cleanup_result is not None:
+        cleanup_ok, cleanup_detail = socket_cleanup_result
+        results.append(
+            check(
+                "stale socket cleanup",
+                cleanup_ok,
+                cleanup_detail,
+                "Start starmaskd again after cleanup if you expect the default daemon socket to exist.",
+            )
+        )
+
+    socket_hint = "Start starmaskd and the local-account-agent before asking Codex to sign."
+    if stale_socket_cleanup_candidate(daemon_socket_path, daemon_detail):
+        socket_hint = (
+            f"Run `python3 {PLUGIN_ROOT / 'scripts' / 'doctor.py'} --cleanup-stale-socket` "
+            "to remove the stale socket, then restart starmaskd and the local-account-agent."
+        )
 
     results.append(
         check(
             "starmaskd socket",
             daemon_ok,
             f"{daemon_socket_path} ({daemon_detail})",
-            "Start starmaskd and the local-account-agent before asking Codex to sign.",
+            socket_hint,
         )
     )
 

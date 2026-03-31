@@ -8,10 +8,21 @@
 # or a dedicated local vault that you created with:
 #   starcoin --connect ws://127.0.0.1:9870 --local-account-dir <dir> account create -p <password>
 
+# Optional values: "development", "staging", "production".
+# Runtime default: "development".
 channel = "development"
+# Optional. Runtime default:
+#   macOS: ~/Library/Application Support/StarcoinMCP/run/starmaskd.sock
+#   Linux: ~/.local/state/starcoin-mcp/starmaskd.sock
 socket_path = "/Users/alice/Library/Application Support/StarcoinMCP/run/starmaskd.sock"
+# Optional. Runtime default:
+#   macOS: ~/Library/Application Support/StarcoinMCP/starmaskd.sqlite3
+#   Linux: ~/.local/state/starcoin-mcp/starmaskd.sqlite3
 database_path = "/Users/alice/Library/Application Support/StarcoinMCP/starmaskd.sqlite3"
+# Optional. Runtime default: "info".
 log_level = "info"
+# Optional daemon timings below. These values match the current built-in defaults,
+# so you can omit them unless you want to override the runtime behavior explicitly.
 maintenance_interval_seconds = 1
 default_request_ttl_seconds = 300
 min_request_ttl_seconds = 30
@@ -22,15 +33,31 @@ heartbeat_interval_seconds = 10
 wallet_offline_after_seconds = 25
 result_retention_seconds = 600
 
+# Required: at least one enabled wallet backend must be configured.
 [[wallet_backends]]
+# Required. Must be unique across all configured backends.
 backend_id = "local-main"
+# Required for this template. Available values: "starmask_extension", "local_account_dir".
+# "private_key_dev" exists in the enum but is reserved for a future phase.
 backend_kind = "local_account_dir"
+# Optional values: true, false. Runtime default: true.
 enabled = true
+# Required. User-facing wallet label.
 instance_label = "Local Main"
+# Required for local_account_dir. Enum values: "browser_ui", "tty_prompt",
+# "desktop_prompt", "none". In the current local_account_dir flow, this must
+# match prompt_mode and effectively needs to be "tty_prompt".
 approval_surface = "tty_prompt"
+# Required. Must point at an existing local account vault directory.
 account_dir = "/Users/alice/.starcoin/main/account_vaults"
+# Required for local_account_dir today. Enum values: "tty_prompt", "desktop_prompt".
+# Current implementation requires "tty_prompt"; "desktop_prompt" is not enabled yet.
 prompt_mode = "tty_prompt"
+# Required. Must match the chain used by this account vault.
 chain_id = 251
+# Required for local_account_dir. There is no default.
 unlock_cache_ttl_seconds = 300
+# Optional values: true, false. Runtime default: true.
 allow_read_only_accounts = true
+# Optional values: true, false. Runtime default: true.
 require_strict_permissions = true
