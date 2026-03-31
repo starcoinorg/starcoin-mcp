@@ -160,6 +160,14 @@ Preferred local-account flow:
 4. run `python3 ./plugins/starcoin-transfer-workflow/scripts/doctor.py`
 5. run the host-side test or ask Codex to prepare a transfer from another terminal
 
+If the default daemon socket file still exists but `doctor.py` reports `Connection refused`, rerun:
+
+```bash
+python3 ./plugins/starcoin-transfer-workflow/scripts/doctor.py --cleanup-stale-socket
+```
+
+Then start `starmaskd` and `local-account-agent` again.
+
 Recommended wallet-side startup:
 
 ```bash
