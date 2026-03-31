@@ -79,8 +79,8 @@ Default config locations:
 
 Repo-local example templates:
 
-- `/Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/plugins/starcoin-transfer-workflow/examples/node-mcp.example.toml`
-- `/Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/plugins/starcoin-transfer-workflow/examples/starmaskd-local-account.example.toml`
+- `plugins/starcoin-transfer-workflow/examples/node-mcp.example.toml`
+- `plugins/starcoin-transfer-workflow/examples/starmaskd-local-account.example.toml`
 
 ## Isolated Dev Runtime
 
@@ -90,9 +90,9 @@ different directories.
 Recommended layout:
 
 - dev node data dir:
-  - `/Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/.runtime/devstack`
+  - `<repo-root>/.runtime/devstack`
 - standalone signer wallet dir:
-  - `/Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/.runtime/devwallet`
+  - `<repo-root>/.runtime/devwallet`
 
 Why this split matters:
 
@@ -103,15 +103,15 @@ Why this split matters:
 Example standalone wallet creation against a running dev node:
 
 ```bash
-chmod 700 /Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/.runtime/devwallet
-/Users/simon/.starcoin/starcoin --connect ws://127.0.0.1:9870 --local-account-dir /Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/.runtime/devwallet account create -p test123
-/Users/simon/.starcoin/starcoin --connect ws://127.0.0.1:9870 --local-account-dir /Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/.runtime/devwallet account create -p test123
+chmod 700 <repo-root>/.runtime/devwallet
+starcoin --connect ws://127.0.0.1:9870 --local-account-dir <repo-root>/.runtime/devwallet account create -p test123
+starcoin --connect ws://127.0.0.1:9870 --local-account-dir <repo-root>/.runtime/devwallet account create -p test123
 ```
 
 Then fund the sender from the dev node side:
 
 ```bash
-/Users/simon/.starcoin/starcoin -n dev -d /Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/.runtime/devstack dev get-coin <sender-address>
+starcoin -n dev -d <repo-root>/.runtime/devstack dev get-coin <sender-address>
 ```
 
 ## Optional Environment Overrides
@@ -122,6 +122,8 @@ Node MCP overrides:
 
 - `STARCOIN_NODE_MCP_BIN`
   - use an already installed `starcoin-node-mcp` binary
+- `STARCOIN_MCP_WORKSPACE_ROOT`
+  - point repo-relative manifest defaults at a checked-out `starcoin-mcp` workspace
 - `STARCOIN_NODE_MCP_MANIFEST`
   - override the Cargo manifest path for source-tree launch
 - `STARCOIN_NODE_MCP_CONFIG`
@@ -145,14 +147,14 @@ Preferred local-account flow:
 1. start the wallet supervisor in one terminal
 2. keep that terminal open for CLI approval cards
 3. open Codex on this workspace so the plugin marketplace is visible
-4. run `python3 /Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/plugins/starcoin-transfer-workflow/scripts/doctor.py`
+4. run `python3 ./plugins/starcoin-transfer-workflow/scripts/doctor.py`
 5. run the host-side test or ask Codex to prepare a transfer from another terminal
 
 Recommended wallet-side startup:
 
 ```bash
-python3 /Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py up \
-  --wallet-dir /Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/.runtime/devwallet \
+python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py up \
+  --wallet-dir <repo-root>/.runtime/devwallet \
   --chain-id 254
 ```
 
@@ -186,9 +188,9 @@ There are now two supported test modes.
 This mode is self-contained and starts wallet-side processes inside the test script:
 
 ```bash
-python3 /Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/plugins/starcoin-transfer-workflow/scripts/run_transfer_test.py \
+python3 ./plugins/starcoin-transfer-workflow/scripts/run_transfer_test.py \
   --rpc-url http://127.0.0.1:9850 \
-  --wallet-dir /Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/.runtime/devwallet \
+  --wallet-dir <repo-root>/.runtime/devwallet \
   --sender <sender-address> \
   --receiver <receiver-address>
 ```
@@ -199,9 +201,9 @@ This mode is the more converged flow. Start the wallet supervisor once, then poi
 test at its metadata directory:
 
 ```bash
-python3 /Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/plugins/starcoin-transfer-workflow/scripts/run_transfer_test.py \
+python3 ./plugins/starcoin-transfer-workflow/scripts/run_transfer_test.py \
   --rpc-url http://127.0.0.1:9850 \
-  --wallet-runtime-dir /Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/.runtime/wallet-runtime \
+  --wallet-runtime-dir <repo-root>/.runtime/wallet-runtime \
   --sender <sender-address> \
   --receiver <receiver-address>
 ```
@@ -209,7 +211,7 @@ python3 /Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/plug
 In one-shot mode, `run_transfer_test.py` does this:
 
 1. probes the node and derives `chain_id`, `network`, and `genesis_hash`
-2. writes isolated `node-mcp.toml` and `starmaskd.toml` files under `.runtime/transfer-test/`
+2. creates a unique per-run runtime directory under `.runtime/` and writes isolated `node-mcp.toml` and `starmaskd.toml` files there
 3. starts `starmaskd`
 4. starts `local-account-agent`
 5. starts `starcoin-node-mcp` and `starmask-mcp`
@@ -229,7 +231,7 @@ module path used by current Starcoin nodes.
 
 The local wallet backend approval card is already implemented in:
 
-- `/Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/starmask-mcp/crates/starmask-local-account-agent/src/tty_prompt.rs`
+- `starmask-mcp/crates/starmask-local-account-agent/src/tty_prompt.rs`
 
 ## Notes
 

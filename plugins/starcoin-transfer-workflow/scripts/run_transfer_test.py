@@ -6,8 +6,10 @@ import hashlib
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 from typing import Any
@@ -16,7 +18,9 @@ from urllib.request import Request, urlopen
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-WORKSPACE_ROOT = PLUGIN_ROOT.parent.parent
+WORKSPACE_ROOT = Path(
+    os.environ.get("STARCOIN_MCP_WORKSPACE_ROOT", str(PLUGIN_ROOT.parent.parent))
+).resolve()
 STARMASKD_MANIFEST = (
     WORKSPACE_ROOT / "starmask-mcp" / "crates" / "starmaskd" / "Cargo.toml"
 )
@@ -79,8 +83,8 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--runtime-dir",
-        default=str(WORKSPACE_ROOT / ".runtime" / "transfer-test"),
-        help="Directory for generated configs, logs, and runtime socket/db files",
+        default=None,
+        help="Directory for generated configs, logs, and runtime socket/db files. Defaults to a unique per-run directory.",
     )
     parser.add_argument(
         "--ttl-seconds",
@@ -180,23 +184,48 @@ def read_json_if_exists(path: Path) -> dict[str, Any] | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def socket_reachable(path: Path) -> tuple[bool, str]:
+    if not path.exists():
+        return False, "socket file is missing"
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.settimeout(0.5)
+    try:
+        client.connect(str(path))
+        return True, "unix socket accepted a connection"
+    except OSError as exc:
+        return False, str(exc)
+    finally:
+        client.close()
+
+
 class JsonRpcLineClient:
-    def __init__(self, name: str, args: list[str], *, cwd: Path, env: dict[str, str] | None = None):
+    def __init__(
+        self,
+        name: str,
+        args: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str] | None = None,
+        stderr_path: Path | None = None,
+    ):
         self.name = name
         self._next_id = 1
+        self.stderr_path = stderr_path
+        self.stderr_handle = (
+            stderr_path.open("w", encoding="utf-8") if stderr_path is not None else None
+        )
         self.process = subprocess.Popen(
             args,
             cwd=str(cwd),
             env=env,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
+            stderr=self.stderr_handle if self.stderr_handle is not None else subprocess.DEVNULL,
             text=True,
             bufsize=1,
         )
         assert self.process.stdin is not None
         assert self.process.stdout is not None
-        assert self.process.stderr is not None
 
     def _send(self, payload: dict[str, Any]) -> None:
         line = json.dumps(payload, separators=(",", ":"))
@@ -207,7 +236,11 @@ class JsonRpcLineClient:
         while True:
             line = self.process.stdout.readline()
             if not line:
-                stderr_tail = self.process.stderr.read()
+                stderr_tail = (
+                    read_text_if_exists(self.stderr_path).strip()
+                    if self.stderr_path is not None
+                    else ""
+                )
                 raise RuntimeError(
                     f"{self.name} exited before replying to request {request_id}. stderr: {stderr_tail}"
                 )
@@ -267,6 +300,8 @@ class JsonRpcLineClient:
             except subprocess.TimeoutExpired:  # pragma: no cover - manual flow only
                 self.process.kill()
                 self.process.wait(timeout=5)
+        if self.stderr_handle is not None:
+            self.stderr_handle.close()
 
 
 def render_card(title: str, rows: list[tuple[str, str]]) -> str:
@@ -314,7 +349,15 @@ def wait_for_wallet_instance(
 
 def main() -> int:
     args = parse_args()
-    runtime_dir = Path(args.runtime_dir).resolve()
+    runtime_dir_explicit = args.runtime_dir is not None
+    if runtime_dir_explicit:
+        runtime_dir = Path(args.runtime_dir).resolve()
+    else:
+        runtime_base_dir = (WORKSPACE_ROOT / ".runtime").resolve()
+        runtime_base_dir.mkdir(parents=True, exist_ok=True)
+        runtime_dir = Path(
+            tempfile.mkdtemp(prefix="transfer-test-", dir=str(runtime_base_dir))
+        ).resolve()
     wallet_runtime_dir = (
         Path(args.wallet_runtime_dir).resolve() if args.wallet_runtime_dir else None
     )
@@ -363,7 +406,7 @@ def main() -> int:
     database_path = run_dir / "starmaskd.sqlite3"
     node_config_path = runtime_dir / "node-mcp.toml"
     wallet_config_path = runtime_dir / "starmaskd.toml"
-    if wallet_runtime is None and socket_path.exists():
+    if wallet_runtime is None and runtime_dir_explicit and socket_path.exists():
         socket_path.unlink()
 
     node_config = f"""rpc_endpoint_url = "{args.rpc_url}"
@@ -485,7 +528,8 @@ require_strict_permissions = true
     try:
         deadline = time.time() + 10
         while time.time() < deadline:
-            if socket_path.exists():
+            socket_ok, socket_detail = socket_reachable(socket_path)
+            if socket_ok:
                 break
             if wallet_runtime is None and starmaskd is not None and starmaskd.poll() is not None:
                 log_output = read_text_if_exists(runtime_dir / "logs" / "starmaskd.log").strip()
@@ -497,11 +541,13 @@ require_strict_permissions = true
         else:
             if wallet_runtime is None:
                 log_output = read_text_if_exists(runtime_dir / "logs" / "starmaskd.log").strip()
-                message = "starmaskd socket did not appear in time"
+                message = f"starmaskd socket did not become ready in time ({socket_detail})"
                 if log_output:
                     message = f"{message}\n\n{log_output}"
                 raise RuntimeError(message)
-            raise RuntimeError(f"wallet runtime socket did not appear in time: {socket_path}")
+            raise RuntimeError(
+                f"wallet runtime socket did not become ready in time: {socket_path} ({socket_detail})"
+            )
 
         node_client = JsonRpcLineClient(
             "starcoin-node-mcp",
@@ -518,6 +564,7 @@ require_strict_permissions = true
                 str(node_config_path),
             ],
             cwd=WORKSPACE_ROOT,
+            stderr_path=log_dir / "starcoin-node-mcp.stderr.log",
         )
         wallet_client = JsonRpcLineClient(
             "starmask-mcp",
@@ -534,6 +581,7 @@ require_strict_permissions = true
                 str(socket_path),
             ],
             cwd=WORKSPACE_ROOT,
+            stderr_path=log_dir / "starmask-mcp.stderr.log",
         )
         started_children.extend([node_client, wallet_client])
         node_client.initialize()

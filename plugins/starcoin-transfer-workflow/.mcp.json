@@ -4,14 +4,14 @@
       "command": "sh",
       "args": [
         "-c",
-        "set -e\nif [ -n \"${STARCOIN_NODE_MCP_BIN:-}\" ]; then\n  if [ -n \"${STARCOIN_NODE_MCP_CONFIG:-}\" ]; then\n    exec \"$STARCOIN_NODE_MCP_BIN\" --config \"$STARCOIN_NODE_MCP_CONFIG\"\n  fi\n  exec \"$STARCOIN_NODE_MCP_BIN\"\nfi\nif [ -n \"${STARCOIN_NODE_MCP_CONFIG:-}\" ]; then\n  exec cargo run --quiet --manifest-path \"${STARCOIN_NODE_MCP_MANIFEST:-/Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/starcoin-node-mcp/crates/starcoin-node-mcp-server/Cargo.toml}\" --bin starcoin-node-mcp -- --config \"$STARCOIN_NODE_MCP_CONFIG\"\nfi\nexec cargo run --quiet --manifest-path \"${STARCOIN_NODE_MCP_MANIFEST:-/Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/starcoin-node-mcp/crates/starcoin-node-mcp-server/Cargo.toml}\" --bin starcoin-node-mcp"
+        "set -e\nworkspace_root=\"${STARCOIN_MCP_WORKSPACE_ROOT:-.}\"\nnode_manifest=\"${STARCOIN_NODE_MCP_MANIFEST:-$workspace_root/starcoin-node-mcp/crates/starcoin-node-mcp-server/Cargo.toml}\"\nif [ -n \"${STARCOIN_NODE_MCP_BIN:-}\" ]; then\n  if [ -n \"${STARCOIN_NODE_MCP_CONFIG:-}\" ]; then\n    exec \"$STARCOIN_NODE_MCP_BIN\" --config \"$STARCOIN_NODE_MCP_CONFIG\"\n  fi\n  exec \"$STARCOIN_NODE_MCP_BIN\"\nfi\nif [ -n \"${STARCOIN_NODE_MCP_CONFIG:-}\" ]; then\n  exec cargo run --quiet --manifest-path \"$node_manifest\" --bin starcoin-node-mcp -- --config \"$STARCOIN_NODE_MCP_CONFIG\"\nfi\nexec cargo run --quiet --manifest-path \"$node_manifest\" --bin starcoin-node-mcp"
       ]
     },
     "starmask-mcp": {
       "command": "sh",
       "args": [
         "-c",
-        "set -e\nif [ -n \"${STARMASK_MCP_BIN:-}\" ]; then\n  if [ -n \"${STARMASK_MCP_DAEMON_SOCKET_PATH:-}\" ]; then\n    exec \"$STARMASK_MCP_BIN\" --daemon_socket_path \"$STARMASK_MCP_DAEMON_SOCKET_PATH\"\n  fi\n  exec \"$STARMASK_MCP_BIN\"\nfi\nif [ -n \"${STARMASK_MCP_DAEMON_SOCKET_PATH:-}\" ]; then\n  exec cargo run --quiet --manifest-path \"${STARMASK_MCP_MANIFEST:-/Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/starmask-mcp/crates/starmask-mcp/Cargo.toml}\" --bin starmask-mcp -- --daemon_socket_path \"$STARMASK_MCP_DAEMON_SOCKET_PATH\"\nfi\nexec cargo run --quiet --manifest-path \"${STARMASK_MCP_MANIFEST:-/Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/starmask-mcp/crates/starmask-mcp/Cargo.toml}\" --bin starmask-mcp"
+        "set -e\nworkspace_root=\"${STARCOIN_MCP_WORKSPACE_ROOT:-.}\"\nstarmask_manifest=\"${STARMASK_MCP_MANIFEST:-$workspace_root/starmask-mcp/crates/starmask-mcp/Cargo.toml}\"\nif [ -n \"${STARMASK_MCP_BIN:-}\" ]; then\n  if [ -n \"${STARMASK_MCP_DAEMON_SOCKET_PATH:-}\" ]; then\n    exec \"$STARMASK_MCP_BIN\" --daemon-socket-path \"$STARMASK_MCP_DAEMON_SOCKET_PATH\"\n  fi\n  exec \"$STARMASK_MCP_BIN\"\nfi\nif [ -n \"${STARMASK_MCP_DAEMON_SOCKET_PATH:-}\" ]; then\n  exec cargo run --quiet --manifest-path \"$starmask_manifest\" --bin starmask-mcp -- --daemon-socket-path \"$STARMASK_MCP_DAEMON_SOCKET_PATH\"\nfi\nexec cargo run --quiet --manifest-path \"$starmask_manifest\" --bin starmask-mcp"
       ]
     }
   }

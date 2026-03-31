@@ -67,7 +67,8 @@ Use this skill when the user wants to transfer tokens, request a signature for a
 
 - Call `starcoin-node-mcp.submit_signed_transaction`.
 - Pass the `chain_context` from the same preparation result that produced the signed transaction.
-- If `next_action = watch_transaction`, immediately call `starcoin-node-mcp.watch_transaction`.
+- Inspect `submit_signed_transaction.next_action`.
+- If `submit_signed_transaction.next_action = watch_transaction`, immediately call `starcoin-node-mcp.watch_transaction`.
 
 ## Safety Rules
 
@@ -85,7 +86,7 @@ If either MCP server is unavailable or the wallet daemon is not reachable:
 2. ask them to run:
 
 ```bash
-python3 /Users/simon/starcoin-projects/starcoin-mcp-codex-transfer-workflow/plugins/starcoin-transfer-workflow/scripts/doctor.py
+python3 ./plugins/starcoin-transfer-workflow/scripts/doctor.py
 ```
 
 3. continue only after the missing config or daemon issue is fixed

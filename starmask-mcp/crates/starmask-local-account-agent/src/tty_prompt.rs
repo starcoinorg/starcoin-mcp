@@ -265,8 +265,12 @@ fn render_raw_payload_details(request: &PulledRequest) -> String {
             } else {
                 write_card_field_full(&mut output, "Message", "missing");
             }
-            if let Some(byte_len) = canonical_message_byte_len(request) {
-                write_card_field_full(&mut output, "Byte Length", &byte_len.to_string());
+            match canonical_message_byte_len(request) {
+                Ok(Some(byte_len)) => {
+                    write_card_field_full(&mut output, "Byte Length", &byte_len.to_string())
+                }
+                Ok(None) => {}
+                Err(error) => write_card_field_full(&mut output, "Message Decode Error", &error),
             }
         }
     }
@@ -468,8 +472,12 @@ fn write_message_section(output: &mut String, request: &PulledRequest) {
             message_format_label(message_format),
         );
     }
-    if let Some(byte_len) = canonical_message_byte_len(request) {
-        write_card_field_preview(output, "Byte Length", &byte_len.to_string());
+    match canonical_message_byte_len(request) {
+        Ok(Some(byte_len)) => {
+            write_card_field_preview(output, "Byte Length", &byte_len.to_string())
+        }
+        Ok(None) => {}
+        Err(error) => write_card_field_preview(output, "Message Decode Error", &error),
     }
     if let Some(message) = &request.message {
         write_card_field_preview(output, "Canonical Message", message);
@@ -659,12 +667,20 @@ fn format_expiration(expiration_timestamp_secs: u64) -> String {
     }
 }
 
-fn canonical_message_byte_len(request: &PulledRequest) -> Option<usize> {
-    let message = request.message.as_deref()?;
-    let format = request.message_format?;
+fn canonical_message_byte_len(
+    request: &PulledRequest,
+) -> std::result::Result<Option<usize>, String> {
+    let Some(message) = request.message.as_deref() else {
+        return Ok(None);
+    };
+    let Some(format) = request.message_format else {
+        return Ok(None);
+    };
     match format {
-        MessageFormat::Utf8 => Some(message.len()),
-        MessageFormat::Hex => decode_hex_bytes(message).ok().map(|bytes| bytes.len()),
+        MessageFormat::Utf8 => Ok(Some(message.len())),
+        MessageFormat::Hex => decode_hex_bytes(message)
+            .map(|bytes| Some(bytes.len()))
+            .map_err(|error| format!("invalid hex message: {error}")),
     }
 }
 
@@ -683,7 +699,7 @@ fn decode_transfer_script_function(script_function: &ScriptFunction) -> Option<T
     if script_function.function().as_str() != "peer_to_peer_v2" {
         return None;
     }
-    if script_function.args().len() < 2 {
+    if script_function.args().len() != 2 {
         return None;
     }
 
@@ -813,6 +829,18 @@ mod tests {
     }
 
     #[test]
+    fn render_message_sections_surface_invalid_hex_messages() {
+        let mut request = sample_message_request();
+        request.message = Some("0xnope".to_owned());
+
+        let summary = render_request_summary(&request, &sample_account_info(false));
+        let details = render_raw_payload_details(&request);
+
+        assert!(summary.contains("Message Decode Error: invalid hex message:"));
+        assert!(details.contains("Message Decode Error: invalid hex message:"));
+    }
+
+    #[test]
     fn render_request_summary_decodes_transfer_transaction_fields() {
         let recipient = AccountAddress::random();
         let raw_txn = RawUserTransaction::new_with_default_gas_token(
@@ -866,6 +894,59 @@ mod tests {
         assert!(rendered.contains("Target Function:"));
         assert!(rendered.contains("TransferScripts::peer_to_peer_v2"));
         assert!(rendered.contains("Max Fee Budget: 2000 0x1::STC::STC"));
+    }
+
+    #[test]
+    fn render_request_summary_does_not_label_nonstandard_transfer_shape_as_transfer() {
+        let recipient = AccountAddress::random();
+        let raw_txn = RawUserTransaction::new_with_default_gas_token(
+            AccountAddress::from_hex_literal("0x1").unwrap(),
+            7,
+            TransactionPayload::ScriptFunction(ScriptFunction::new(
+                ModuleId::new(
+                    core_code_address(),
+                    Identifier::new("TransferScripts").unwrap(),
+                ),
+                Identifier::new("peer_to_peer_v2").unwrap(),
+                vec![],
+                vec![
+                    bcs_ext::to_bytes(&recipient).unwrap(),
+                    bcs_ext::to_bytes(&1234u128).unwrap(),
+                    bcs_ext::to_bytes(&999u64).unwrap(),
+                ],
+            )),
+            1_000,
+            2,
+            100_000,
+            ChainId::test(),
+        );
+        let request = PulledRequest {
+            request_id: RequestId::new("req-sign-transaction-extra-arg").unwrap(),
+            client_request_id: ClientRequestId::new("client-sign-transaction-extra-arg").unwrap(),
+            kind: RequestKind::SignTransaction,
+            account_address: "0x1".to_owned(),
+            payload_hash: PayloadHash::new("payload-sign-transaction-extra-arg").unwrap(),
+            display_hint: Some("Transfer".to_owned()),
+            client_context: Some("phase2-test".to_owned()),
+            resume_required: false,
+            delivery_lease_id: Some(
+                DeliveryLeaseId::new("lease-sign-transaction-extra-arg").unwrap(),
+            ),
+            lease_expires_at: None,
+            presentation_id: None,
+            presentation_expires_at: None,
+            raw_txn_bcs_hex: Some(format!(
+                "0x{}",
+                hex::encode(bcs_ext::to_bytes(&raw_txn).unwrap())
+            )),
+            message: None,
+            message_format: None,
+        };
+
+        let rendered = render_request_summary(&request, &sample_account_info(false));
+
+        assert!(!rendered.contains("Transaction Kind: transfer"));
+        assert!(rendered.contains("Argument Count: 3"));
     }
 
     #[test]

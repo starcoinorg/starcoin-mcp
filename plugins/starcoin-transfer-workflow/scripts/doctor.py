@@ -17,12 +17,15 @@ except ModuleNotFoundError:  # pragma: no cover
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-WORKSPACE_ROOT = PLUGIN_ROOT.parent.parent
+WORKSPACE_ROOT = Path(
+    os.environ.get("STARCOIN_MCP_WORKSPACE_ROOT", str(PLUGIN_ROOT.parent.parent))
+).resolve()
 MARKETPLACE_PATH = WORKSPACE_ROOT / ".agents" / "plugins" / "marketplace.json"
 PLUGIN_MANIFEST_PATH = PLUGIN_ROOT / ".codex-plugin" / "plugin.json"
 PLUGIN_MCP_PATH = PLUGIN_ROOT / ".mcp.json"
 NODE_EXAMPLE_PATH = PLUGIN_ROOT / "examples" / "node-mcp.example.toml"
 WALLET_EXAMPLE_PATH = PLUGIN_ROOT / "examples" / "starmaskd-local-account.example.toml"
+DEFAULT_WALLET_RUNTIME_DIR = WORKSPACE_ROOT / ".runtime" / "wallet-runtime"
 
 DEFAULT_NODE_MANIFEST = (
     WORKSPACE_ROOT
@@ -90,6 +93,15 @@ def parse_toml(path: Path) -> dict:
         return {"_parse_error": str(exc)}
 
 
+def parse_json(path: Path) -> dict | None:
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return None
+    except json.JSONDecodeError:
+        return None
+
+
 def socket_reachable(path: Path) -> tuple[bool, str]:
     if not path.exists():
         return False, "socket file is missing"
@@ -123,9 +135,55 @@ def format_status(item: dict) -> str:
     return line
 
 
+def looks_like_placeholder_rpc(node_rpc: object) -> bool:
+    if not isinstance(node_rpc, str):
+        return True
+    lowered = node_rpc.strip().lower()
+    if not lowered:
+        return True
+    return "example" in lowered or "replace" in lowered
+
+
+def looks_like_placeholder_hash(expected_genesis_hash: object) -> bool:
+    if not isinstance(expected_genesis_hash, str):
+        return True
+    lowered = expected_genesis_hash.strip().lower()
+    if not lowered:
+        return True
+    return "replace" in lowered or not lowered.startswith("0x")
+
+
+def resolve_runtime_metadata(runtime_dir_arg: str | None) -> tuple[Path, Path, dict | None]:
+    runtime_dir = Path(
+        os.environ.get(
+            "STARMASK_WALLET_RUNTIME_DIR",
+            runtime_dir_arg or str(DEFAULT_WALLET_RUNTIME_DIR),
+        )
+    ).expanduser()
+    metadata_path = runtime_dir / "wallet-runtime.json"
+    return runtime_dir, metadata_path, parse_json(metadata_path)
+
+
+def resolve_daemon_socket_path(
+    runtime_dir_arg: str | None, platform_socket_path: Path
+) -> tuple[Path, Path, dict | None]:
+    runtime_dir, metadata_path, metadata = resolve_runtime_metadata(runtime_dir_arg)
+    if metadata is not None and metadata.get("daemon_socket_path"):
+        return Path(metadata["daemon_socket_path"]), metadata_path, metadata
+    daemon_socket_override = os.environ.get("STARMASK_MCP_DAEMON_SOCKET_PATH")
+    if daemon_socket_override:
+        return Path(daemon_socket_override).expanduser(), metadata_path, metadata
+    return platform_socket_path, metadata_path, metadata
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Check the Starcoin transfer workflow plugin runtime.")
     parser.add_argument("--json", action="store_true", help="Emit machine-readable JSON")
+    parser.add_argument(
+        "--runtime-dir",
+        default=None,
+        help="Optional wallet runtime directory to probe for wallet-runtime.json before platform defaults.",
+    )
     parser.add_argument(
         "--session-start",
         action="store_true",
@@ -133,11 +191,17 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    node_config_path, wallet_config_path, daemon_socket_path = platform_paths()
+    node_config_path, wallet_config_path, platform_socket_path = platform_paths()
     node_config_path = Path(os.environ.get("STARCOIN_NODE_MCP_CONFIG", node_config_path))
-    daemon_socket_path = Path(
-        os.environ.get("STARMASK_MCP_DAEMON_SOCKET_PATH", daemon_socket_path)
+    daemon_socket_path, runtime_metadata_path, runtime_metadata = resolve_daemon_socket_path(
+        args.runtime_dir, platform_socket_path
     )
+
+    node_bin = os.environ.get("STARCOIN_NODE_MCP_BIN")
+    starmask_bin = os.environ.get("STARMASK_MCP_BIN")
+    node_uses_source_launch = not bool(node_bin)
+    wallet_uses_source_launch = not bool(starmask_bin)
+    requires_cargo = node_uses_source_launch or wallet_uses_source_launch
 
     node_manifest = Path(
         os.environ.get("STARCOIN_NODE_MCP_MANIFEST", str(DEFAULT_NODE_MANIFEST))
@@ -148,16 +212,10 @@ def main() -> int:
 
     results = [
         check(
-            "codex binary",
-            shutil.which("codex") is not None,
-            shutil.which("codex") or "codex is not on PATH",
-            "Install Codex or run from the desktop app bundle.",
-        ),
-        check(
-            "cargo binary",
-            shutil.which("cargo") is not None,
-            shutil.which("cargo") or "cargo is not on PATH",
-            "The plugin defaults to source-tree launches through cargo run.",
+            "codex host",
+            bool(os.environ.get("CODEX_HOME")) or shutil.which("codex") is not None,
+            os.environ.get("CODEX_HOME") or shutil.which("codex") or "Codex desktop/CLI not detected",
+            "Run from the Codex desktop app or ensure the codex CLI is on PATH.",
         ),
         check(
             "plugin manifest",
@@ -170,40 +228,71 @@ def main() -> int:
             str(PLUGIN_MCP_PATH),
         ),
         check(
-            "workspace marketplace",
+            "plugin marketplace",
             MARKETPLACE_PATH.exists(),
             str(MARKETPLACE_PATH),
-            "Open this workspace in Codex so the repo-local marketplace can be discovered.",
-        ),
-        check(
-            "node manifest",
-            node_manifest.exists(),
-            str(node_manifest),
-            "Override with STARCOIN_NODE_MCP_MANIFEST if the source tree moved.",
-        ),
-        check(
-            "wallet manifest",
-            starmask_manifest.exists(),
-            str(starmask_manifest),
-            "Override with STARMASK_MCP_MANIFEST if the source tree moved.",
-        ),
-        check(
-            "starmaskd manifest",
-            DEFAULT_STARMASKD_MANIFEST.exists(),
-            str(DEFAULT_STARMASKD_MANIFEST),
-        ),
-        check(
-            "local-account-agent manifest",
-            DEFAULT_LOCAL_AGENT_MANIFEST.exists(),
-            str(DEFAULT_LOCAL_AGENT_MANIFEST),
+            "Install or enable the plugin from this marketplace before asking Codex to use it.",
         ),
     ]
+
+    if requires_cargo:
+        results.append(
+            check(
+                "cargo binary",
+                shutil.which("cargo") is not None,
+                shutil.which("cargo") or "cargo is not on PATH",
+                "The plugin is configured to launch one or more MCP servers from source through cargo run.",
+            )
+        )
+    if node_uses_source_launch:
+        results.append(
+            check(
+                "node manifest",
+                node_manifest.exists(),
+                str(node_manifest),
+                "Override with STARCOIN_NODE_MCP_MANIFEST or STARCOIN_MCP_WORKSPACE_ROOT if the source tree moved.",
+            )
+        )
+    if wallet_uses_source_launch:
+        results.append(
+            check(
+                "wallet manifest",
+                starmask_manifest.exists(),
+                str(starmask_manifest),
+                "Override with STARMASK_MCP_MANIFEST or STARCOIN_MCP_WORKSPACE_ROOT if the source tree moved.",
+            )
+        )
+    if wallet_uses_source_launch and (
+        args.runtime_dir is not None
+        or runtime_metadata is not None
+        or DEFAULT_STARMASKD_MANIFEST.exists()
+        or DEFAULT_LOCAL_AGENT_MANIFEST.exists()
+    ):
+        results.extend(
+            [
+                check(
+                    "starmaskd manifest",
+                    DEFAULT_STARMASKD_MANIFEST.exists(),
+                    str(DEFAULT_STARMASKD_MANIFEST),
+                    "wallet_runtime.py launches starmaskd from source unless you provide a separate installed runtime.",
+                ),
+                check(
+                    "local-account-agent manifest",
+                    DEFAULT_LOCAL_AGENT_MANIFEST.exists(),
+                    str(DEFAULT_LOCAL_AGENT_MANIFEST),
+                    "wallet_runtime.py launches local-account-agent from source unless you provide a separate installed runtime.",
+                ),
+            ]
+        )
 
     node_config = parse_toml(node_config_path) if node_config_path.exists() else {}
     wallet_config = parse_toml(wallet_config_path) if wallet_config_path.exists() else {}
 
     node_mode = node_config.get("mode") if isinstance(node_config, dict) else None
     node_rpc = node_config.get("rpc_endpoint_url") if isinstance(node_config, dict) else None
+    expected_genesis_hash = (
+        node_config.get("expected_genesis_hash") if isinstance(node_config, dict) else None
+    )
     wallet_backends = wallet_config.get("wallet_backends") if isinstance(wallet_config, dict) else None
 
     results.extend(
@@ -222,9 +311,15 @@ def main() -> int:
             ),
             check(
                 "node rpc endpoint",
-                bool(node_rpc),
+                not looks_like_placeholder_rpc(node_rpc),
                 f"rpc_endpoint_url={node_rpc!r}",
                 f"Set rpc_endpoint_url in the copied template from {NODE_EXAMPLE_PATH}.",
+            ),
+            check(
+                "node genesis hash",
+                not looks_like_placeholder_hash(expected_genesis_hash),
+                f"expected_genesis_hash={expected_genesis_hash!r}",
+                f"Replace the example genesis hash in {NODE_EXAMPLE_PATH} before attempting a transfer.",
             ),
             check(
                 "wallet config",
@@ -257,9 +352,11 @@ def main() -> int:
         "node_config_path": str(node_config_path),
         "wallet_config_path": str(wallet_config_path),
         "daemon_socket_path": str(daemon_socket_path),
+        "wallet_runtime_metadata_path": str(runtime_metadata_path),
+        "wallet_runtime_metadata_found": runtime_metadata is not None,
         "checks": results,
         "next_steps": [
-            "Open this workspace in Codex so the repo-local marketplace is visible.",
+            "Install or enable the plugin from the marketplace entry shown above.",
             f"Copy and edit {NODE_EXAMPLE_PATH} and {WALLET_EXAMPLE_PATH} if the default configs are missing.",
             "Start starmaskd and the wallet backend if the daemon socket check failed.",
             "Ask Codex to use the starcoin-transfer skill for one transfer after the checks pass.",

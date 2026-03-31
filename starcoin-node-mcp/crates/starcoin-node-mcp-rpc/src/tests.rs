@@ -334,7 +334,10 @@ async fn get_account_state_falls_back_to_vm2_resources_when_legacy_state_lacks_s
     let legacy = mock_json_rpc_result(
         &server,
         "state.get_account_state",
-        json!({ "storage_roots": [Value::Null, "0xabc"] }),
+        json!({
+            "sequence_number": Value::Null,
+            "storage_roots": [Value::Null, "0xabc"]
+        }),
     );
     let listed = mock_json_rpc_result_with_params(
         &server,
@@ -386,6 +389,79 @@ async fn get_account_state_falls_back_to_vm2_resources_when_legacy_state_lacks_s
         .expect("account state should be synthesized");
 
     assert_eq!(state.get("sequence_number"), Some(&json!(9)));
+    assert_eq!(
+        state.get("storage_roots"),
+        Some(&json!([Value::Null, "0xabc"]))
+    );
+    assert_eq!(legacy.hits(), 1);
+    assert_eq!(listed.hits(), 1);
+    assert_eq!(vm2.hits(), 0);
+}
+
+#[tokio::test]
+async fn get_account_state_uses_legacy_array_resource_listing_without_vm2_retry() {
+    let server = MockServer::start();
+    let legacy = mock_json_rpc_result(&server, "state.get_account_state", Value::Null);
+    let listed = mock_json_rpc_result_with_params(
+        &server,
+        "state.list_resource",
+        super::legacy_list_resources_params(
+            "0x1",
+            true,
+            0,
+            20,
+            None,
+            &[String::from("0x1::account::Account")],
+        ),
+        json!({
+            "resources": [
+                {
+                    "name": "0x1::account::Account",
+                    "value": {
+                        "json": {
+                            "sequence_number": "11"
+                        }
+                    }
+                }
+            ]
+        }),
+    );
+    let vm2 = mock_json_rpc_result_with_params(
+        &server,
+        "state2.list_resource",
+        super::vm2_list_resources_params(
+            "0x1",
+            true,
+            0,
+            20,
+            None,
+            &[String::from("0x1::account::Account")],
+        ),
+        json!({
+            "resources": {
+                "0x1::account::Account": {
+                    "json": {
+                        "sequence_number": 99
+                    }
+                }
+            }
+        }),
+    );
+
+    let client = NodeRpcClient::new(&runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::Auto,
+        true,
+    ))
+    .expect("rpc client should build");
+    let state = client
+        .get_account_state("0x1")
+        .await
+        .expect("legacy array resource listing should be enough")
+        .expect("account state should be synthesized");
+
+    assert_eq!(state.get("sequence_number"), Some(&json!(11)));
     assert_eq!(legacy.hits(), 1);
     assert_eq!(listed.hits(), 1);
     assert_eq!(vm2.hits(), 0);

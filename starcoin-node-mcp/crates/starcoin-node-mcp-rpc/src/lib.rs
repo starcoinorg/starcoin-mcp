@@ -233,7 +233,11 @@ impl NodeRpcClient {
         match self.call("state.get_account_state", json!([address])).await {
             Ok(Some(state)) if legacy_account_state_has_sequence_number(&state) => Ok(Some(state)),
             Ok(Some(state)) => match self.account_state_from_resource_listing(address).await {
-                Ok(Some(vm2_state)) => Ok(Some(vm2_state)),
+                Ok(Some(vm2_state)) => {
+                    let mut state = state;
+                    merge_account_state_summary(&mut state, &vm2_state);
+                    Ok(Some(state))
+                }
                 Ok(None) => Ok(Some(state)),
                 Err(error) if error.code == SharedErrorCode::UnsupportedOperation => {
                     Ok(Some(state))
@@ -718,7 +722,7 @@ impl NodeRpcClient {
 }
 
 fn legacy_account_state_has_sequence_number(state: &Value) -> bool {
-    state.get("sequence_number").is_some()
+    state.get("sequence_number").and_then(parse_u64).is_some()
 }
 
 fn extract_submission_hash(hash_value: &Value) -> Result<String, SharedError> {
@@ -812,10 +816,24 @@ fn parse_u64(value: &Value) -> Option<u64> {
     }
 }
 
+fn merge_account_state_summary(state: &mut Value, repair: &Value) {
+    match (state.as_object_mut(), repair.as_object()) {
+        (Some(state_obj), Some(repair_obj)) => {
+            for (key, value) in repair_obj {
+                if !value.is_null() {
+                    state_obj.insert(key.clone(), value.clone());
+                }
+            }
+        }
+        _ if !repair.is_null() => *state = repair.clone(),
+        _ => {}
+    }
+}
+
 fn resource_entries_are_non_empty(value: &Value) -> bool {
-    value
-        .get("resources")
-        .and_then(Value::as_object)
-        .map(|entries| !entries.is_empty())
-        .unwrap_or(false)
+    match value.get("resources") {
+        Some(Value::Object(entries)) => !entries.is_empty(),
+        Some(Value::Array(entries)) => !entries.is_empty(),
+        _ => false,
+    }
 }

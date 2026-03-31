@@ -15,7 +15,9 @@ from typing import Any
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-WORKSPACE_ROOT = PLUGIN_ROOT.parent.parent
+WORKSPACE_ROOT = Path(
+    os.environ.get("STARCOIN_MCP_WORKSPACE_ROOT", str(PLUGIN_ROOT.parent.parent))
+).resolve()
 STARMASKD_MANIFEST = (
     WORKSPACE_ROOT / "starmask-mcp" / "crates" / "starmaskd" / "Cargo.toml"
 )
@@ -142,6 +144,12 @@ def remove_if_exists(path: Path) -> None:
         pass
 
 
+def append_log_note(path: Path, message: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(f"[wallet_runtime] {message}\n")
+
+
 def socket_reachable(path: Path) -> tuple[bool, str]:
     if not path.exists():
         return False, "socket file is missing"
@@ -172,6 +180,10 @@ def runtime_paths(runtime_dir: Path) -> dict[str, Path]:
     }
 
 
+def toml_string(value: str) -> str:
+    return json.dumps(value)
+
+
 def build_wallet_config(
     *,
     socket_path: Path,
@@ -181,10 +193,10 @@ def build_wallet_config(
     instance_label: str,
     chain_id: int,
 ) -> str:
-    return f"""channel = "development"
-socket_path = "{socket_path}"
-database_path = "{database_path}"
-log_level = "info"
+    return f"""channel = {toml_string("development")}
+socket_path = {toml_string(str(socket_path))}
+database_path = {toml_string(str(database_path))}
+log_level = {toml_string("info")}
 maintenance_interval_seconds = 1
 default_request_ttl_seconds = 300
 min_request_ttl_seconds = 30
@@ -196,13 +208,13 @@ wallet_offline_after_seconds = 25
 result_retention_seconds = 600
 
 [[wallet_backends]]
-backend_id = "{backend_id}"
-backend_kind = "local_account_dir"
+backend_id = {toml_string(backend_id)}
+backend_kind = {toml_string("local_account_dir")}
 enabled = true
-instance_label = "{instance_label}"
-approval_surface = "tty_prompt"
-prompt_mode = "tty_prompt"
-account_dir = "{wallet_dir}"
+instance_label = {toml_string(instance_label)}
+approval_surface = {toml_string("tty_prompt")}
+prompt_mode = {toml_string("tty_prompt")}
+account_dir = {toml_string(str(wallet_dir))}
 chain_id = {chain_id}
 unlock_cache_ttl_seconds = 300
 allow_read_only_accounts = true
@@ -218,8 +230,10 @@ def read_text_if_exists(path: Path) -> str:
 
 def wait_for_socket(socket_path: Path, starmaskd: subprocess.Popen[str], log_path: Path) -> None:
     deadline = time.time() + 10
+    last_detail = "socket not ready"
     while time.time() < deadline:
-        if socket_path.exists():
+        ready, detail = socket_reachable(socket_path)
+        if ready:
             return
         if starmaskd.poll() is not None:
             log_output = read_text_if_exists(log_path).strip()
@@ -227,9 +241,12 @@ def wait_for_socket(socket_path: Path, starmaskd: subprocess.Popen[str], log_pat
             if log_output:
                 message = f"{message}\n\n{log_output}"
             raise RuntimeError(message)
+        if detail != last_detail:
+            append_log_note(log_path, f"waiting for daemon socket: {detail}")
+            last_detail = detail
         time.sleep(0.2)
     log_output = read_text_if_exists(log_path).strip()
-    message = "starmaskd socket did not appear in time"
+    message = f"starmaskd socket did not become ready in time ({last_detail})"
     if log_output:
         message = f"{message}\n\n{log_output}"
     raise RuntimeError(message)
