@@ -1,0 +1,44 @@
+{
+  "name": "starcoin-transfer-workflow",
+  "version": "0.1.0",
+  "description": "Codex plugin that packages a user-in-the-loop Starcoin transfer workflow.",
+  "author": {
+    "name": "Starcoin",
+    "email": "noreply@starcoin.org",
+    "url": "https://starcoin.org"
+  },
+  "homepage": "https://starcoin.org",
+  "repository": "https://github.com/starcoinorg/starcoin-mcp",
+  "license": "Apache-2.0",
+  "keywords": [
+    "starcoin",
+    "mcp",
+    "wallet",
+    "transfer",
+    "codex"
+  ],
+  "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "Starcoin Transfer",
+    "shortDescription": "User-approved Starcoin transfers inside Codex.",
+    "longDescription": "Registers the Starcoin node and wallet MCP servers in Codex and adds a transfer skill that keeps prepare, confirm, sign, submit, and watch steps bound together.",
+    "developerName": "Starcoin",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Interactive",
+      "Local MCP",
+      "User Approval"
+    ],
+    "websiteURL": "https://starcoin.org",
+    "privacyPolicyURL": "https://starcoin.org",
+    "termsOfServiceURL": "https://starcoin.org",
+    "defaultPrompt": [
+      "List Starcoin wallets and chain context for a transfer.",
+      "Prepare a Starcoin transfer and wait for my approval.",
+      "Track a pending Starcoin transaction by hash."
+    ],
+    "brandColor": "#0F766E"
+  }
+}
