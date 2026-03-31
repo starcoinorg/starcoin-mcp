@@ -27,7 +27,7 @@ require_genesis_hash_match = true
 # omit them unless you want to override the runtime behavior explicitly.
 connect_timeout_ms = 3000
 request_timeout_ms = 10000
-startup_probe_timeout_ms = 5000
+startup_probe_timeout_ms = 10000
 
 default_expiration_ttl_seconds = 600
 max_expiration_ttl_seconds = 3600
