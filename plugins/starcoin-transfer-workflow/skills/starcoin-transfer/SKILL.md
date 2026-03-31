@@ -86,7 +86,11 @@ If either MCP server is unavailable or the wallet daemon is not reachable:
 2. ask them to run:
 
 ```bash
-python3 ./plugins/starcoin-transfer-workflow/scripts/doctor.py
+plugin_root="${STARCOIN_TRANSFER_PLUGIN_ROOT:-$HOME/plugins/starcoin-transfer-workflow}"
+if [ ! -f "$plugin_root/scripts/doctor.py" ]; then
+  plugin_root="./plugins/starcoin-transfer-workflow"
+fi
+python3 "$plugin_root/scripts/doctor.py"
 ```
 
 3. continue only after the missing config or daemon issue is fixed

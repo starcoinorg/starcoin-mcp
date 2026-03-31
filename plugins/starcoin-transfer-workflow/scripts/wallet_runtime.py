@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import signal
+import shutil
 import socket
 import subprocess
 import sys
@@ -29,6 +30,40 @@ LOCAL_AGENT_MANIFEST = (
     / "Cargo.toml"
 )
 RUNTIME_METADATA_NAME = "wallet-runtime.json"
+
+
+def resolve_binary(env_name: str, binary_name: str) -> str | None:
+    override = os.environ.get(env_name)
+    if override:
+        return override
+    return shutil.which(binary_name)
+
+
+def launch_command(
+    *,
+    env_name: str,
+    binary_name: str,
+    manifest_path: Path,
+    cargo_bin_name: str,
+    program_args: list[str],
+) -> tuple[list[str], str]:
+    binary_path = resolve_binary(env_name, binary_name)
+    if binary_path is not None:
+        return [binary_path, *program_args], binary_path
+    return (
+        [
+            "cargo",
+            "run",
+            "--quiet",
+            "--manifest-path",
+            str(manifest_path),
+            "--bin",
+            cargo_bin_name,
+            "--",
+            *program_args,
+        ],
+        f"cargo:{manifest_path}",
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -383,21 +418,16 @@ def main() -> int:
     )
     write_text(paths["config_path"], wallet_config)
 
+    starmaskd_command, starmaskd_launch = launch_command(
+        env_name="STARMASKD_BIN",
+        binary_name="starmaskd",
+        manifest_path=STARMASKD_MANIFEST,
+        cargo_bin_name="starmaskd",
+        program_args=["serve", "--config", str(paths["config_path"])],
+    )
     starmaskd_log = paths["starmaskd_log_path"].open("w", encoding="utf-8")
     starmaskd = subprocess.Popen(
-        [
-            "cargo",
-            "run",
-            "--quiet",
-            "--manifest-path",
-            str(STARMASKD_MANIFEST),
-            "--bin",
-            "starmaskd",
-            "--",
-            "serve",
-            "--config",
-            str(paths["config_path"]),
-        ],
+        starmaskd_command,
         cwd=str(WORKSPACE_ROOT),
         stdin=subprocess.DEVNULL,
         stdout=starmaskd_log,
@@ -408,21 +438,20 @@ def main() -> int:
     try:
         wait_for_socket(socket_path, starmaskd, paths["starmaskd_log_path"])
 
-        agent = subprocess.Popen(
-            [
-                "cargo",
-                "run",
-                "--quiet",
-                "--manifest-path",
-                str(LOCAL_AGENT_MANIFEST),
-                "--bin",
-                "local-account-agent",
-                "--",
+        agent_command, agent_launch = launch_command(
+            env_name="LOCAL_ACCOUNT_AGENT_BIN",
+            binary_name="local-account-agent",
+            manifest_path=LOCAL_AGENT_MANIFEST,
+            cargo_bin_name="local-account-agent",
+            program_args=[
                 "--config",
                 str(paths["config_path"]),
                 "--backend-id",
                 args.backend_id,
             ],
+        )
+        agent = subprocess.Popen(
+            agent_command,
             cwd=str(WORKSPACE_ROOT),
             text=True,
         )
@@ -441,6 +470,8 @@ def main() -> int:
                 "daemon_socket_path": str(socket_path),
                 "starmaskd_pid": starmaskd.pid,
                 "agent_pid": agent.pid,
+                "starmaskd_launch": starmaskd_launch,
+                "agent_launch": agent_launch,
                 "starmaskd_log_path": str(paths["starmaskd_log_path"]),
                 "agent_log_path": None,
             },
@@ -452,6 +483,8 @@ def main() -> int:
         print(f"wallet_instance_id:  {args.backend_id}")
         print(f"starmaskd_pid:       {starmaskd.pid}")
         print(f"agent_pid:           {agent.pid}")
+        print(f"starmaskd_launch:    {starmaskd_launch}")
+        print(f"agent_launch:        {agent_launch}")
         print(f"metadata_path:       {paths['metadata_path']}")
         print(f"starmaskd_log_path:  {paths['starmaskd_log_path']}")
         print("agent_log_path:      attached to this terminal")

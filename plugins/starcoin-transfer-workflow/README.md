@@ -118,6 +118,9 @@ starcoin -n dev -d <repo-root>/.runtime/devstack dev get-coin <sender-address>
 
 The plugin prefers source-tree launches through `cargo run`, but you can override that.
 
+Installed binaries on PATH take precedence automatically. The override variables below are only
+needed when the executable name or location differs from the default PATH lookup.
+
 Node MCP overrides:
 
 - `STARCOIN_NODE_MCP_BIN`
@@ -137,6 +140,13 @@ Wallet MCP overrides:
   - override the Cargo manifest path for source-tree launch
 - `STARMASK_MCP_DAEMON_SOCKET_PATH`
   - pass a non-default daemon socket path to `starmask-mcp`
+
+Wallet runtime overrides:
+
+- `STARMASKD_BIN`
+  - use an already installed `starmaskd` binary
+- `LOCAL_ACCOUNT_AGENT_BIN`
+  - use an already installed `local-account-agent` binary
 
 ## Wallet Stack
 
@@ -160,6 +170,10 @@ python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py up \
 
 The supervisor writes `wallet-runtime.json` under `.runtime/wallet-runtime/` and keeps
 `local-account-agent` attached to the current terminal so `tty_prompt` approvals still work.
+
+For a global plugin install, the same command works as long as `starmaskd` and
+`local-account-agent` are on PATH. In that mode the script no longer needs
+`STARCOIN_MCP_WORKSPACE_ROOT` just to launch the wallet side.
 
 When the plugin is active, Codex also runs a session-start hook. If the transfer runtime is not
 ready, the hook emits one concise warning and points back to the doctor script.
@@ -237,3 +251,4 @@ The local wallet backend approval card is already implemented in:
 
 - This plugin example is repo-local. It lives under the current workspace so you can inspect and modify it directly.
 - If you want a global plugin instead, move the same files under `~/plugins/starcoin-transfer-workflow/` and mirror the marketplace entry into `~/.agents/plugins/marketplace.json`.
+- In global mode, put `starcoin-node-mcp`, `starmask-mcp`, `starmaskd`, and `local-account-agent` somewhere on PATH. `~/bin` is fine, but any PATH directory works.

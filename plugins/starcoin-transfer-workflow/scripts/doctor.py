@@ -57,6 +57,13 @@ DEFAULT_LOCAL_AGENT_MANIFEST = (
 )
 
 
+def resolve_binary(env_name: str, binary_name: str) -> str | None:
+    override = os.environ.get(env_name)
+    if override:
+        return override
+    return shutil.which(binary_name)
+
+
 def platform_paths() -> tuple[Path, Path, Path]:
     system = platform.system()
     if system == "Darwin":
@@ -197,10 +204,12 @@ def main() -> int:
         args.runtime_dir, platform_socket_path
     )
 
-    node_bin = os.environ.get("STARCOIN_NODE_MCP_BIN")
-    starmask_bin = os.environ.get("STARMASK_MCP_BIN")
-    node_uses_source_launch = not bool(node_bin)
-    wallet_uses_source_launch = not bool(starmask_bin)
+    node_bin = resolve_binary("STARCOIN_NODE_MCP_BIN", "starcoin-node-mcp")
+    starmask_bin = resolve_binary("STARMASK_MCP_BIN", "starmask-mcp")
+    starmaskd_bin = resolve_binary("STARMASKD_BIN", "starmaskd")
+    local_agent_bin = resolve_binary("LOCAL_ACCOUNT_AGENT_BIN", "local-account-agent")
+    node_uses_source_launch = node_bin is None
+    wallet_uses_source_launch = starmask_bin is None
     requires_cargo = node_uses_source_launch or wallet_uses_source_launch
 
     node_manifest = Path(
@@ -253,6 +262,15 @@ def main() -> int:
                 "Override with STARCOIN_NODE_MCP_MANIFEST or STARCOIN_MCP_WORKSPACE_ROOT if the source tree moved.",
             )
         )
+    else:
+        results.append(
+            check(
+                "node binary",
+                True,
+                str(node_bin),
+                "Unset STARCOIN_NODE_MCP_BIN if you want doctor.py to validate the source-tree manifest instead.",
+            )
+        )
     if wallet_uses_source_launch:
         results.append(
             check(
@@ -262,25 +280,32 @@ def main() -> int:
                 "Override with STARMASK_MCP_MANIFEST or STARCOIN_MCP_WORKSPACE_ROOT if the source tree moved.",
             )
         )
-    if wallet_uses_source_launch and (
-        args.runtime_dir is not None
-        or runtime_metadata is not None
-        or DEFAULT_STARMASKD_MANIFEST.exists()
-        or DEFAULT_LOCAL_AGENT_MANIFEST.exists()
-    ):
+    else:
+        results.append(
+            check(
+                "wallet binary",
+                True,
+                str(starmask_bin),
+                "Unset STARMASK_MCP_BIN if you want doctor.py to validate the source-tree manifest instead.",
+            )
+        )
+
+    daemon_ok, daemon_detail = socket_reachable(daemon_socket_path)
+
+    if not daemon_ok:
         results.extend(
             [
                 check(
-                    "starmaskd manifest",
-                    DEFAULT_STARMASKD_MANIFEST.exists(),
-                    str(DEFAULT_STARMASKD_MANIFEST),
-                    "wallet_runtime.py launches starmaskd from source unless you provide a separate installed runtime.",
+                    "starmaskd launcher",
+                    starmaskd_bin is not None or DEFAULT_STARMASKD_MANIFEST.exists(),
+                    str(starmaskd_bin or DEFAULT_STARMASKD_MANIFEST),
+                    "Install starmaskd on PATH, export STARMASKD_BIN, or point STARCOIN_MCP_WORKSPACE_ROOT at a source tree that contains crates/starmaskd.",
                 ),
                 check(
-                    "local-account-agent manifest",
-                    DEFAULT_LOCAL_AGENT_MANIFEST.exists(),
-                    str(DEFAULT_LOCAL_AGENT_MANIFEST),
-                    "wallet_runtime.py launches local-account-agent from source unless you provide a separate installed runtime.",
+                    "local-account-agent launcher",
+                    local_agent_bin is not None or DEFAULT_LOCAL_AGENT_MANIFEST.exists(),
+                    str(local_agent_bin or DEFAULT_LOCAL_AGENT_MANIFEST),
+                    "Install local-account-agent on PATH, export LOCAL_ACCOUNT_AGENT_BIN, or point STARCOIN_MCP_WORKSPACE_ROOT at a source tree that contains crates/starmask-local-account-agent.",
                 ),
             ]
         )
@@ -336,7 +361,6 @@ def main() -> int:
         ]
     )
 
-    daemon_ok, daemon_detail = socket_reachable(daemon_socket_path)
     results.append(
         check(
             "starmaskd socket",
@@ -352,12 +376,17 @@ def main() -> int:
         "node_config_path": str(node_config_path),
         "wallet_config_path": str(wallet_config_path),
         "daemon_socket_path": str(daemon_socket_path),
+        "node_bin": node_bin,
+        "starmask_mcp_bin": starmask_bin,
+        "starmaskd_bin": starmaskd_bin,
+        "local_account_agent_bin": local_agent_bin,
         "wallet_runtime_metadata_path": str(runtime_metadata_path),
         "wallet_runtime_metadata_found": runtime_metadata is not None,
         "checks": results,
         "next_steps": [
             "Install or enable the plugin from the marketplace entry shown above.",
             f"Copy and edit {NODE_EXAMPLE_PATH} and {WALLET_EXAMPLE_PATH} if the default configs are missing.",
+            "Install starcoin-node-mcp, starmask-mcp, starmaskd, and local-account-agent on PATH if you want a global plugin that does not rely on a source checkout.",
             "Start starmaskd and the wallet backend if the daemon socket check failed.",
             "Ask Codex to use the starcoin-transfer skill for one transfer after the checks pass.",
         ],

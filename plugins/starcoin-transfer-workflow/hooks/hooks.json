@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "python3 plugins/starcoin-transfer-workflow/scripts/doctor.py --session-start || true"
+            "command": "plugin_root=\"${STARCOIN_TRANSFER_PLUGIN_ROOT:-$HOME/plugins/starcoin-transfer-workflow}\"; if [ ! -f \"$plugin_root/scripts/doctor.py\" ]; then plugin_root=\"./plugins/starcoin-transfer-workflow\"; fi; python3 \"$plugin_root/scripts/doctor.py\" --session-start || true"
           }
         ]
       }

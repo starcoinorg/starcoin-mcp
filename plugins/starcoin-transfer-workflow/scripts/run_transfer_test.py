@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import signal
+import shutil
 import socket
 import subprocess
 import sys
@@ -41,6 +42,37 @@ NODE_MCP_MANIFEST = (
     / "starcoin-node-mcp-server"
     / "Cargo.toml"
 )
+
+
+def resolve_binary(env_name: str, binary_name: str) -> str | None:
+    override = os.environ.get(env_name)
+    if override:
+        return override
+    return shutil.which(binary_name)
+
+
+def launch_command(
+    *,
+    env_name: str,
+    binary_name: str,
+    manifest_path: Path,
+    cargo_bin_name: str,
+    program_args: list[str],
+) -> list[str]:
+    binary_path = resolve_binary(env_name, binary_name)
+    if binary_path is not None:
+        return [binary_path, *program_args]
+    return [
+        "cargo",
+        "run",
+        "--quiet",
+        "--manifest-path",
+        str(manifest_path),
+        "--bin",
+        cargo_bin_name,
+        "--",
+        *program_args,
+    ]
 
 
 def parse_args() -> argparse.Namespace:
@@ -482,19 +514,13 @@ require_strict_permissions = true
 
         starmaskd_log = (log_dir / "starmaskd.log").open("w", encoding="utf-8")
         starmaskd = subprocess.Popen(
-            [
-                "cargo",
-                "run",
-                "--quiet",
-                "--manifest-path",
-                str(STARMASKD_MANIFEST),
-                "--bin",
-                "starmaskd",
-                "--",
-                "serve",
-                "--config",
-                str(wallet_config_path),
-            ],
+            launch_command(
+                env_name="STARMASKD_BIN",
+                binary_name="starmaskd",
+                manifest_path=STARMASKD_MANIFEST,
+                cargo_bin_name="starmaskd",
+                program_args=["serve", "--config", str(wallet_config_path)],
+            ),
             cwd=str(WORKSPACE_ROOT),
             stdin=subprocess.DEVNULL,
             stdout=starmaskd_log,
@@ -503,20 +529,18 @@ require_strict_permissions = true
         )
 
         agent = subprocess.Popen(
-            [
-                "cargo",
-                "run",
-                "--quiet",
-                "--manifest-path",
-                str(LOCAL_AGENT_MANIFEST),
-                "--bin",
-                "local-account-agent",
-                "--",
-                "--config",
-                str(wallet_config_path),
-                "--backend-id",
-                wallet_instance_id,
-            ],
+            launch_command(
+                env_name="LOCAL_ACCOUNT_AGENT_BIN",
+                binary_name="local-account-agent",
+                manifest_path=LOCAL_AGENT_MANIFEST,
+                cargo_bin_name="local-account-agent",
+                program_args=[
+                    "--config",
+                    str(wallet_config_path),
+                    "--backend-id",
+                    wallet_instance_id,
+                ],
+            ),
             cwd=str(WORKSPACE_ROOT),
             text=True,
         )
@@ -551,35 +575,25 @@ require_strict_permissions = true
 
         node_client = JsonRpcLineClient(
             "starcoin-node-mcp",
-            [
-                "cargo",
-                "run",
-                "--quiet",
-                "--manifest-path",
-                str(NODE_MCP_MANIFEST),
-                "--bin",
-                "starcoin-node-mcp",
-                "--",
-                "--config",
-                str(node_config_path),
-            ],
+            launch_command(
+                env_name="STARCOIN_NODE_MCP_BIN",
+                binary_name="starcoin-node-mcp",
+                manifest_path=NODE_MCP_MANIFEST,
+                cargo_bin_name="starcoin-node-mcp",
+                program_args=["--config", str(node_config_path)],
+            ),
             cwd=WORKSPACE_ROOT,
             stderr_path=log_dir / "starcoin-node-mcp.stderr.log",
         )
         wallet_client = JsonRpcLineClient(
             "starmask-mcp",
-            [
-                "cargo",
-                "run",
-                "--quiet",
-                "--manifest-path",
-                str(STARMASK_MCP_MANIFEST),
-                "--bin",
-                "starmask-mcp",
-                "--",
-                "--daemon-socket-path",
-                str(socket_path),
-            ],
+            launch_command(
+                env_name="STARMASK_MCP_BIN",
+                binary_name="starmask-mcp",
+                manifest_path=STARMASK_MCP_MANIFEST,
+                cargo_bin_name="starmask-mcp",
+                program_args=["--daemon-socket-path", str(socket_path)],
+            ),
             cwd=WORKSPACE_ROOT,
             stderr_path=log_dir / "starmask-mcp.stderr.log",
         )
