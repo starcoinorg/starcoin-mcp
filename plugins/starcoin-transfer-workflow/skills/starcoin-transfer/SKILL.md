@@ -23,9 +23,13 @@ Use this skill when the user wants to transfer tokens, request a signature for a
 - Call `starcoin-node-mcp.chain_status`.
 - If the sender public key is not already known, call `starmask-mcp.wallet_get_public_key`.
 - If sender, receiver, amount, token, or wallet instance are ambiguous, ask before preparing a transaction.
+- Treat `starcoin-node-mcp` and `starmask-mcp` as the only valid transfer execution path. Do not fall back to the `starcoin` CLI or ad hoc shell commands for balance lookup, transfer preparation, submission, or transaction watching when the MCP servers are available.
 
 ## 2. Prepare The Transaction
 
+- `starcoin-node-mcp.prepare_transfer.amount` expects the raw on-chain integer amount.
+- If the user gives a human-readable STC amount and `token_code` is omitted or equals `0x1::STC::STC`, normalize it with 9 decimals before preparation. `1 STC = 1_000_000_000` raw units.
+- For non-STC assets, only normalize a human-readable amount when decimals are already known from trusted chain metadata or prior explicit context. Otherwise ask instead of guessing.
 - Call `starcoin-node-mcp.prepare_transfer`.
 - Retain these fields from the result:
   - `transaction_kind`
@@ -69,6 +73,9 @@ Use this skill when the user wants to transfer tokens, request a signature for a
 - Pass the `chain_context` from the same preparation result that produced the signed transaction.
 - Inspect `submit_signed_transaction.next_action`.
 - If `submit_signed_transaction.next_action = watch_transaction`, immediately call `starcoin-node-mcp.watch_transaction`.
+- If `submit_signed_transaction.next_action = reconcile_by_txn_hash`, reconcile by `txn_hash` through `starcoin-node-mcp.watch_transaction` instead of blindly resubmitting.
+- If `submit_signed_transaction.next_action = reprepare_then_resign`, discard the old signed bytes and restart from `prepare_transfer`.
+- If submission is accepted but confirmation is still unavailable, report that the transaction is submitted but not yet confirmed. Do not present that state as final success.
 
 ## Safety Rules
 
@@ -76,7 +83,9 @@ Use this skill when the user wants to transfer tokens, request a signature for a
 - Do not replace `raw_txn_bcs_hex` with any host-derived bytes.
 - Do not infer approval from a pending request. Approval is only real when `wallet_get_request_status` returns `approved`.
 - If the prepared transaction expires or the sequence number becomes stale, restart from `prepare_transfer`.
-- If the user provides a human-readable token amount but decimal precision is not already known, ask for clarification instead of guessing.
+- If the user provides a human-readable non-STC token amount and decimal precision is not already known, ask for clarification instead of guessing.
+- Do not treat `submission_unknown` or a missing post-submit watch result as permission to resubmit blindly.
+- If the MCP runtime is unavailable, stop on the runtime problem and send the user to `doctor.py` instead of switching over to the `starcoin` CLI transfer path.
 
 ## When The Environment Is Not Ready
 

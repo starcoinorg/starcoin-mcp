@@ -22,6 +22,18 @@
 - [ ] Define the confirmation semantics precisely in docs and tool output: whether the count means the inclusion block only, inclusion plus N more blocks, or a minimum chain height delta observed after inclusion.
 - [ ] Update the transfer skill, README, and `scripts/run_transfer_test.py` so the documented default matches the runtime behavior and the CLI test can exercise both the default 1-block wait and a user-specified confirmation depth.
 
+## transfer usability and recovery follow-ups
+
+- [ ] Strengthen the transfer host contract so `starcoin-node-mcp` and `starmask-mcp` are treated as the only valid transfer execution path. If the MCP runtime is unavailable, the host should stop and send the user to `scripts/doctor.py` instead of falling back to `starcoin` CLI commands for prepare, submit, watch, balance, or transaction-status steps.
+- [ ] Reduce CLI-biased setup language in `README.md` so the `starcoin` examples are clearly scoped to wallet bootstrap and local funding, not the normal host-side transfer flow that Codex should execute.
+- [ ] Add a first-class amount-normalization story for transfers. `prepare_transfer.amount` is currently a raw integer string, which leaves human-readable amounts as ad hoc host logic.
+- [ ] Improve common STC ergonomics explicitly. When the token is omitted or `0x1::STC::STC`, the workflow should support or at least clearly document 9-decimal normalization so standard STC transfers do not stall on avoidable precision confirmation.
+- [ ] Decide the general decimals strategy for non-STC assets. Candidates: a token-metadata query tool, an explicit `amount_unit` or `decimals` input on the MCP surface, or a separate normalization helper that returns the canonical raw amount plus display metadata.
+- [ ] Show both the raw on-chain integer amount and the human-readable amount in transfer confirmations whenever normalization happened, so the user can verify what is actually being signed.
+- [ ] Make submit failure handling more deterministic in the host workflow. `submission_unknown` should route to reconcile-by-hash or watch-by-hash behavior, while `transaction_expired`, `sequence_number_stale`, and `invalid_chain_context` should route to reprepare-and-resign guidance instead of generic failure text.
+- [ ] Tighten the submitted-but-unconfirmed state in docs and host UX. If the submit call was accepted but the watch step is missing, timed out, or failed, the workflow should surface that as an intermediate state rather than a silent success or opaque error.
+- [ ] Add coverage in `scripts/run_transfer_test.py` or adjacent acceptance tests for human-readable STC amounts, `submission_unknown` recovery, and reprepare-resign flows after stale sequence or expiration failures.
+
 ## .mcp.json simplification follow-ups
 
 - [ ] Simplify `plugins/starcoin-transfer-workflow/.mcp.json` so the default launcher assumes `starcoin-node-mcp` and `starmask-mcp` binaries are already installed on `PATH` and relies on each tool's default config and socket locations.

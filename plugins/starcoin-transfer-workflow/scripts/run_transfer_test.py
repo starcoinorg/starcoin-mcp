@@ -17,6 +17,8 @@ from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
+from transfer_controller import CANONICAL_STC_TOKEN_CODE, TransferController
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_ROOT = Path(
@@ -101,11 +103,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--amount",
         default="1000",
-        help="Raw on-chain integer amount passed to prepare_transfer",
+        help="Transfer amount. Use raw on-chain units by default, or pair with --amount-unit stc for human-readable STC.",
+    )
+    parser.add_argument(
+        "--amount-unit",
+        choices=("raw", "stc"),
+        default="raw",
+        help="Interpret --amount as raw on-chain units or human-readable STC.",
     )
     parser.add_argument(
         "--token-code",
-        default="0x1::starcoin_coin::STC",
+        default=CANONICAL_STC_TOKEN_CODE,
         help="Transfer token code passed to prepare_transfer",
     )
     parser.add_argument(
@@ -600,54 +608,29 @@ require_strict_permissions = true
         started_children.extend([node_client, wallet_client])
         node_client.initialize()
         wallet_client.initialize()
-
-        wallet_instances = wait_for_wallet_instance(wallet_client, wallet_instance_id)
-        wallet_accounts = wallet_client.call_tool(
-            "wallet_list_accounts",
-            {"wallet_instance_id": wallet_instance_id, "include_public_key": True},
+        wait_for_wallet_instance(wallet_client, wallet_instance_id)
+        controller = TransferController(
+            node_client=node_client,
+            wallet_client=wallet_client,
+            chain_id=chain_id,
+            network=network,
+            genesis_hash=genesis_hash,
         )
-        public_key_result = wallet_client.call_tool(
-            "wallet_get_public_key",
-            {
-                "wallet_instance_id": wallet_instance_id,
-                "address": args.sender,
-            },
-        )
-        prepare_result = node_client.call_tool(
-            "prepare_transfer",
-            {
-                "sender": args.sender,
-                "sender_public_key": public_key_result["public_key"],
-                "receiver": args.receiver,
-                "amount": args.amount,
-                "token_code": args.token_code,
-            },
-        )
-
+        try:
+            session = controller.prepare_session(
+                wallet_instance_id=wallet_instance_id,
+                sender=args.sender,
+                receiver=args.receiver,
+                amount=args.amount,
+                amount_unit=args.amount_unit,
+                token_code=args.token_code,
+            )
+        except ValueError as error:
+            raise SystemExit(f"invalid transfer amount: {error}") from error
         print(
             render_card(
                 "Host Transfer Confirmation",
-                [
-                    ("Network", f"{network} ({chain_id})"),
-                    ("Genesis", genesis_hash),
-                    ("Wallet Instance", wallet_instance_id),
-                    ("Known Wallets", str(len(wallet_instances["wallet_instances"]))),
-                    (
-                        "Visible Accounts",
-                        str(
-                            sum(
-                                len(group["accounts"])
-                                for group in wallet_accounts["wallet_instances"]
-                            )
-                        ),
-                    ),
-                    ("Sender", args.sender),
-                    ("Receiver", args.receiver),
-                    ("Amount", args.amount),
-                    ("Token", args.token_code),
-                    ("Simulation", prepare_result["simulation_status"]),
-                    ("Prepared At", prepare_result["prepared_at"]),
-                ],
+                controller.confirmation_rows(session),
             )
         )
         print()
@@ -657,19 +640,11 @@ require_strict_permissions = true
             print("Transfer test cancelled before wallet_request_sign_transaction.")
             return 0
 
-        request = wallet_client.call_tool(
-            "wallet_request_sign_transaction",
-            {
-                "client_request_id": f"transfer-test-{int(time.time())}",
-                "account_address": args.sender,
-                "wallet_instance_id": wallet_instance_id,
-                "chain_id": chain_id,
-                "raw_txn_bcs_hex": prepare_result["raw_txn_bcs_hex"],
-                "tx_kind": str(prepare_result["transaction_kind"]).lower(),
-                "display_hint": f"Transfer {args.amount} to {args.receiver}",
-                "client_context": "starcoin-transfer-test",
-                "ttl_seconds": args.ttl_seconds,
-            },
+        request = controller.create_sign_request(
+            session,
+            client_request_id=f"transfer-test-{int(time.time())}",
+            ttl_seconds=args.ttl_seconds,
+            client_context="starcoin-transfer-test",
         )
         request_id = request["request_id"]
         print()
@@ -686,19 +661,10 @@ require_strict_permissions = true
             )
         )
         print("Use the local-account-agent prompt in this terminal to approve or reject.")
-
-        last_status = None
-        while True:
-            status = wallet_client.call_tool(
-                "wallet_get_request_status", {"request_id": request_id}
-            )
-            current = status["status"]
-            if current != last_status:
-                print(f"wallet_get_request_status -> {current}")
-                last_status = current
-            if current in {"approved", "rejected", "cancelled", "expired", "failed"}:
-                break
-            time.sleep(1)
+        status = controller.wait_for_terminal_request(
+            session,
+            on_status_change=lambda current: print(f"wallet_get_request_status -> {current}"),
+        )
 
         if status["status"] != "approved":
             print(
@@ -714,40 +680,14 @@ require_strict_permissions = true
             )
             return 1
 
-        signed_txn = status["result"]["signed_txn_bcs_hex"]
-        submit_result = node_client.call_tool(
-            "submit_signed_transaction",
-            {
-                "signed_txn_bcs_hex": signed_txn,
-                "prepared_chain_context": prepare_result["chain_context"],
-                "blocking": True,
-                "timeout_seconds": args.watch_timeout_seconds,
-            },
+        submit_outcome = controller.submit(
+            session,
+            timeout_seconds=args.watch_timeout_seconds,
+            blocking=True,
         )
-        rows = [
-            ("Txn Hash", submit_result["txn_hash"]),
-            ("Submission State", submit_result["submission_state"]),
-            ("Submitted", str(submit_result["submitted"])),
-            ("Next Action", submit_result["next_action"]),
-        ]
-        watch_result = submit_result.get("watch_result")
-        if watch_result:
-            rows.extend(
-                [
-                    ("Confirmed", str(watch_result["confirmed"])),
-                    (
-                        "VM Status",
-                        str(watch_result["status_summary"].get("vm_status")),
-                    ),
-                    (
-                        "Found",
-                        str(watch_result["status_summary"].get("found")),
-                    ),
-                ]
-            )
         print()
-        print(render_card("Submit Result", rows))
-        return 0
+        print(render_card("Submit Result", controller.submit_rows(submit_outcome)))
+        return 0 if submit_outcome.success else 1
     finally:
         if node_client is not None:
             node_client.terminate()
