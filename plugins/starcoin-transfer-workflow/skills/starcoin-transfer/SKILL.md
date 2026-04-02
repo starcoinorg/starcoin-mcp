@@ -32,7 +32,7 @@ or track the final transaction state.
 ### 2. Prepare The Transaction
 
 - `prepare_transfer.amount` expects the raw on-chain integer amount.
-- If the user gives a human-readable STC amount and `token_code` is omitted or equals `0x1::STC::STC`, normalize it with 9 decimals before preparation. `1 STC = 1_000_000_000` raw units.
+- If the user gives a human-readable STC amount and `token_code` is omitted or equals `0x1::STC::STC` or `0x1::starcoin_coin::STC`, normalize it with 9 decimals before preparation. `1 STC = 1_000_000_000` raw units.
 - Do not automatically switch between `0x1::STC::STC` and `0x1::starcoin_coin::STC`. They may map to different semantics on different VM RPC surfaces or chains.
 - If the chosen STC token code fails during dry-run, stop and ask for the correct `token_code` instead of retrying on another STC alias.
 - For non-STC assets, only normalize a human-readable amount when decimals are already known from trusted chain metadata or prior explicit context. Otherwise ask instead of guessing.

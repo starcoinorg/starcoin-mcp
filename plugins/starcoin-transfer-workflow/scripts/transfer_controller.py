@@ -16,6 +16,14 @@ STC_TOKEN_CODE_ALIASES = {
 STC_SCALE = 1_000_000_000
 STC_AMOUNT_PATTERN = re.compile(r"^(?P<whole>\d+)(?:\.(?P<fraction>\d{1,9}))?$")
 TERMINAL_REQUEST_STATUSES = {"approved", "rejected", "cancelled", "expired", "failed"}
+REQUIRED_PREPARE_FIELDS = (
+    "transaction_kind",
+    "raw_txn_bcs_hex",
+    "chain_context",
+    "prepared_at",
+    "simulation_status",
+    "next_action",
+)
 
 
 class ToolClient(Protocol):
@@ -62,11 +70,19 @@ class TransferSubmitOutcome:
 
 
 def is_stc_token_code(token_code: str) -> bool:
-    return token_code.strip().lower() in STC_TOKEN_CODE_ALIASES
+    return normalize_token_code(token_code).lower() in STC_TOKEN_CODE_ALIASES
+
+
+def normalize_token_code(token_code: str) -> str:
+    normalized = token_code.strip()
+    if not normalized:
+        raise ValueError("token code must not be empty")
+    return normalized
 
 
 def normalize_transfer_amount(amount: str, amount_unit: str, token_code: str) -> TransferAmount:
     value = amount.strip()
+    normalized_token_code = normalize_token_code(token_code)
     if amount_unit == "raw":
         if not value.isdigit():
             raise ValueError("raw transfer amount must be a non-negative integer string")
@@ -75,9 +91,9 @@ def normalize_transfer_amount(amount: str, amount_unit: str, token_code: str) ->
             input_unit=amount_unit,
             raw_amount=value,
             display_amount=f"{value} raw units",
-            token_code=token_code,
+            token_code=normalized_token_code,
         )
-    if not is_stc_token_code(token_code):
+    if not is_stc_token_code(normalized_token_code):
         raise ValueError("--amount-unit stc is only supported for STC token codes")
     match = STC_AMOUNT_PATTERN.fullmatch(value)
     if match is None:
@@ -91,8 +107,25 @@ def normalize_transfer_amount(amount: str, amount_unit: str, token_code: str) ->
         input_unit=amount_unit,
         raw_amount=str(raw_amount),
         display_amount=f"{value} STC",
-        token_code=token_code,
+        token_code=normalized_token_code,
     )
+
+
+def validate_prepare_result(prepare_result: dict[str, Any]) -> dict[str, Any]:
+    missing = [field for field in REQUIRED_PREPARE_FIELDS if field not in prepare_result]
+    if missing:
+        raise RuntimeError(
+            "prepare_transfer returned an incomplete result: missing "
+            + ", ".join(missing)
+        )
+    if prepare_result.get("simulation_status") == "failed":
+        raise RuntimeError("prepare_transfer returned simulation_status = failed")
+    if prepare_result.get("next_action") != "sign_transaction":
+        raise RuntimeError(
+            "prepare_transfer returned a non-signable next_action: "
+            + str(prepare_result.get("next_action"))
+        )
+    return prepare_result
 
 
 def summarize_watch_result(watch_result: dict[str, Any]) -> list[tuple[str, str]]:
@@ -166,9 +199,10 @@ class TransferController:
                 "sender_public_key": public_key_result["public_key"],
                 "receiver": receiver,
                 "amount": normalized_amount.raw_amount,
-                "token_code": token_code,
+                "token_code": normalized_amount.token_code,
             },
         )
+        prepare_result = validate_prepare_result(prepare_result)
         return TransferSession(
             sender=sender,
             receiver=receiver,
@@ -213,7 +247,7 @@ class TransferController:
                 ]
             )
         else:
-            rows.append(("Amount", session.amount.raw_amount))
+            rows.append(("Raw Amount", session.amount.raw_amount))
         rows.extend(
             [
                 ("Token", prepared_token_code),
@@ -295,7 +329,7 @@ class TransferController:
         session.submit_result = submit_result
         watch_result = submit_result.get("watch_result")
         watch_source = "submit" if watch_result is not None else None
-        if submit_result["next_action"] == "reconcile_by_txn_hash":
+        if blocking and submit_result["next_action"] == "reconcile_by_txn_hash":
             watch_result = self.node_client.call_tool(
                 "watch_transaction",
                 {
@@ -304,7 +338,11 @@ class TransferController:
                 },
             )
             watch_source = "reconcile"
-        elif submit_result["submission_state"] == "accepted" and watch_result is None:
+        elif (
+            blocking
+            and submit_result["submission_state"] == "accepted"
+            and watch_result is None
+        ):
             watch_result = self.node_client.call_tool(
                 "watch_transaction",
                 {
