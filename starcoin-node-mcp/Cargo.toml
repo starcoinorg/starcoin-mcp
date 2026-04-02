@@ -4,6 +4,7 @@ members = [
   "crates/starcoin-node-mcp-test-support",
   "crates/starcoin-node-mcp-rpc",
   "crates/starcoin-node-mcp-core",
+  "crates/starcoin-node-cli",
   "crates/starcoin-node-mcp-server",
 ]
 resolver = "2"

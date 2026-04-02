@@ -1,16 +1,26 @@
 # TODO
 
+## vm_profile summary
+
+- Current conclusion:
+  - `vm_profile` is node-side RPC surface routing, not an account property.
+  - `auto` does not detect whether one account is "VM1" or "VM2".
+  - For dual-surface transaction methods, `auto` prefers the VM2 RPC surface and only falls back to the VM1 RPC surface when the VM2 method is unavailable.
+  - For some account/resource read paths, `auto` may still start from a VM1 read path and only use VM2 for repair or retry.
+  - Because of that mixed routing behavior, `auto` is not a good default when the caller already knows the operation must use VM1 semantics or VM2 semantics.
+  - Transfer flows with fixed semantics should choose `vm1_only` or `vm2_only` explicitly and pass a matching `token_code`.
+
 ## vm_profile follow-ups
 
-- [ ] Document more explicitly that `vm_profile = "auto"` is not a one-time VM selection. It uses per-call fallback rules, and different RPC categories do not all prefer the same path.
 - [ ] Expose `vm_profile` as a first-class plugin/runtime choice for transfer workflows. Today the skill and `prepare_transfer` tool inputs do not let a caller pick the profile per transfer.
-- [ ] Add a `--vm-profile` option to `scripts/run_transfer_test.py`. The test script currently writes `vm_profile = "auto"` into the generated node-mcp config.
-- [ ] Decide whether the project needs a strict `vm1_only` mode. Current choices are `auto`, `vm2_only`, and `legacy_compatible`; `legacy_compatible` still falls back to the newer path when legacy methods are unavailable.
+- [ ] Add a `--vm-profile` option to `scripts/run_transfer_test.py`. The test script currently writes `vm_profile = "auto"` into the generated node-cli config.
+  - Prefer the generated `node-cli.toml` name and keep `node-mcp.toml` only as an input compatibility alias.
+- [ ] Decide whether transfer-oriented configs and examples should keep defaulting to `vm_profile = "auto"` or require an explicit `vm1_only` / `vm2_only` choice for semantically fixed operations.
 - [ ] If per-transfer profile selection is needed, choose an implementation direction. Candidates:
-  - [ ] Profile-aware server startup/config switching before the MCP session starts.
-  - [ ] Separate node-mcp instances for legacy-compatible and vm2-only paths.
-  - [ ] Extend the plugin surface so a transfer flow can target a selected node-mcp instance explicitly.
-- [ ] Add a short user-facing note in the plugin docs explaining which methods are legacy-first, vm2-first, or vm2-only so operators can predict `auto` behavior more easily.
+  - [ ] Profile-aware CLI startup/config switching before the transfer run starts.
+  - [ ] Separate node-cli configs for VM1-only and VM2-only paths.
+  - [ ] Extend the plugin surface so a transfer flow can target a selected routing profile explicitly.
+- [ ] Add a short user-facing note in the plugin docs explaining that `auto` is RPC routing, not per-account VM detection, and which methods are shared, VM1-surface, or VM2-surface.
 
 ## transfer confirmation follow-ups
 
@@ -24,24 +34,22 @@
 
 ## transfer usability and recovery follow-ups
 
-- [ ] Strengthen the transfer host contract so `starcoin-node-mcp` and `starmask-mcp` are treated as the only valid transfer execution path. If the MCP runtime is unavailable, the host should stop and send the user to `scripts/doctor.py` instead of falling back to `starcoin` CLI commands for prepare, submit, watch, balance, or transaction-status steps.
+- [ ] Strengthen the transfer host contract so the `starcoin-node-cli` + `starmaskd` path is treated as the only valid transfer execution path. If the local runtime is unavailable, the host should stop and send the user to `scripts/doctor.py` instead of falling back to direct `starcoin` CLI commands for prepare, submit, watch, balance, or transaction-status steps.
 - [ ] Reduce CLI-biased setup language in `README.md` so the `starcoin` examples are clearly scoped to wallet bootstrap and local funding, not the normal host-side transfer flow that Codex should execute.
 - [ ] Add a first-class amount-normalization story for transfers. `prepare_transfer.amount` is currently a raw integer string, which leaves human-readable amounts as ad hoc host logic.
 - [ ] Improve common STC ergonomics explicitly. When the token is omitted or `0x1::STC::STC`, the workflow should support or at least clearly document 9-decimal normalization so standard STC transfers do not stall on avoidable precision confirmation.
-- [ ] Decide the general decimals strategy for non-STC assets. Candidates: a token-metadata query tool, an explicit `amount_unit` or `decimals` input on the MCP surface, or a separate normalization helper that returns the canonical raw amount plus display metadata.
+- [ ] Decide the general decimals strategy for non-STC assets. Candidates: a token-metadata query tool, an explicit `amount_unit` or `decimals` input on the script and skill surface, or a separate normalization helper that returns the canonical raw amount plus display metadata.
 - [ ] Show both the raw on-chain integer amount and the human-readable amount in transfer confirmations whenever normalization happened, so the user can verify what is actually being signed.
 - [ ] Make submit failure handling more deterministic in the host workflow. `submission_unknown` should route to reconcile-by-hash or watch-by-hash behavior, while `transaction_expired`, `sequence_number_stale`, and `invalid_chain_context` should route to reprepare-and-resign guidance instead of generic failure text.
 - [ ] Tighten the submitted-but-unconfirmed state in docs and host UX. If the submit call was accepted but the watch step is missing, timed out, or failed, the workflow should surface that as an intermediate state rather than a silent success or opaque error.
 - [ ] Add coverage in `scripts/run_transfer_test.py` or adjacent acceptance tests for human-readable STC amounts, `submission_unknown` recovery, and reprepare-resign flows after stale sequence or expiration failures.
 
-## .mcp.json simplification follow-ups
+## script runtime contract follow-ups
 
-- [ ] Simplify `plugins/starcoin-transfer-workflow/.mcp.json` so the default launcher assumes `starcoin-node-mcp` and `starmask-mcp` binaries are already installed on `PATH` and relies on each tool's default config and socket locations.
-- [ ] Remove environment-variable-driven launcher indirection from the default `.mcp.json` path, including workspace-root, manifest, binary, and runtime-metadata discovery logic that is only needed for source-tree or ad hoc local setups.
-- [ ] If source-tree fallback remains useful for development, move it behind an explicit dev-only path or separate example instead of keeping the default `.mcp.json` startup flow shell-heavy.
-- [ ] Update `scripts/doctor.py` so it validates the simplified default startup contract directly: binaries available on `PATH`, default config files present, and default socket path reachable, without depending on the same env-heavy launcher assumptions as `.mcp.json`.
-- [ ] Review `scripts/doctor.py` output and remediation text so normal users are guided toward default install locations and `PATH` setup first, while any remaining non-default dev overrides are documented separately.
-- [ ] Update `README.md` so the normal setup story matches the simplified `.mcp.json` and `doctor.py` contract.
+- [ ] Make `node-cli.toml` the only documented chain config name and keep `node-mcp.toml` as a compatibility fallback until migration is complete.
+- [ ] Reduce environment-variable-driven launcher indirection in the normal script path so PATH-based binaries and default config locations remain the primary operator story.
+- [ ] Move any remaining source-tree-only overrides behind clearly dev-scoped documentation instead of mixing them into the default setup path.
+- [ ] Keep reviewing `scripts/doctor.py` output and remediation text so normal users are guided toward default install locations and PATH setup first.
 
 ## wallet runtime tui follow-ups
 

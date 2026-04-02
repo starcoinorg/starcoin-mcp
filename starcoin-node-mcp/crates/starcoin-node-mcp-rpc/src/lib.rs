@@ -298,6 +298,10 @@ impl NodeRpcClient {
             )
             .await;
 
+        if self.vm_profile == VmProfile::Vm1Only {
+            return legacy_result;
+        }
+
         match legacy_result {
             Ok(value) if resource_entries_are_non_empty(&value) => Ok(value),
             Ok(value) => match self
@@ -355,6 +359,9 @@ impl NodeRpcClient {
         &self,
         address: &str,
     ) -> Result<Option<Value>, SharedError> {
+        if self.vm_profile == VmProfile::Vm1Only {
+            return Ok(None);
+        }
         match self
             .call(
                 "state2.get_resource",

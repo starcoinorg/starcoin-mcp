@@ -20,7 +20,7 @@ The first conforming implementation of `starcoin-node-mcp` is required to be wri
 - `docs/security-model.md`: chain-side trust boundary and safety rules
 - `docs/deployment-model.md`: runtime topology and capability profiles
 - `docs/configuration.md`: endpoint, chain pinning, and timeout configuration
-- `docs/rpc-adapter-design.md`: VM compatibility and RPC normalization strategy
+- `docs/rpc-adapter-design.md`: shared/vm1/vm2 RPC surface classification and normalization strategy
 - `docs/rust-implementation-strategy.md`: implementation structure for the first Rust version
 - `docs/design-closure-plan.md`: implementation-readiness checklist for the chain-side design
 - `docs/testing-and-acceptance.md`: acceptance criteria for probing, preparation, submission, reconciliation, and security

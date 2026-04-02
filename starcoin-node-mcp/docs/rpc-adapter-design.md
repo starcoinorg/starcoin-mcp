@@ -95,21 +95,79 @@ All `read_only` requirements plus:
 
 If an optional method is missing, the tool result may degrade in detail but should not silently change the configured capability profile.
 
-## VM Compatibility Strategy
+## RPC Surface Classification
 
-The MCP tool surface remains version-neutral.
+The MCP tool surface remains version-neutral, but the backing Starcoin JSON-RPC surface does not.
+
+The adapter should distinguish three categories:
+
+1. shared RPC
+2. VM1 RPC surface
+3. VM2 RPC surface
+
+Shared RPC methods are not VM-specific and should be treated as common infrastructure methods.
+Examples include:
+
+- `chain.info`
+- `node.status`
+- `node.info`
+- `node.peers`
+- `sync.status`
+- `chain.get_block_by_hash`
+- `chain.get_block_by_number`
+- `chain.get_blocks_by_number`
+- `chain.get_events`
+- `txpool.gas_price`
+
+VM1 RPC surface methods include names such as:
+
+- `chain.get_transaction`
+- `chain.get_transaction_info`
+- `chain.get_events_by_txn_hash`
+- `state.get_account_state`
+- `state.list_resource`
+- `state.list_code`
+- `contract.resolve_function`
+- `contract.resolve_module`
+- `contract.resolve_struct`
+- `contract.call_v2`
+- `contract.dry_run_raw`
+- `txpool.next_sequence_number`
+- `txpool.submit_hex_transaction`
+
+VM2 RPC surface methods include names such as:
+
+- `chain.get_transaction2`
+- `chain.get_transaction_info2`
+- `chain.get_events_by_txn_hash2`
+- `state2.list_resource`
+- `state2.list_code`
+- `state2.get_state_root`
+- `state2.get_resource`
+- `contract2.resolve_function`
+- `contract2.resolve_module`
+- `contract2.resolve_struct`
+- `contract2.call_v2`
+- `contract2.dry_run_raw`
+- `txpool.next_sequence_number2`
+- `txpool.submit_hex_transaction2`
+
+These are separate RPC surfaces. The adapter may probe both and choose one per call, but it must
+not imply semantic compatibility between VM1 and VM2 transaction payloads, token codes, resource
+types, or contract semantics.
+
+## `vm_profile` Routing Rules
 
 Rules:
 
-1. `vm_profile = auto` prefers VM2-compatible methods when available
-2. `vm_profile = vm2_only` fails startup if the endpoint lacks required VM2 paths
-3. `vm_profile = legacy_compatible` may use older RPC methods for read-only flows when needed
-4. query tools may degrade more gracefully than transaction tools
-5. transaction tools must fail closed when the endpoint cannot support the configured VM profile
+1. `vm_profile = auto` prefers VM2 RPC methods where the adapter supports both VM1 and VM2 names
+2. `vm_profile = vm1_only` fails startup or tool gating if the endpoint lacks required VM1 paths
+3. `vm_profile = vm2_only` fails startup or tool gating if the endpoint lacks required VM2 paths
+4. shared RPC methods are profile-neutral
+5. query tools may degrade more gracefully than transaction tools
+6. transaction tools must fail closed when the endpoint cannot support the selected RPC surface
 
-The first release should treat VM2 as the preferred semantic baseline for transaction preparation and simulation.
-
-In Rust, VM compatibility should be represented by typed enums such as a backend or capability variant, not by scattered boolean flags.
+In Rust, this routing should be represented by typed enums such as a surface-selection or capability variant, not by scattered boolean flags.
 
 ## Tool-to-RPC Mapping
 
@@ -134,59 +192,78 @@ In Rust, VM compatibility should be represented by typed enums such as a backend
 - `list_blocks`
   - `chain.get_blocks_by_number`
 - `get_transaction`
-  - `chain.get_transaction2` when available
-  - fallback: `chain.get_transaction`
-  - transaction info:
-    - `chain.get_transaction_info2` when available
-    - fallback: `chain.get_transaction_info`
-  - events:
-    - `chain.get_events_by_txn_hash2` when available
-    - fallback: `chain.get_events_by_txn_hash`
+  - VM2 RPC surface:
+    - `chain.get_transaction2`
+    - `chain.get_transaction_info2`
+    - `chain.get_events_by_txn_hash2`
+  - VM1 RPC surface:
+    - `chain.get_transaction`
+    - `chain.get_transaction_info`
+    - `chain.get_events_by_txn_hash`
 - `watch_transaction`
   - repeated `get_transaction` and transaction-info lookups until terminal or timeout, subject to local watch-permit limits
 
 ### State and ABI
 
 - `get_account_overview`
-  - `state.get_account_state`
-  - `state.list_resource`
-  - `state.list_code`
-  - `txpool.next_sequence_number` or `txpool.next_sequence_number2`
+  - VM1 RPC surface:
+    - `state.get_account_state`
+    - `state.list_resource`
+    - `state.list_code`
+    - `txpool.next_sequence_number`
+  - VM2 RPC surface:
+    - `state2.list_resource`
+    - `state2.list_code`
+    - `txpool.next_sequence_number2`
 - `list_resources`
-  - `state.list_resource`
+  - VM1 RPC surface: `state.list_resource`
+  - VM2 RPC surface: `state2.list_resource`
 - `list_modules`
-  - `state.list_code`
-  - `contract.resolve_module`
+  - VM1 RPC surface:
+    - `state.list_code`
+    - `contract.resolve_module`
+  - VM2 RPC surface:
+    - `state2.list_code`
+    - `contract2.resolve_module`
 - `resolve_function_abi`
-  - `contract.resolve_function`
+  - VM1 RPC surface: `contract.resolve_function`
+  - VM2 RPC surface: `contract2.resolve_function`
 - `resolve_struct_abi`
-  - `contract.resolve_struct`
+  - VM1 RPC surface: `contract.resolve_struct`
+  - VM2 RPC surface: `contract2.resolve_struct`
 - `resolve_module_abi`
-  - `contract.resolve_module`
+  - VM1 RPC surface: `contract.resolve_module`
+  - VM2 RPC surface: `contract2.resolve_module`
 - `call_view_function`
-  - `contract.call_v2` when available
-  - fallback: `contract.call`
+  - VM1 RPC surface: `contract.call_v2`
+  - VM2 RPC surface: `contract2.call_v2`
+
+For account and resource reads, the adapter may synthesize or repair a summary shape from resource
+listing results. That is response-shape normalization, not a VM semantic bridge.
 
 ### Preparation and Simulation
 
 - `prepare_transfer`
-  - `chain.info`
-  - `txpool.gas_price`
-  - account sequence from state plus txpool next sequence
+  - shared RPC:
+    - `chain.info`
+    - `txpool.gas_price`
+  - selected VM1 or VM2 RPC surface for account and sequence queries
   - local raw transaction construction
 - `prepare_contract_call`
-  - same as above plus `contract.resolve_function` when summary enrichment is desired
+  - same as above plus selected VM1 or VM2 ABI resolution when summary enrichment is desired
 - `prepare_publish_package`
   - same as above
 - `simulate_raw_transaction`
-  - `contract.dry_run_raw`
+  - VM1 RPC surface: `contract.dry_run_raw`
+  - VM2 RPC surface: `contract2.dry_run_raw`
 
 ### Submission
 
 - `submit_signed_transaction`
-  - `chain.info` to re-validate pinned chain identity immediately before submission
-  - `txpool.submit_transaction2` when available
-  - fallback: `txpool.submit_transaction`
+  - shared RPC:
+    - `chain.info` to re-validate pinned chain identity immediately before submission
+  - VM1 RPC surface: `txpool.submit_hex_transaction`
+  - VM2 RPC surface: `txpool.submit_hex_transaction2`
   - return `invalid_chain_context` if the pre-submit chain re-check fails
 
 ## Deterministic Transaction Preparation

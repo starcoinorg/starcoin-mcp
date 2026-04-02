@@ -102,7 +102,7 @@ The following index records where each required flow is closed and which explici
 13. `uncertain submission result after transport loss or timeout`: initiator `starcoin-node-mcp` when submission response is not definitive; chain snapshot or capability locally derived `txn_hash` plus reconciliation query path; failure codes `submission_unknown`; host retry `not before reconcile-by-hash`; degradation no automatic blind re-submit or background relaying. References: `host-integration.md` phase E; `deployment-model.md` recovery rules; `testing-and-acceptance.md` submission and end-to-end acceptance.
 14. `prepared transaction expires before wallet approval finishes`: initiator `MCP host` discovers this on submission after async wallet approval; chain snapshot or capability prepared envelope freshness, endpoint rejection, and wallet orchestration state; failure codes `transaction_expired`; host retry `yes`, but only by re-preparing and re-signing; degradation none because old signed bytes must not be reused. References: `host-integration.md` phase E; `security-model.md` threat scenarios; `testing-and-acceptance.md` submission and end-to-end acceptance.
 15. `sequence number becomes stale before submission`: initiator `MCP host` discovers this on submission after other pending transactions advance sequence; chain snapshot or capability fresh txpool rejection and prepared envelope metadata; failure codes `sequence_number_stale`; host retry `yes`, but only by fresh preparation and fresh signing; degradation none because stale signed bytes must not be replayed. References: `host-integration.md` phase E; `rpc-adapter-design.md` submission reconciliation; `testing-and-acceptance.md` submission and end-to-end acceptance.
-16. `endpoint capability mismatch between VM profile and requested tool surface`: initiator `starcoin-node-mcp` during startup probe or tool gating; chain snapshot or capability capability classification and VM profile selection; failure codes `unsupported_operation`; host retry `yes` only after profile or endpoint capability changes; degradation read-only may narrow on optional methods, but required `transaction` or `vm2_only` capabilities fail closed. References: `rpc-adapter-design.md` capability discovery and VM compatibility; `deployment-model.md` capability model; `testing-and-acceptance.md` startup acceptance.
+16. `endpoint capability mismatch between VM profile and requested tool surface`: initiator `starcoin-node-mcp` during startup probe or tool gating; chain snapshot or capability capability classification and VM profile selection; failure codes `unsupported_operation`; host retry `yes` only after profile or endpoint capability changes; degradation read-only may narrow on optional methods, but required `transaction` or `vm2_only` capabilities fail closed. References: `rpc-adapter-design.md` capability discovery and RPC surface classification; `deployment-model.md` capability model; `testing-and-acceptance.md` startup acceptance.
 
 ## First-Release Decisions
 
@@ -134,7 +134,7 @@ In scope:
 - `read_only` and `transaction` capability profiles
 - query, ABI resolution, view execution, unsigned transaction preparation, simulation, submission, and watch flows
 - local caching of endpoint metadata and ABI results
-- VM2-first behavior with compatibility fallback in the adapter layer
+- adapter-owned routing across shared RPC plus VM1/VM2 RPC surfaces
 - one Rust Cargo workspace implementing the chain-side server
 
 Out of scope for the first implementation:
@@ -153,7 +153,7 @@ Before implementation begins, review the design with the following checklist:
 - Are deployment profiles explicit?
 - Are chain pinning rules written down for transaction mode?
 - Are all transaction-adjacent flows closed from preparation to submission?
-- Are VM compatibility rules owned by one adapter layer?
+- Are shared/vm1/vm2 RPC surface routing rules owned by one adapter layer?
 - Are configuration defaults safe for remote endpoints?
 - Are unsigned transaction envelopes strong enough to carry chain identity and freshness metadata as a stable contract?
 - Are error codes mapped to shared repository vocabulary where possible?

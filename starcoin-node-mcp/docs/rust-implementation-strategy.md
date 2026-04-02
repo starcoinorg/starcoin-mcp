@@ -69,7 +69,7 @@ Recommended responsibilities:
 - `starcoin-node-mcp-rpc`
   - endpoint probing
   - Starcoin RPC client abstraction
-  - VM compatibility handling
+  - shared/vm1/vm2 RPC surface routing
   - RPC-native view mapping
 - `starcoin-node-mcp-server`
   - `rmcp` integration

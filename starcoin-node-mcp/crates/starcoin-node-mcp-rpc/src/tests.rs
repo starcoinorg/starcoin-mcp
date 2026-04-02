@@ -10,7 +10,7 @@ use starcoin_node_mcp_test_support::{
 use starcoin_node_mcp_types::{Mode, SharedErrorCode, VmProfile};
 
 #[tokio::test]
-async fn probe_classifies_optional_capabilities_and_legacy_fallbacks() {
+async fn probe_classifies_optional_capabilities_for_vm1_only_surface() {
     let server = MockServer::start();
     mock_probe_metadata(&server);
     mock_json_rpc_result(&server, "chain.get_block_by_number", Value::Null);
@@ -46,7 +46,7 @@ async fn probe_classifies_optional_capabilities_and_legacy_fallbacks() {
     let client = NodeRpcClient::new(&runtime_config(
         &server,
         Mode::ReadOnly,
-        VmProfile::LegacyCompatible,
+        VmProfile::Vm1Only,
         true,
     ))
     .expect("rpc client should build");
@@ -65,6 +65,99 @@ async fn probe_classifies_optional_capabilities_and_legacy_fallbacks() {
     assert!(probe.supports_view_call);
     assert!(!probe.supports_transaction_submission);
     assert!(!probe.supports_raw_dry_run);
+}
+
+#[tokio::test]
+async fn list_resources_vm1_only_keeps_legacy_result_without_vm2_retry() {
+    let server = MockServer::start();
+    let legacy = mock_json_rpc_result_with_params(
+        &server,
+        "state.list_resource",
+        super::legacy_list_resources_params("0x1", true, 0, 20, None, &[]),
+        json!({ "resources": {} }),
+    );
+    let vm2 = mock_json_rpc_result_with_params(
+        &server,
+        "state2.list_resource",
+        super::vm2_list_resources_params("0x1", true, 0, 20, None, &[]),
+        json!({
+            "resources": {
+                "0x1::account::Account": {
+                    "json": {
+                        "sequence_number": 7
+                    }
+                }
+            }
+        }),
+    );
+
+    let client = NodeRpcClient::new(&runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::Vm1Only,
+        true,
+    ))
+    .expect("rpc client should build");
+    let resources = client
+        .list_resources("0x1", true, 0, 20, None, &[])
+        .await
+        .expect("vm1_only should return the legacy result as-is");
+
+    assert_eq!(resources, json!({ "resources": {} }));
+    assert_eq!(legacy.hits(), 1);
+    assert_eq!(vm2.hits(), 0);
+}
+
+#[tokio::test]
+async fn submit_vm1_only_does_not_retry_on_vm2_surface() {
+    let server = MockServer::start();
+    mock_method_not_found(&server, "txpool.submit_hex_transaction");
+    let vm2 = mock_json_rpc_result(&server, "txpool.submit_hex_transaction2", json!("0xabc"));
+
+    let client = NodeRpcClient::new(&runtime_config(
+        &server,
+        Mode::Transaction,
+        VmProfile::Vm1Only,
+        true,
+    ))
+    .expect("rpc client should build");
+    let error = client
+        .submit_signed_transaction("0x01")
+        .await
+        .expect_err("vm1_only should fail closed instead of retrying on vm2");
+
+    assert_eq!(error.code, SharedErrorCode::UnsupportedOperation);
+    assert_eq!(vm2.hits(), 0);
+}
+
+#[tokio::test]
+async fn primary_stc_balance_helper_is_disabled_in_vm1_only() {
+    let server = MockServer::start();
+    let vm2 = mock_json_rpc_result(
+        &server,
+        "state2.get_resource",
+        json!({
+            "raw": "0x01",
+            "json": {
+                "balance": 42
+            }
+        }),
+    );
+
+    let client = NodeRpcClient::new(&runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::Vm1Only,
+        true,
+    ))
+    .expect("rpc client should build");
+    let resource = client
+        .get_primary_stc_balance_resource("0x1")
+        .await
+        .expect("vm1_only should skip vm2-only primary-store helper");
+
+    assert_eq!(resource, None);
+    assert_eq!(vm2.hits(), 0);
 }
 
 #[tokio::test]

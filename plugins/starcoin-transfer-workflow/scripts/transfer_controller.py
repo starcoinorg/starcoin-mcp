@@ -8,10 +8,10 @@ from typing import Any, Callable, Protocol
 
 
 CANONICAL_STC_TOKEN_CODE = "0x1::STC::STC"
-LEGACY_STC_TOKEN_CODE = "0x1::starcoin_coin::STC"
+STARCOIN_COIN_STC_TOKEN_CODE = "0x1::starcoin_coin::STC"
 STC_TOKEN_CODE_ALIASES = {
     CANONICAL_STC_TOKEN_CODE.lower(),
-    LEGACY_STC_TOKEN_CODE.lower(),
+    STARCOIN_COIN_STC_TOKEN_CODE.lower(),
 }
 STC_SCALE = 1_000_000_000
 STC_AMOUNT_PATTERN = re.compile(r"^(?P<whole>\d+)(?:\.(?P<fraction>\d{1,9}))?$")
@@ -184,6 +184,10 @@ class TransferController:
         )
 
     def confirmation_rows(self, session: TransferSession) -> list[tuple[str, str]]:
+        prepared_token_code = (
+            session.prepare_result.get("transaction_summary", {}).get("token_code")
+            or session.amount.token_code
+        )
         rows = [
             ("Network", f"{session.network} ({session.chain_id})"),
             ("Genesis", session.genesis_hash),
@@ -212,7 +216,7 @@ class TransferController:
             rows.append(("Amount", session.amount.raw_amount))
         rows.extend(
             [
-                ("Token", session.amount.token_code),
+                ("Token", prepared_token_code),
                 ("Simulation", session.prepare_result["simulation_status"]),
                 ("Prepared At", session.prepare_result["prepared_at"]),
             ]

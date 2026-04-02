@@ -57,7 +57,7 @@ impl NodeRpcClient {
     ) -> Vec<&'a str> {
         match self.vm_profile {
             VmProfile::Vm2Only => vec![preferred],
-            VmProfile::LegacyCompatible => vec![fallback, preferred],
+            VmProfile::Vm1Only => vec![fallback],
             VmProfile::Auto => vec![preferred, fallback],
         }
     }
@@ -240,23 +240,23 @@ impl NodeRpcClient {
             .probe_method_supported("txpool.gas_price", json!([]))
             .await?;
         let sequence = self
-            .probe_method_supported(
-                "txpool.next_sequence_number2",
+            .supports_any_method(
+                &self.transaction_methods(
+                    "txpool.next_sequence_number2",
+                    "txpool.next_sequence_number",
+                ),
                 json!(["0x00000000000000000000000000000000"]),
             )
-            .await?
-            || self
-                .probe_method_supported(
-                    "txpool.next_sequence_number",
-                    json!(["0x00000000000000000000000000000000"]),
-                )
-                .await?;
+            .await?;
         let submit = self
-            .probe_method_supported("txpool.submit_hex_transaction2", json!([]))
-            .await?
-            || self
-                .probe_method_supported("txpool.submit_hex_transaction", json!([]))
-                .await?;
+            .supports_any_method(
+                &self.transaction_methods(
+                    "txpool.submit_hex_transaction2",
+                    "txpool.submit_hex_transaction",
+                ),
+                json!([]),
+            )
+            .await?;
         Ok(gas_price && sequence && submit)
     }
 

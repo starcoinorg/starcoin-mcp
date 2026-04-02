@@ -167,7 +167,7 @@ The deployment model distinguishes:
 - connectivity
 - chain identity
 - RPC method availability
-- VM compatibility
+- RPC surface classification
 
 These are related but must not be collapsed into one health bit.
 
@@ -176,7 +176,7 @@ Rules:
 1. `node.status` success alone is insufficient for transaction mode readiness.
 2. Read-only profile may degrade when optional health methods such as `sync.status` are unavailable.
 3. Transaction profile must fail closed when required dry-run, txpool, or submission methods are missing.
-4. VM compatibility is checked by the adapter layer, not inferred only from user intent.
+4. shared/vm1/vm2 RPC surface selection is checked by the adapter layer, not inferred only from user intent.
 
 ## Shutdown Model
 
