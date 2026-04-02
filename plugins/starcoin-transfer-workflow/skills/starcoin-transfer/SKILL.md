@@ -17,6 +17,50 @@ The canonical execution path is:
 Use this skill when the user wants to transfer tokens, request a signature for a prepared transfer,
 or track the final transaction state.
 
+## CLI Quick Reference
+
+Use these forms directly. Do not call `--help` first unless one of these commands fails or the
+script path itself has changed.
+
+- Wallet status and discovery:
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_list_instances`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_list_accounts`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_get_public_key`
+- Chain status and reads:
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/node_cli_client.py call chain_status`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/node_cli_client.py call get_account_overview`
+- Runtime checks:
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/doctor.py`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py status`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py up --replace`
+- End-to-end test:
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/run_transfer_test.py --rpc-url http://127.0.0.1:9850 --wallet-runtime-dir $HOME/.runtime/wallet-runtime --sender <sender> --receiver <receiver> --amount 1 --amount-unit stc`
+
+Default runtime locations for this workflow:
+
+- wallet runtime: `$HOME/.runtime/wallet-runtime`
+- wallet dir: `$HOME/.runtime/devwallet`
+- node config: `$HOME/.runtime/node-cli.toml`
+- wallet config: `$HOME/.runtime/config.toml`
+
+Known important parameters:
+
+- `starmaskd_client.py`
+  - `--wallet-runtime-dir <dir>`
+  - `--socket-path <sock>`
+- `node_cli_client.py`
+  - `--config <node-cli.toml>`
+  - `--workspace-root <starcoin-mcp-root>`
+- `wallet_runtime.py`
+  - `--runtime-dir <dir>`
+  - `up --wallet-dir <dir> --chain-id <id> --backend-id <id> --replace`
+- `run_transfer_test.py`
+  - `--rpc-url <http-rpc>`
+  - `--wallet-runtime-dir <dir>` or `--wallet-dir <dir>`
+  - `--sender <address> --receiver <address>`
+  - `--amount <value> [--amount-unit raw|stc]`
+  - `--token-code 0x1::starcoin_coin::STC`
+
 ## Workflow
 
 ### 1. Gather Context
@@ -33,6 +77,7 @@ or track the final transaction state.
 
 - `prepare_transfer.amount` expects the raw on-chain integer amount.
 - If the user gives a human-readable STC amount and `token_code` is omitted or equals `0x1::STC::STC` or `0x1::starcoin_coin::STC`, normalize it with 9 decimals before preparation. `1 STC = 1_000_000_000` raw units.
+- The workflow default STC token code is `0x1::starcoin_coin::STC`, because the default `vm_profile = auto` prefers VM2 routes.
 - Do not automatically switch between `0x1::STC::STC` and `0x1::starcoin_coin::STC`. They may map to different semantics on different VM RPC surfaces or chains.
 - If the chosen STC token code fails during dry-run, stop and ask for the correct `token_code` instead of retrying on another STC alias.
 - For non-STC assets, only normalize a human-readable amount when decimals are already known from trusted chain metadata or prior explicit context. Otherwise ask instead of guessing.

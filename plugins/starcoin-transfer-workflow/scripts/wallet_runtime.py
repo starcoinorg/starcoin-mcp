@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import signal
@@ -16,12 +15,34 @@ from typing import Any
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-WORKSPACE_ROOT = Path(
-    os.environ.get(
-        "STARCOIN_TRANSFER_WORKSPACE_ROOT",
-        os.environ.get("STARCOIN_MCP_WORKSPACE_ROOT", str(PLUGIN_ROOT.parent.parent)),
+
+
+def resolve_workspace_root() -> Path:
+    env_override = os.environ.get("STARCOIN_TRANSFER_WORKSPACE_ROOT") or os.environ.get(
+        "STARCOIN_MCP_WORKSPACE_ROOT"
     )
-).resolve()
+    if env_override:
+        return Path(env_override).expanduser().resolve()
+
+    plugin_default = PLUGIN_ROOT.parent.parent.resolve()
+    candidates = [plugin_default]
+    cwd = Path.cwd().resolve()
+    for base in (cwd, *cwd.parents):
+        candidates.append(base)
+        candidates.append(base / "starcoin-mcp")
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if (candidate / "starmask-mcp" / "crates" / "starmaskd" / "Cargo.toml").exists():
+            return candidate
+    return plugin_default
+
+
+WORKSPACE_ROOT = resolve_workspace_root()
 STARMASKD_MANIFEST = (
     WORKSPACE_ROOT / "starmask-mcp" / "crates" / "starmaskd" / "Cargo.toml"
 )
@@ -75,7 +96,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--runtime-dir",
-        default=str(WORKSPACE_ROOT / ".runtime" / "wallet-runtime"),
+        default=str(Path.home() / ".runtime" / "wallet-runtime"),
         help="Directory for generated config, pid files, and logs.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -83,7 +104,7 @@ def parse_args() -> argparse.Namespace:
     up = subparsers.add_parser("up", help="Start starmaskd and local-account-agent.")
     up.add_argument(
         "--wallet-dir",
-        default=str(WORKSPACE_ROOT / ".runtime" / "devwallet"),
+        default=str(Path.home() / ".runtime" / "devwallet"),
         help="Standalone local account vault directory used by local-account-agent.",
     )
     up.add_argument(
@@ -118,10 +139,9 @@ def parse_args() -> argparse.Namespace:
 
 
 def choose_socket_path(runtime_dir: Path) -> Path:
-    digest = hashlib.sha1(str(runtime_dir).encode("utf-8")).hexdigest()[:8]
-    socket_dir = Path("/tmp") / "starcoin-mcp"
+    socket_dir = runtime_dir.parent / "run"
     socket_dir.mkdir(parents=True, exist_ok=True)
-    return socket_dir / f"wallet-runtime-{digest}.sock"
+    return socket_dir / "starmaskd.sock"
 
 
 def ensure_private_wallet_dir(wallet_dir: Path) -> None:

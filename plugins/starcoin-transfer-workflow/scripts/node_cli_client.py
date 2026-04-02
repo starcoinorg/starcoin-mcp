@@ -13,18 +13,41 @@ from typing import Any
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-WORKSPACE_ROOT = Path(
-    os.environ.get(
-        "STARCOIN_TRANSFER_WORKSPACE_ROOT",
-        os.environ.get("STARCOIN_MCP_WORKSPACE_ROOT", str(PLUGIN_ROOT.parent.parent)),
+
+
+def resolve_workspace_root() -> Path:
+    env_override = os.environ.get("STARCOIN_TRANSFER_WORKSPACE_ROOT") or os.environ.get(
+        "STARCOIN_MCP_WORKSPACE_ROOT"
     )
-).resolve()
+    if env_override:
+        return Path(env_override).expanduser().resolve()
+
+    plugin_default = PLUGIN_ROOT.parent.parent.resolve()
+    candidates = [plugin_default]
+    cwd = Path.cwd().resolve()
+    for base in (cwd, *cwd.parents):
+        candidates.append(base)
+        candidates.append(base / "starcoin-mcp")
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if (candidate / "starcoin-node-mcp" / "crates" / "starcoin-node-cli" / "Cargo.toml").exists():
+            return candidate
+    return plugin_default
+
+
+WORKSPACE_ROOT = resolve_workspace_root()
 NODE_CLI_MANIFEST = (
     WORKSPACE_ROOT / "starcoin-node-mcp" / "crates" / "starcoin-node-cli" / "Cargo.toml"
 )
 
 
 def platform_config_candidates() -> list[Path]:
+    runtime_dir = Path.home() / ".runtime"
     system = platform.system()
     if system == "Darwin":
         config_dir = Path.home() / "Library" / "Application Support" / "StarcoinMCP"
@@ -33,6 +56,8 @@ def platform_config_candidates() -> list[Path]:
     else:
         config_dir = Path.home() / "AppData" / "Roaming" / "StarcoinMCP"
     return [
+        runtime_dir / "node-cli.toml",
+        runtime_dir / "node-mcp.toml",
         config_dir / "node-cli.toml",
         config_dir / "node-mcp.toml",
     ]

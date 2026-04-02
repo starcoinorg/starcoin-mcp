@@ -18,19 +18,43 @@ except ModuleNotFoundError:  # pragma: no cover
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-WORKSPACE_ROOT = Path(
-    os.environ.get(
-        "STARCOIN_TRANSFER_WORKSPACE_ROOT",
-        os.environ.get("STARCOIN_MCP_WORKSPACE_ROOT", str(PLUGIN_ROOT.parent.parent)),
+
+
+def resolve_workspace_root() -> Path:
+    env_override = os.environ.get("STARCOIN_TRANSFER_WORKSPACE_ROOT") or os.environ.get(
+        "STARCOIN_MCP_WORKSPACE_ROOT"
     )
-).resolve()
+    if env_override:
+        return Path(env_override).expanduser().resolve()
+
+    plugin_default = PLUGIN_ROOT.parent.parent.resolve()
+    candidates = [plugin_default]
+    cwd = Path.cwd().resolve()
+    for base in (cwd, *cwd.parents):
+        candidates.append(base)
+        candidates.append(base / "starcoin-mcp")
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if (
+            candidate / "starcoin-node-mcp" / "crates" / "starcoin-node-cli" / "Cargo.toml"
+        ).exists() or (candidate / "starmask-mcp" / "crates" / "starmaskd" / "Cargo.toml").exists():
+            return candidate
+    return plugin_default
+
+
+WORKSPACE_ROOT = resolve_workspace_root()
 MARKETPLACE_PATH = WORKSPACE_ROOT / ".agents" / "plugins" / "marketplace.json"
 PLUGIN_MANIFEST_PATH = PLUGIN_ROOT / ".codex-plugin" / "plugin.json"
 NODE_CLIENT_SCRIPT_PATH = PLUGIN_ROOT / "scripts" / "node_cli_client.py"
 WALLET_CLIENT_SCRIPT_PATH = PLUGIN_ROOT / "scripts" / "starmaskd_client.py"
 NODE_EXAMPLE_PATH = PLUGIN_ROOT / "examples" / "node-cli.example.toml"
 WALLET_EXAMPLE_PATH = PLUGIN_ROOT / "examples" / "starmaskd-local-account.example.toml"
-DEFAULT_WALLET_RUNTIME_DIR = WORKSPACE_ROOT / ".runtime" / "wallet-runtime"
+DEFAULT_WALLET_RUNTIME_DIR = Path.home() / ".runtime" / "wallet-runtime"
 
 DEFAULT_NODE_MANIFEST = (
     WORKSPACE_ROOT
@@ -64,13 +88,13 @@ def resolve_binary(env_name: str, binary_name: str) -> str | None:
 
 def platform_paths() -> tuple[Path, Path, Path, Path]:
     system = platform.system()
+    runtime_root = Path.home() / ".runtime"
     if system == "Darwin":
-        root = Path.home() / "Library" / "Application Support" / "StarcoinMCP"
         return (
-            root / "node-cli.toml",
-            root / "node-mcp.toml",
-            root / "config.toml",
-            root / "run" / "starmaskd.sock",
+            runtime_root / "node-cli.toml",
+            runtime_root / "node-mcp.toml",
+            runtime_root / "config.toml",
+            runtime_root / "run" / "starmaskd.sock",
         )
     if system == "Linux":
         config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))

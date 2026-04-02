@@ -7,10 +7,13 @@ from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
 
-CANONICAL_STC_TOKEN_CODE = "0x1::STC::STC"
-STARCOIN_COIN_STC_TOKEN_CODE = "0x1::starcoin_coin::STC"
+VM1_STC_TOKEN_CODE = "0x1::STC::STC"
+# Default STC transfers follow the vm_profile=auto runtime, which prefers VM2.
+CANONICAL_STC_TOKEN_CODE = "0x1::starcoin_coin::STC"
+STARCOIN_COIN_STC_TOKEN_CODE = CANONICAL_STC_TOKEN_CODE
 STC_TOKEN_CODE_ALIASES = {
     CANONICAL_STC_TOKEN_CODE.lower(),
+    VM1_STC_TOKEN_CODE.lower(),
     STARCOIN_COIN_STC_TOKEN_CODE.lower(),
 }
 STC_SCALE = 1_000_000_000

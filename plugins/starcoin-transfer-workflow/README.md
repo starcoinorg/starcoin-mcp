@@ -77,15 +77,15 @@ The Plan B transfer path expects:
 3. a wallet backend to be registered with `starmaskd`
 4. the daemon socket to be reachable
 
-Default config locations remain:
+Default config locations now prefer `$HOME/.runtime`:
 
 - node config:
-  - `~/Library/Application Support/StarcoinMCP/node-cli.toml`
-  - legacy fallback: `~/Library/Application Support/StarcoinMCP/node-mcp.toml`
+  - `$HOME/.runtime/node-cli.toml`
+  - legacy fallback: `$HOME/.runtime/node-mcp.toml`
 - wallet config:
-  - `~/Library/Application Support/StarcoinMCP/config.toml`
+  - `$HOME/.runtime/config.toml`
 - daemon socket:
-  - `~/Library/Application Support/StarcoinMCP/run/starmaskd.sock`
+  - `$HOME/.runtime/run/starmaskd.sock`
 
 Repo-local example templates:
 
@@ -166,11 +166,11 @@ Recommended wallet-side startup:
 
 ```bash
 python3 ./scripts/wallet_runtime.py up \
-  --wallet-dir <repo-root>/.runtime/devwallet \
+  --wallet-dir $HOME/.runtime/devwallet \
   --chain-id 254
 ```
 
-The supervisor writes `wallet-runtime.json` under `.runtime/wallet-runtime/` and keeps
+The supervisor writes `wallet-runtime.json` under `$HOME/.runtime/wallet-runtime/` by default and keeps
 `local-account-agent` attached to the current terminal so `tty_prompt` approvals still work.
 
 ## Transfer Flow
@@ -216,7 +216,7 @@ This mode reuses an already-running wallet runtime:
 ```bash
 python3 ./scripts/run_transfer_test.py \
   --rpc-url http://127.0.0.1:9850 \
-  --wallet-runtime-dir <repo-root>/.runtime/wallet-runtime \
+  --wallet-runtime-dir $HOME/.runtime/wallet-runtime \
   --sender <sender-address> \
   --receiver <receiver-address> \
   --amount 1 \
@@ -235,12 +235,14 @@ In one-shot mode, `run_transfer_test.py` does this:
 8. waits for the local wallet CLI approval card in the same terminal
 
 In supervisor-reuse mode, steps 3 and 4 are skipped. The script reads
-`.runtime/wallet-runtime/wallet-runtime.json`, reuses the daemon socket and wallet instance, and
+`$HOME/.runtime/wallet-runtime/wallet-runtime.json`, reuses the daemon socket and wallet instance, and
 runs the same direct daemon + CLI host flow.
 
 `prepare_transfer.amount` is a raw on-chain integer. The test script accepts `--amount-unit stc`
 for human-readable STC input and normalizes it to raw units before calling `prepare_transfer`.
 `1 STC = 1_000_000_000` raw units.
+The default STC token code is `0x1::starcoin_coin::STC`, because the default `vm_profile = auto`
+prefers VM2 routes.
 The workflow does not automatically switch between `0x1::STC::STC` and
 `0x1::starcoin_coin::STC`. If the connected chain expects one specific STC token code on one VM
 surface, pass that token code explicitly.

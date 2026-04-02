@@ -19,7 +19,7 @@ WORKSPACE_ROOT = Path(
         os.environ.get("STARCOIN_MCP_WORKSPACE_ROOT", str(PLUGIN_ROOT.parent.parent)),
     )
 ).resolve()
-DEFAULT_WALLET_RUNTIME_DIR = WORKSPACE_ROOT / ".runtime" / "wallet-runtime"
+DEFAULT_WALLET_RUNTIME_DIR = Path.home() / ".runtime" / "wallet-runtime"
 
 
 class StarmaskDaemonClient:
@@ -134,10 +134,10 @@ class StarmaskDaemonClient:
 
 
 def platform_socket_path() -> Path:
+    runtime_root = Path.home() / ".runtime"
     system = platform.system()
     if system == "Darwin":
-        root = Path.home() / "Library" / "Application Support" / "StarcoinMCP"
-        return root / "run" / "starmaskd.sock"
+        return runtime_root / "run" / "starmaskd.sock"
     if system == "Linux":
         config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
         state_home = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
@@ -145,7 +145,7 @@ def platform_socket_path() -> Path:
         if runtime_dir.name != "starcoin-mcp":
             return runtime_dir / "starcoin-mcp" / "starmaskd.sock"
         return runtime_dir / "starmaskd.sock"
-    return Path.home() / "AppData" / "Roaming" / "StarcoinMCP" / "starmaskd.sock"
+    return runtime_root / "run" / "starmaskd.sock"
 
 
 def parse_json_if_exists(path: Path) -> dict[str, Any] | None:

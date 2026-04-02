@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import signal
@@ -22,12 +21,34 @@ from transfer_controller import CANONICAL_STC_TOKEN_CODE, TransferController
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-WORKSPACE_ROOT = Path(
-    os.environ.get(
-        "STARCOIN_TRANSFER_WORKSPACE_ROOT",
-        os.environ.get("STARCOIN_MCP_WORKSPACE_ROOT", str(PLUGIN_ROOT.parent.parent)),
+
+
+def resolve_workspace_root() -> Path:
+    env_override = os.environ.get("STARCOIN_TRANSFER_WORKSPACE_ROOT") or os.environ.get(
+        "STARCOIN_MCP_WORKSPACE_ROOT"
     )
-).resolve()
+    if env_override:
+        return Path(env_override).expanduser().resolve()
+
+    plugin_default = PLUGIN_ROOT.parent.parent.resolve()
+    candidates = [plugin_default]
+    cwd = Path.cwd().resolve()
+    for base in (cwd, *cwd.parents):
+        candidates.append(base)
+        candidates.append(base / "starcoin-mcp")
+
+    seen: set[Path] = set()
+    for candidate in candidates:
+        candidate = candidate.resolve()
+        if candidate in seen:
+            continue
+        seen.add(candidate)
+        if (candidate / "starmask-mcp" / "crates" / "starmaskd" / "Cargo.toml").exists():
+            return candidate
+    return plugin_default
+
+
+WORKSPACE_ROOT = resolve_workspace_root()
 STARMASKD_MANIFEST = (
     WORKSPACE_ROOT / "starmask-mcp" / "crates" / "starmaskd" / "Cargo.toml"
 )
@@ -200,10 +221,9 @@ def write_text(path: Path, content: str) -> None:
 
 
 def choose_socket_path(runtime_dir: Path) -> Path:
-    digest = hashlib.sha1(str(runtime_dir).encode("utf-8")).hexdigest()[:8]
-    socket_dir = Path("/tmp") / "starcoin-mcp"
+    socket_dir = runtime_dir / "run"
     socket_dir.mkdir(parents=True, exist_ok=True)
-    return socket_dir / f"starmaskd-{digest}.sock"
+    return socket_dir / "starmaskd.sock"
 
 
 def read_text_if_exists(path: Path) -> str:
