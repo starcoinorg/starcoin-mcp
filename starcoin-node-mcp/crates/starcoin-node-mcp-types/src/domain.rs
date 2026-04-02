@@ -13,13 +13,20 @@ pub enum Mode {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, JsonSchema, PartialEq, Serialize, ValueEnum)]
 #[serde(rename_all = "snake_case")]
+/// Adapter routing policy across shared RPC plus VM1/VM2-specific RPC surfaces.
+///
+/// Shared RPC methods ignore this setting. The setting only affects methods where the
+/// adapter knows both a VM1 and a VM2 RPC surface name.
 pub enum VmProfile {
+    /// Prefer VM2-specific RPC methods where the adapter supports both surfaces.
     #[value(name = "auto")]
     Auto,
+    /// Require the VM1 RPC surface for dual-surface methods.
+    #[value(name = "vm1_only", alias = "vm1-only")]
+    Vm1Only,
+    /// Require the VM2 RPC surface for dual-surface methods.
     #[value(name = "vm2_only", alias = "vm2-only")]
     Vm2Only,
-    #[value(name = "legacy_compatible", alias = "legacy-compatible")]
-    LegacyCompatible,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, PartialEq, Serialize)]

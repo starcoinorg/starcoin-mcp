@@ -5912,6 +5912,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "starcoin-node-cli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "serde",
+ "serde_json",
+ "starcoin-node-mcp-core",
+ "starcoin-node-mcp-types",
+ "tokio",
+ "tracing-subscriber 0.3.23",
+]
+
+[[package]]
 name = "starcoin-node-mcp-core"
 version = "0.1.0"
 dependencies = [

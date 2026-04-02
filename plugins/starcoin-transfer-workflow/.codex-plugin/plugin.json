@@ -19,16 +19,15 @@
   ],
   "skills": "./skills/",
   "hooks": "./hooks/hooks.json",
-  "mcpServers": "./.mcp.json",
   "interface": {
     "displayName": "Starcoin Transfer",
-    "shortDescription": "User-approved Starcoin transfers inside Codex.",
-    "longDescription": "Registers the Starcoin node and wallet MCP servers in Codex and adds a transfer skill that keeps prepare, confirm, sign, submit, and watch steps bound together.",
+    "shortDescription": "User-approved Starcoin transfers through local runtimes.",
+    "longDescription": "Uses a transfer skill plus local scripts and CLIs to keep prepare, confirm, sign, submit, and watch steps bound together without requiring plugin-managed MCP servers.",
     "developerName": "Starcoin",
     "category": "Developer Tools",
     "capabilities": [
       "Interactive",
-      "Local MCP",
+      "Local Runtime",
       "User Approval"
     ],
     "websiteURL": "https://starcoin.org",

@@ -12,7 +12,7 @@ use url::Url;
 
 use crate::domain::{Mode, VmProfile};
 
-#[derive(Debug, Parser, Clone)]
+#[derive(Debug, Parser, Clone, Default)]
 #[command(name = "starcoin-node-mcp")]
 #[command(about = "Chain-facing MCP server for Starcoin nodes")]
 pub struct CliArgs {
@@ -386,6 +386,7 @@ impl RuntimeConfig {
         let log_level = cli
             .log_level
             .or(file_config.log_level)
+            .or_else(|| env::var("STARCOIN_NODE_CLI_LOG_LEVEL").ok())
             .or_else(|| env::var("STARCOIN_NODE_MCP_LOG_LEVEL").ok())
             .unwrap_or_else(|| "info".to_owned());
 
@@ -484,11 +485,37 @@ impl RuntimeConfig {
 }
 
 fn resolve_config_path(cli_path: Option<&Path>) -> Option<PathBuf> {
-    cli_path.map(Path::to_path_buf).or_else(default_config_path)
+    cli_path
+        .map(Path::to_path_buf)
+        .or_else(env_config_path)
+        .or_else(default_config_path)
 }
 
 fn default_config_path() -> Option<PathBuf> {
-    dirs::config_dir().map(|dir| dir.join(default_config_subdir()).join("node-mcp.toml"))
+    dirs::config_dir().map(|dir| {
+        let config_dir = dir.join(default_config_subdir());
+        let preferred = config_dir.join("node-cli.toml");
+        if preferred.exists() {
+            return preferred;
+        }
+        let legacy = config_dir.join("node-mcp.toml");
+        if legacy.exists() {
+            return legacy;
+        }
+        preferred
+    })
+}
+
+fn env_config_path() -> Option<PathBuf> {
+    for env_name in ["STARCOIN_NODE_CLI_CONFIG", "STARCOIN_NODE_MCP_CONFIG"] {
+        if let Ok(raw) = env::var(env_name) {
+            let trimmed = raw.trim();
+            if !trimmed.is_empty() {
+                return Some(PathBuf::from(trimmed));
+            }
+        }
+    }
+    None
 }
 
 fn default_config_subdir() -> &'static str {
@@ -690,12 +717,20 @@ mod tests {
 
     #[test]
     fn transaction_mode_requires_chain_pins() {
-        let cli = CliArgs::parse_from([
-            "starcoin-node-mcp",
-            "--rpc-endpoint-url",
-            "http://127.0.0.1:9850",
-            "--mode",
-            "transaction",
+        let config_path = std::env::temp_dir().join(format!(
+            "starcoin-node-mcp-missing-{}-{}.toml",
+            std::process::id(),
+            std::thread::current().name().unwrap_or("unnamed")
+        ));
+        let _ = std::fs::remove_file(&config_path);
+        let cli = CliArgs::parse_from(vec![
+            "starcoin-node-mcp".to_owned(),
+            "--config".to_owned(),
+            config_path.display().to_string(),
+            "--rpc-endpoint-url".to_owned(),
+            "http://127.0.0.1:9850".to_owned(),
+            "--mode".to_owned(),
+            "transaction".to_owned(),
         ]);
         let error = super::RuntimeConfig::load(cli).expect_err("missing chain pins should fail");
         assert!(error.to_string().contains("expected_chain_id"));
@@ -726,13 +761,13 @@ mod tests {
             "--mode",
             "read_only",
             "--vm-profile",
-            "vm2_only",
+            "vm1_only",
             "--allow-read-only-chain-autodetect",
             "true",
         ]);
         let config = super::RuntimeConfig::load(cli).expect("snake_case enum values should parse");
         assert_eq!(config.mode, Mode::ReadOnly);
-        assert_eq!(config.vm_profile, VmProfile::Vm2Only);
+        assert_eq!(config.vm_profile, VmProfile::Vm1Only);
     }
 
     #[test]
@@ -744,13 +779,13 @@ mod tests {
             "--mode",
             "read-only",
             "--vm-profile",
-            "legacy-compatible",
+            "vm1-only",
             "--allow-read-only-chain-autodetect",
             "true",
         ]);
         let config = super::RuntimeConfig::load(cli).expect("kebab-case enum aliases should parse");
         assert_eq!(config.mode, Mode::ReadOnly);
-        assert_eq!(config.vm_profile, VmProfile::LegacyCompatible);
+        assert_eq!(config.vm_profile, VmProfile::Vm1Only);
     }
 
     #[test]
@@ -777,7 +812,7 @@ mod tests {
         let config = FileConfig {
             rpc_endpoint_url: Some("https://barnard.example.com".to_owned()),
             mode: Some(Mode::Transaction),
-            vm_profile: Some(VmProfile::LegacyCompatible),
+            vm_profile: Some(VmProfile::Vm1Only),
             expected_chain_id: Some(251),
             expected_network: Some("barnard".to_owned()),
             expected_genesis_hash: Some("0xabc".to_owned()),

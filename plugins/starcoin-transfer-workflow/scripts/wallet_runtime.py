@@ -17,7 +17,10 @@ from typing import Any
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_ROOT = Path(
-    os.environ.get("STARCOIN_MCP_WORKSPACE_ROOT", str(PLUGIN_ROOT.parent.parent))
+    os.environ.get(
+        "STARCOIN_TRANSFER_WORKSPACE_ROOT",
+        os.environ.get("STARCOIN_MCP_WORKSPACE_ROOT", str(PLUGIN_ROOT.parent.parent)),
+    )
 ).resolve()
 STARMASKD_MANIFEST = (
     WORKSPACE_ROOT / "starmask-mcp" / "crates" / "starmaskd" / "Cargo.toml"

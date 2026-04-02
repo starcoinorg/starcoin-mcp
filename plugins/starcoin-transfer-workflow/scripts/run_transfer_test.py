@@ -14,13 +14,19 @@ import tempfile
 import time
 from pathlib import Path
 from typing import Any
-from urllib.error import URLError
 from urllib.request import Request, urlopen
+
+from node_cli_client import NodeCliClient
+from starmaskd_client import StarmaskDaemonClient
+from transfer_controller import CANONICAL_STC_TOKEN_CODE, TransferController
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 WORKSPACE_ROOT = Path(
-    os.environ.get("STARCOIN_MCP_WORKSPACE_ROOT", str(PLUGIN_ROOT.parent.parent))
+    os.environ.get(
+        "STARCOIN_TRANSFER_WORKSPACE_ROOT",
+        os.environ.get("STARCOIN_MCP_WORKSPACE_ROOT", str(PLUGIN_ROOT.parent.parent)),
+    )
 ).resolve()
 STARMASKD_MANIFEST = (
     WORKSPACE_ROOT / "starmask-mcp" / "crates" / "starmaskd" / "Cargo.toml"
@@ -30,16 +36,6 @@ LOCAL_AGENT_MANIFEST = (
     / "starmask-mcp"
     / "crates"
     / "starmask-local-account-agent"
-    / "Cargo.toml"
-)
-STARMASK_MCP_MANIFEST = (
-    WORKSPACE_ROOT / "starmask-mcp" / "crates" / "starmask-mcp" / "Cargo.toml"
-)
-NODE_MCP_MANIFEST = (
-    WORKSPACE_ROOT
-    / "starcoin-node-mcp"
-    / "crates"
-    / "starcoin-node-mcp-server"
     / "Cargo.toml"
 )
 
@@ -77,7 +73,7 @@ def launch_command(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Run one local user-in-the-loop transfer test through the Starcoin MCP stack."
+        description="Run one local user-in-the-loop transfer test through the script and CLI transfer stack."
     )
     parser.add_argument("--rpc-url", required=True, help="Starcoin HTTP RPC endpoint")
     parser.add_argument(
@@ -101,11 +97,17 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--amount",
         default="1000",
-        help="Raw on-chain integer amount passed to prepare_transfer",
+        help="Transfer amount. Use raw on-chain units by default, or pair with --amount-unit stc for human-readable STC.",
+    )
+    parser.add_argument(
+        "--amount-unit",
+        choices=("raw", "stc"),
+        default="raw",
+        help="Interpret --amount as raw on-chain units or human-readable STC.",
     )
     parser.add_argument(
         "--token-code",
-        default="0x1::starcoin_coin::STC",
+        default=CANONICAL_STC_TOKEN_CODE,
         help="Transfer token code passed to prepare_transfer",
     )
     parser.add_argument(
@@ -128,7 +130,7 @@ def parse_args() -> argparse.Namespace:
         "--watch-timeout-seconds",
         type=int,
         default=120,
-        help="Blocking submit/watch timeout passed to starcoin-node-mcp",
+        help="Blocking submit/watch timeout passed to starcoin-node-cli",
     )
     return parser.parse_args()
 
@@ -230,112 +232,6 @@ def socket_reachable(path: Path) -> tuple[bool, str]:
         client.close()
 
 
-class JsonRpcLineClient:
-    def __init__(
-        self,
-        name: str,
-        args: list[str],
-        *,
-        cwd: Path,
-        env: dict[str, str] | None = None,
-        stderr_path: Path | None = None,
-    ):
-        self.name = name
-        self._next_id = 1
-        self.stderr_path = stderr_path
-        self.stderr_handle = (
-            stderr_path.open("w", encoding="utf-8") if stderr_path is not None else None
-        )
-        self.process = subprocess.Popen(
-            args,
-            cwd=str(cwd),
-            env=env,
-            stdin=subprocess.PIPE,
-            stdout=subprocess.PIPE,
-            stderr=self.stderr_handle if self.stderr_handle is not None else subprocess.DEVNULL,
-            text=True,
-            bufsize=1,
-        )
-        assert self.process.stdin is not None
-        assert self.process.stdout is not None
-
-    def _send(self, payload: dict[str, Any]) -> None:
-        line = json.dumps(payload, separators=(",", ":"))
-        self.process.stdin.write(line + "\n")
-        self.process.stdin.flush()
-
-    def _receive_until_response(self, request_id: int) -> dict[str, Any]:
-        while True:
-            line = self.process.stdout.readline()
-            if not line:
-                stderr_tail = (
-                    read_text_if_exists(self.stderr_path).strip()
-                    if self.stderr_path is not None
-                    else ""
-                )
-                raise RuntimeError(
-                    f"{self.name} exited before replying to request {request_id}. stderr: {stderr_tail}"
-                )
-            message = json.loads(line)
-            if message.get("id") == request_id:
-                return message
-
-    def initialize(self) -> None:
-        request_id = self._next_id
-        self._next_id += 1
-        self._send(
-            {
-                "jsonrpc": "2.0",
-                "id": request_id,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2025-11-25",
-                    "capabilities": {},
-                    "clientInfo": {"name": "starcoin-transfer-test", "version": "0.1.0"},
-                },
-            }
-        )
-        response = self._receive_until_response(request_id)
-        if "error" in response:
-            raise RuntimeError(f"{self.name} initialize failed: {response['error']}")
-        self._send({"jsonrpc": "2.0", "method": "notifications/initialized"})
-
-    def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
-        request_id = self._next_id
-        self._next_id += 1
-        payload = {
-            "jsonrpc": "2.0",
-            "id": request_id,
-            "method": "tools/call",
-            "params": {"name": name, "arguments": arguments or {}},
-        }
-        self._send(payload)
-        response = self._receive_until_response(request_id)
-        if "error" in response:
-            raise RuntimeError(f"{self.name} {name} failed: {response['error']}")
-        result = response["result"]
-        structured = result.get("structuredContent")
-        if structured is not None:
-            return structured
-        content = result.get("content") or []
-        if content:
-            first = content[0]
-            if first.get("type") == "text":
-                return json.loads(first["text"])
-        raise RuntimeError(f"{self.name} {name} returned no structured content")
-
-    def terminate(self) -> None:
-        if self.process.poll() is None:
-            self.process.terminate()
-            try:
-                self.process.wait(timeout=5)
-            except subprocess.TimeoutExpired:  # pragma: no cover - manual flow only
-                self.process.kill()
-                self.process.wait(timeout=5)
-        if self.stderr_handle is not None:
-            self.stderr_handle.close()
-
-
 def render_card(title: str, rows: list[tuple[str, str]]) -> str:
     width = 78
     label_width = max(len(label) for label, _ in rows) if rows else 0
@@ -363,7 +259,7 @@ def prompt_yes_no(prompt: str) -> bool:
 
 
 def wait_for_wallet_instance(
-    wallet_client: JsonRpcLineClient, wallet_instance_id: str, timeout_seconds: int = 10
+    wallet_client: Any, wallet_instance_id: str, timeout_seconds: int = 10
 ) -> dict[str, Any]:
     deadline = time.time() + timeout_seconds
     last_result: dict[str, Any] | None = None
@@ -436,7 +332,7 @@ def main() -> int:
     else:
         socket_path = choose_socket_path(runtime_dir)
     database_path = run_dir / "starmaskd.sqlite3"
-    node_config_path = runtime_dir / "node-mcp.toml"
+    node_config_path = runtime_dir / "node-cli.toml"
     wallet_config_path = runtime_dir / "starmaskd.toml"
     if wallet_runtime is None and runtime_dir_explicit and socket_path.exists():
         socket_path.unlink()
@@ -545,10 +441,6 @@ require_strict_permissions = true
             text=True,
         )
 
-    started_children: list[Any] = []
-    node_client: JsonRpcLineClient | None = None
-    wallet_client: JsonRpcLineClient | None = None
-
     try:
         deadline = time.time() + 10
         while time.time() < deadline:
@@ -573,81 +465,36 @@ require_strict_permissions = true
                 f"wallet runtime socket did not become ready in time: {socket_path} ({socket_detail})"
             )
 
-        node_client = JsonRpcLineClient(
-            "starcoin-node-mcp",
-            launch_command(
-                env_name="STARCOIN_NODE_MCP_BIN",
-                binary_name="starcoin-node-mcp",
-                manifest_path=NODE_MCP_MANIFEST,
-                cargo_bin_name="starcoin-node-mcp",
-                program_args=["--config", str(node_config_path)],
-            ),
-            cwd=WORKSPACE_ROOT,
-            stderr_path=log_dir / "starcoin-node-mcp.stderr.log",
+        node_client = NodeCliClient(
+            config_path=node_config_path,
+            workspace_root=WORKSPACE_ROOT,
         )
-        wallet_client = JsonRpcLineClient(
-            "starmask-mcp",
-            launch_command(
-                env_name="STARMASK_MCP_BIN",
-                binary_name="starmask-mcp",
-                manifest_path=STARMASK_MCP_MANIFEST,
-                cargo_bin_name="starmask-mcp",
-                program_args=["--daemon-socket-path", str(socket_path)],
-            ),
-            cwd=WORKSPACE_ROOT,
-            stderr_path=log_dir / "starmask-mcp.stderr.log",
+        wallet_client = StarmaskDaemonClient(
+            socket_path=socket_path,
         )
-        started_children.extend([node_client, wallet_client])
-        node_client.initialize()
-        wallet_client.initialize()
-
-        wallet_instances = wait_for_wallet_instance(wallet_client, wallet_instance_id)
-        wallet_accounts = wallet_client.call_tool(
-            "wallet_list_accounts",
-            {"wallet_instance_id": wallet_instance_id, "include_public_key": True},
+        wait_for_wallet_instance(wallet_client, wallet_instance_id)
+        controller = TransferController(
+            node_client=node_client,
+            wallet_client=wallet_client,
+            chain_id=chain_id,
+            network=network,
+            genesis_hash=genesis_hash,
         )
-        public_key_result = wallet_client.call_tool(
-            "wallet_get_public_key",
-            {
-                "wallet_instance_id": wallet_instance_id,
-                "address": args.sender,
-            },
-        )
-        prepare_result = node_client.call_tool(
-            "prepare_transfer",
-            {
-                "sender": args.sender,
-                "sender_public_key": public_key_result["public_key"],
-                "receiver": args.receiver,
-                "amount": args.amount,
-                "token_code": args.token_code,
-            },
-        )
-
+        try:
+            session = controller.prepare_session(
+                wallet_instance_id=wallet_instance_id,
+                sender=args.sender,
+                receiver=args.receiver,
+                amount=args.amount,
+                amount_unit=args.amount_unit,
+                token_code=args.token_code,
+            )
+        except ValueError as error:
+            raise SystemExit(f"invalid transfer amount: {error}") from error
         print(
             render_card(
                 "Host Transfer Confirmation",
-                [
-                    ("Network", f"{network} ({chain_id})"),
-                    ("Genesis", genesis_hash),
-                    ("Wallet Instance", wallet_instance_id),
-                    ("Known Wallets", str(len(wallet_instances["wallet_instances"]))),
-                    (
-                        "Visible Accounts",
-                        str(
-                            sum(
-                                len(group["accounts"])
-                                for group in wallet_accounts["wallet_instances"]
-                            )
-                        ),
-                    ),
-                    ("Sender", args.sender),
-                    ("Receiver", args.receiver),
-                    ("Amount", args.amount),
-                    ("Token", args.token_code),
-                    ("Simulation", prepare_result["simulation_status"]),
-                    ("Prepared At", prepare_result["prepared_at"]),
-                ],
+                controller.confirmation_rows(session),
             )
         )
         print()
@@ -657,19 +504,11 @@ require_strict_permissions = true
             print("Transfer test cancelled before wallet_request_sign_transaction.")
             return 0
 
-        request = wallet_client.call_tool(
-            "wallet_request_sign_transaction",
-            {
-                "client_request_id": f"transfer-test-{int(time.time())}",
-                "account_address": args.sender,
-                "wallet_instance_id": wallet_instance_id,
-                "chain_id": chain_id,
-                "raw_txn_bcs_hex": prepare_result["raw_txn_bcs_hex"],
-                "tx_kind": str(prepare_result["transaction_kind"]).lower(),
-                "display_hint": f"Transfer {args.amount} to {args.receiver}",
-                "client_context": "starcoin-transfer-test",
-                "ttl_seconds": args.ttl_seconds,
-            },
+        request = controller.create_sign_request(
+            session,
+            client_request_id=f"transfer-test-{int(time.time())}",
+            ttl_seconds=args.ttl_seconds,
+            client_context="starcoin-transfer-test",
         )
         request_id = request["request_id"]
         print()
@@ -686,19 +525,10 @@ require_strict_permissions = true
             )
         )
         print("Use the local-account-agent prompt in this terminal to approve or reject.")
-
-        last_status = None
-        while True:
-            status = wallet_client.call_tool(
-                "wallet_get_request_status", {"request_id": request_id}
-            )
-            current = status["status"]
-            if current != last_status:
-                print(f"wallet_get_request_status -> {current}")
-                last_status = current
-            if current in {"approved", "rejected", "cancelled", "expired", "failed"}:
-                break
-            time.sleep(1)
+        status = controller.wait_for_terminal_request(
+            session,
+            on_status_change=lambda current: print(f"wallet_get_request_status -> {current}"),
+        )
 
         if status["status"] != "approved":
             print(
@@ -714,45 +544,15 @@ require_strict_permissions = true
             )
             return 1
 
-        signed_txn = status["result"]["signed_txn_bcs_hex"]
-        submit_result = node_client.call_tool(
-            "submit_signed_transaction",
-            {
-                "signed_txn_bcs_hex": signed_txn,
-                "prepared_chain_context": prepare_result["chain_context"],
-                "blocking": True,
-                "timeout_seconds": args.watch_timeout_seconds,
-            },
+        submit_outcome = controller.submit(
+            session,
+            timeout_seconds=args.watch_timeout_seconds,
+            blocking=True,
         )
-        rows = [
-            ("Txn Hash", submit_result["txn_hash"]),
-            ("Submission State", submit_result["submission_state"]),
-            ("Submitted", str(submit_result["submitted"])),
-            ("Next Action", submit_result["next_action"]),
-        ]
-        watch_result = submit_result.get("watch_result")
-        if watch_result:
-            rows.extend(
-                [
-                    ("Confirmed", str(watch_result["confirmed"])),
-                    (
-                        "VM Status",
-                        str(watch_result["status_summary"].get("vm_status")),
-                    ),
-                    (
-                        "Found",
-                        str(watch_result["status_summary"].get("found")),
-                    ),
-                ]
-            )
         print()
-        print(render_card("Submit Result", rows))
-        return 0
+        print(render_card("Submit Result", controller.submit_rows(submit_outcome)))
+        return 0 if submit_outcome.success else 1
     finally:
-        if node_client is not None:
-            node_client.terminate()
-        if wallet_client is not None:
-            wallet_client.terminate()
         if agent is not None and agent.poll() is None:
             agent.send_signal(signal.SIGTERM)
             try:

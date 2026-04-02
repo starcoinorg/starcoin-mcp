@@ -655,7 +655,7 @@ Recommended internal modules:
 - `mapper`
   - maps RPC responses to MCP-friendly outputs
 
-The compatibility and normalization rules for this layer are defined in `starcoin-node-mcp/docs/rpc-adapter-design.md`.
+The RPC surface classification and normalization rules for this layer are defined in `starcoin-node-mcp/docs/rpc-adapter-design.md`.
 
 In the Rust implementation, these modules should be separate crates or crate-local modules with `TryFrom` or mapper boundaries rather than direct tool-handler access to RPC response structs.
 

@@ -1,6 +1,9 @@
 # Copy this file to:
-#   macOS: ~/Library/Application Support/StarcoinMCP/node-mcp.toml
-#   Linux: ~/.config/starcoin-mcp/node-mcp.toml
+#   macOS: ~/Library/Application Support/StarcoinMCP/node-cli.toml
+#   Linux: ~/.config/starcoin-mcp/node-cli.toml
+#
+# The runtime still falls back to the legacy node-mcp.toml name when it exists, but new
+# setups should use node-cli.toml.
 #
 # Replace the placeholder RPC URL and genesis hash with the chain you actually intend to use.
 # In transaction mode, rpc_endpoint_url, mode, expected_chain_id, and expected_network are required.
@@ -10,7 +13,9 @@ rpc_endpoint_url = "https://barnard.seed.example.org"
 # Required for the transfer workflow. Optional values: "read_only", "transaction".
 # If omitted, the runtime default is "read_only".
 mode = "transaction"
-# Optional values: "auto", "vm2_only", "legacy_compatible".
+# Optional values: "auto", "vm1_only", "vm2_only".
+# The runtime distinguishes shared RPC, VM1 RPC surface, and VM2 RPC surface.
+# "auto" prefers VM2 names where both VM1 and VM2 routes exist.
 # Runtime default: "auto".
 vm_profile = "auto"
 

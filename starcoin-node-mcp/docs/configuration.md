@@ -62,7 +62,8 @@ Recommended Rust-native normalized types:
 ### macOS
 
 - config file:
-  - `$HOME/Library/Application Support/StarcoinMCP/node-mcp.toml`
+  - preferred: `$HOME/Library/Application Support/StarcoinMCP/node-cli.toml`
+  - legacy fallback: `$HOME/Library/Application Support/StarcoinMCP/node-mcp.toml`
 - log file:
   - `$HOME/Library/Logs/StarcoinMCP/starcoin-node-mcp.log`
 - cache directory:
@@ -71,8 +72,10 @@ Recommended Rust-native normalized types:
 ### Linux
 
 - config file:
-  - `$XDG_CONFIG_HOME/starcoin-mcp/node-mcp.toml`
-  - fallback: `$HOME/.config/starcoin-mcp/node-mcp.toml`
+  - preferred: `$XDG_CONFIG_HOME/starcoin-mcp/node-cli.toml`
+  - fallback: `$HOME/.config/starcoin-mcp/node-cli.toml`
+  - legacy fallback: `$XDG_CONFIG_HOME/starcoin-mcp/node-mcp.toml`
+  - legacy fallback: `$HOME/.config/starcoin-mcp/node-mcp.toml`
 - log file:
   - `$XDG_STATE_HOME/starcoin-mcp/starcoin-node-mcp.log`
   - fallback: `$HOME/.local/state/starcoin-mcp/starcoin-node-mcp.log`
@@ -83,7 +86,8 @@ Recommended Rust-native normalized types:
 ### Windows
 
 - config file:
-  - `%APPDATA%\\StarcoinMCP\\node-mcp.toml`
+  - preferred: `%APPDATA%\\StarcoinMCP\\node-cli.toml`
+  - legacy fallback: `%APPDATA%\\StarcoinMCP\\node-mcp.toml`
 - log file:
   - `%LOCALAPPDATA%\\StarcoinMCP\\logs\\starcoin-node-mcp.log`
 - cache directory:
@@ -99,8 +103,15 @@ Recommended Rust-native normalized types:
   - `transaction`
 - `vm_profile`
   - `auto`
+    - shared RPC stays shared; dual-surface methods prefer the VM2 RPC surface
+  - `vm1_only`
+    - dual-surface methods require the VM1 RPC surface
   - `vm2_only`
-  - `legacy_compatible`
+    - dual-surface methods require the VM2 RPC surface
+
+`vm_profile` is an adapter routing choice across three RPC categories: shared RPC, VM1 RPC
+surface, and VM2 RPC surface. It does not declare semantic compatibility between VM1 and VM2
+transactions, token codes, or resources.
 
 ### Chain Pin Settings
 
@@ -269,6 +280,11 @@ Suggested environment variable names:
 - `STARCOIN_NODE_MCP_MAX_CONCURRENT_WATCH_REQUESTS`
 - `STARCOIN_NODE_MCP_MAX_INFLIGHT_EXPENSIVE_REQUESTS`
 - `STARCOIN_NODE_MCP_LOG_LEVEL`
+
+Compatibility notes:
+
+- `STARCOIN_NODE_CLI_CONFIG` is also accepted when selecting a config file path for `starcoin-node-cli`
+- `STARCOIN_NODE_CLI_LOG_LEVEL` is accepted as a newer alias for `STARCOIN_NODE_MCP_LOG_LEVEL`
 
 These names follow the precedence order defined earlier in this document:
 
