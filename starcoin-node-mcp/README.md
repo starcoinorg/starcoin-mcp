@@ -1,6 +1,11 @@
 # Starcoin Node MCP
 
-This subproject contains the design set for the chain-facing Starcoin MCP server.
+This subproject contains the chain-facing Starcoin node library/CLI implementation plus its design
+set.
+
+The repository no longer ships an in-tree MCP server adapter for `starcoin-node-mcp`. The current
+Rust implementation in this workspace is centered on shared libraries plus the `starcoin-node-cli`
+binary.
 
 The intended role of `starcoin-node-mcp` is:
 
@@ -27,4 +32,5 @@ The first conforming implementation of `starcoin-node-mcp` is required to be wri
 
 ## Status
 
-Implementation-oriented design set for review as a subproject of `starcoin-mcp`.
+Shared library and CLI implementation with design references for a possible future external MCP
+adapter.

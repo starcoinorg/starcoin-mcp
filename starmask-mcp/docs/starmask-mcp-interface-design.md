@@ -2,8 +2,11 @@
 
 ## Status
 
-This document is the authoritative MCP-facing contract for the current implementation in this
-repository.
+This document records the MCP-facing contract that the repository used to ship in-tree.
+
+The `crates/starmask-mcp` adapter has been removed from the workspace. This document now serves as
+design guidance for any future external adapter and should not be read as a statement that the
+current repository still contains that binary.
 
 Current scope is:
 

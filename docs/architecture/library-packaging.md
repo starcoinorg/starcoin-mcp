@@ -57,10 +57,14 @@ This means the host reuses the same MCP adapter logic as the standalone binary r
 
 `starmask-mcp` already has a separate daemon boundary.
 
+The repository no longer ships an in-tree `starmask-mcp` adapter crate. If an MCP adapter is added
+back later, it should remain a thin layer over the daemon client boundary instead of taking over
+wallet lifecycle ownership.
+
 Recommended packaging model:
 
 - `starmask-core` and `starmaskd` remain independent of `rmcp`
-- the `starmask-mcp` crate exposes the MCP adapter as a library as well as a binary
+- any future `starmask-mcp` crate should expose the MCP adapter as a library as well as a binary
 - the adapter depends on a `DaemonClient` trait rather than only one concrete local client
 - `LocalDaemonClient` remains the default implementation for stdio hosts that talk to `starmaskd` over local IPC
 
@@ -68,31 +72,38 @@ Recommended public facade:
 
 - `DaemonClient`
 - `LocalDaemonClient`
-- `StarmaskMcpServer<C>`
-- `serve_stdio(client)`
+- a future `StarmaskMcpServer<C>`-style adapter type
+- a future `serve_stdio(client)` helper
 - `default_socket_path()`
 
-This keeps wallet lifecycle and persistence in `starmaskd` while allowing another Rust binary to reuse the same MCP adapter in-process.
+This keeps wallet lifecycle and persistence in `starmaskd` while allowing another Rust binary to
+reuse the same MCP adapter in-process if one is reintroduced.
 
-Keep the architecture boundary explicit between `starmask-mcp` (MCP stdio adapter), `starmaskd` (lifecycle owner and persistence owner), `starmask-native-host` (Chrome Native Messaging bridge), and the Starmask extension (approval UI and signing authority).
+Keep the architecture boundary explicit between any future `starmask-mcp` transport adapter,
+`starmaskd` (lifecycle owner and persistence owner), `starmask-native-host` (Chrome Native
+Messaging bridge), and the Starmask extension (approval UI and signing authority).
 
 ## Node MCP Packaging
 
 `starcoin-node-mcp` does not need a daemon in the first release.
 
+The repository no longer ships an in-tree `starcoin-node-mcp-server` crate. If an MCP adapter is
+added back later, it should remain a thin wrapper over the existing libraries and CLI-facing app
+bootstrap.
+
 Recommended packaging model:
 
 - `starcoin-node-mcp-core` owns typed app bootstrap and orchestration
 - `starcoin-node-mcp-rpc` owns endpoint probing and RPC normalization
-- `starcoin-node-mcp-server` owns `rmcp` integration and exports a library facade
-- the standalone `starcoin-node-mcp` binary becomes a thin wrapper around that facade
+- `starcoin-node-cli` is the current thin executable wrapper around the shared app bootstrap
+- any future MCP adapter should own `rmcp` integration as a separate thin crate
 
 Recommended public facade:
 
 - `AppContext::bootstrap(config)`
-- `StarcoinNodeMcpServer::new(app)`
-- `serve_stdio(app)`
-- optionally `serve_stdio_with_config(config)`
+- CLI entrypoints should keep config loading and tracing at the binary boundary
+- any future MCP adapter should expose its own `serve_stdio(app)`-style helper without changing
+  core or RPC crates
 
 ## Non-Goal
 

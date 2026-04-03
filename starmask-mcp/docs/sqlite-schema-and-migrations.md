@@ -5,6 +5,9 @@
 This document is the authoritative `v1` schema design for the current extension-backed
 implementation.
 
+Repository status note: the in-tree `crates/starmask-mcp` adapter has been removed. Schema guidance
+remains current for the daemon-owned persistence layer.
+
 Planned generic wallet-backend schema changes are tracked in
 `docs/unified-wallet-coordinator-evolution.md`.
 

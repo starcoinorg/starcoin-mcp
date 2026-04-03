@@ -6,6 +6,10 @@ This document defines how the required first `starcoin-node-mcp` implementation 
 
 It translates the chain-side interface, deployment, configuration, and adapter documents into Rust-specific implementation constraints.
 
+Repository status note: the in-tree `starcoin-node-mcp-server` crate has been removed. The current
+workspace ships shared libraries plus `starcoin-node-cli`; server-specific guidance below should be
+read as design guidance for any future external adapter.
+
 ## Language Requirement
 
 The first conforming implementation is:
@@ -53,7 +57,7 @@ starcoin-node-mcp/
     starcoin-node-mcp-types/
     starcoin-node-mcp-core/
     starcoin-node-mcp-rpc/
-    starcoin-node-mcp-server/
+    starcoin-node-cli/
 ```
 
 Recommended responsibilities:
@@ -71,10 +75,13 @@ Recommended responsibilities:
   - Starcoin RPC client abstraction
   - shared/vm1/vm2 RPC surface routing
   - RPC-native view mapping
-- `starcoin-node-mcp-server`
+- `starcoin-node-cli`
+  - process startup and config loading
+  - command dispatch into typed app services
+  - tracing and runtime bootstrap for the current executable surface
+- any future MCP adapter crate
   - `rmcp` integration
   - tool registration
-  - process startup and config loading
   - optional embeddable library entrypoints for host binaries that want to reuse the same MCP adapter in-process
 
 ## Runtime Model
@@ -88,20 +95,21 @@ Recommended responsibilities:
 
 Recommended model:
 
-1. `starcoin-node-mcp-server` receives MCP tool calls
-2. tool handlers deserialize boundary DTOs
+1. `starcoin-node-cli` receives command requests
+2. CLI handlers deserialize boundary DTOs
 3. handlers call typed domain services in `starcoin-node-mcp-core`
 4. core services use trait-based adapters from `starcoin-node-mcp-rpc`
-5. results are mapped back into MCP tool outputs
+5. results are mapped back into JSON command outputs
 
-The standalone binary may continue to own runtime setup and config loading, but the server crate may also expose a small library facade so another Rust binary can bootstrap config, initialize tracing, and call the same stdio MCP adapter without copying handler wiring.
+The standalone binary should own runtime setup and config loading. If an MCP adapter is added back,
+it may expose a small library facade so another Rust binary can bootstrap config, initialize
+tracing, and call the same stdio MCP adapter without copying handler wiring.
 
 Recommended library-facing surface:
 
 - `AppContext::bootstrap(config)`
-- `StarcoinNodeMcpServer::new(app)`
-- `serve_stdio(app)`
-- optionally `serve_stdio_with_config(config)`
+- CLI-facing helpers should keep DTO decoding at the executable boundary
+- any future MCP adapter should expose its own `serve_stdio(app)` helper
 
 The first implementation does not need a dedicated coordinator task or durable state machine.
 

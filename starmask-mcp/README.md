@@ -1,7 +1,13 @@
 # Starmask MCP
 
-This subproject contains the current Starmask MCP implementation and its companion design
-documents under the following assumptions:
+This subproject contains the current Starmask daemon-side implementation and its companion design
+documents.
+
+The repository no longer ships an in-tree `starmask-mcp` stdio adapter crate. The current Rust
+workspace centers on `starmaskd`, `starmask-native-host`, `starmask-core`, and the local-account
+agent/runtime pieces.
+
+The design documents still record the adapter contract and related wallet workflow assumptions:
 
 - `starmask-mcp` is a local MCP server exposed to MCP hosts such as Claude Code and Codex.
 - `starmaskd` is a long-lived local daemon.
@@ -34,4 +40,4 @@ documents under the following assumptions:
 
 Phase 2 is now implemented for the daemon-side generic backend contract and the first
 `local_account_dir` agent over the local-socket binding. The extension-backed `v1` path remains
-supported for compatibility.
+supported for compatibility, but the repository no longer includes the MCP stdio adapter binary.

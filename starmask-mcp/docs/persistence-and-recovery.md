@@ -5,6 +5,9 @@
 This document is the authoritative `v1` persistence and recovery design for the current
 extension-backed implementation.
 
+Repository status note: the in-tree `crates/starmask-mcp` adapter has been removed. Persistence and
+recovery rules remain current for `starmaskd` and the remaining daemon-side components.
+
 Future generic wallet-backend persistence changes are tracked in:
 
 - `docs/unified-wallet-coordinator-evolution.md`

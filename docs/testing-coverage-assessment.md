@@ -51,8 +51,6 @@ Current evidence:
 - core unit and policy tests in `crates/starcoin-node-mcp-core/src/tests.rs`
 - flow-closure tests in `crates/starcoin-node-mcp-core/tests/flow_closure.rs`
 - RPC adapter tests in `crates/starcoin-node-mcp-rpc/src/tests.rs`
-- MCP tool-surface tests in `crates/starcoin-node-mcp-server/tests/tool_surface.rs`
-- runtime bootstrap tests in `crates/starcoin-node-mcp-server/tests/runtime.rs`
 - shared-schema compatibility test in `crates/starcoin-node-mcp-types/tests/schema_compat.rs`
 - config parsing and schema tests in `crates/starcoin-node-mcp-types/src/config.rs`
 - one ignored live read-only smoke test in `crates/starcoin-node-mcp-core/tests/live_read_only.rs`
@@ -61,9 +59,9 @@ Assessment:
 
 | Area | Status | Evidence | Gap |
 | --- | --- | --- | --- |
-| Required Rust test layers | `partial` | Layers 1-3 are present through core, RPC, MCP, and schema tests. A live endpoint layer exists as an ignored read-only smoke test. | The required end-to-end transaction layer from the acceptance doc is not present as a routinely running automated test. The only live test is read-only and ignored by default. |
-| Startup and capability probing | `partial` | Config and probe behavior are covered in `crates/starcoin-node-mcp-types/src/config.rs`, `crates/starcoin-node-mcp-rpc/src/tests.rs`, and `crates/starcoin-node-mcp-server/tests/runtime.rs`. | The acceptance doc asks for startup behavior on chain mismatch, genesis mismatch, and capability refresh after reconnect. Those scenarios are not fully exercised as explicit startup tests. |
-| Query and ABI correctness | `partial` | Query degradation and pending-transaction behavior are covered in `crates/starcoin-node-mcp-core/tests/flow_closure.rs`; adapter capability normalization is covered in `crates/starcoin-node-mcp-rpc/src/tests.rs`; MCP JSON output checks exist in `crates/starcoin-node-mcp-server/tests/tool_surface.rs`. | The design expects stable normalized outputs for the whole query and ABI surface. Coverage exists, but not as a comprehensive matrix or snapshot suite for all query tools. |
+| Required Rust test layers | `partial` | Layers 1-2 are present through core, RPC, and schema tests. A live endpoint layer exists as an ignored read-only smoke test. | The repository no longer includes an MCP adapter crate, so there is no in-tree MCP transport layer under test. The required end-to-end transaction layer from the acceptance doc is also not present as a routinely running automated test. |
+| Startup and capability probing | `partial` | Config and probe behavior are covered in `crates/starcoin-node-mcp-types/src/config.rs` and `crates/starcoin-node-mcp-rpc/src/tests.rs`. | The acceptance doc asks for startup behavior on chain mismatch, genesis mismatch, and capability refresh after reconnect. Those scenarios are not fully exercised as explicit startup or CLI bootstrap tests. |
+| Query and ABI correctness | `partial` | Query degradation and pending-transaction behavior are covered in `crates/starcoin-node-mcp-core/tests/flow_closure.rs`; adapter capability normalization is covered in `crates/starcoin-node-mcp-rpc/src/tests.rs`. | The design expects stable normalized outputs for the whole query and ABI surface. Coverage exists, but not as a comprehensive matrix or snapshot suite for all query tools. |
 | Preparation and simulation correctness | `strong` | Preparation, skipped-simulation behavior, explicit follow-up simulation, sequence fallback, and shared-schema compatibility are covered in `crates/starcoin-node-mcp-core/tests/flow_closure.rs`, `crates/starcoin-node-mcp-core/src/tests.rs`, and `crates/starcoin-node-mcp-types/tests/schema_compat.rs`. | The acceptance doc asks for host-facing result snapshots; current tests use structural assertions rather than snapshot fixtures. |
 | Submission and reconciliation behavior | `partial` | Local reconciliation policy, `submission_unknown`, stale blind-resubmission blocking, chain-context validation, and simulation-attestation policy are covered in `crates/starcoin-node-mcp-core/src/tests.rs` and `crates/starcoin-node-mcp-core/tests/flow_closure.rs`. | There is no automated end-to-end test proving a successful prepare -> simulate -> sign -> submit -> watch flow against a live or local endpoint. Expiry and stale-sequence handling are validated in policy code paths, but not as full endpoint-integrated scenarios. |
 | Security behavior | `partial` | Chain-context validation, submit policy, and config redaction behavior are covered in `crates/starcoin-node-mcp-core/src/tests.rs` and `crates/starcoin-node-mcp-types/src/config.rs`. | The acceptance doc also calls for evidence around transport security defaults, log redaction, and wallet-side security boundaries. The repository does not currently contain explicit manual verification records for those release-gate items. |
@@ -104,7 +102,6 @@ Current evidence:
 - daemon transport tests in `crates/starmaskd/tests/transport.rs`
 - migration compatibility tests in `crates/starmaskd/tests/migration_compatibility.rs`
 - Native Messaging framing and bridge tests in `crates/starmask-native-host/src/*`
-- MCP shim request and error mapping tests in `crates/starmask-mcp/tests/*`
 - local-account signing, unlock, snapshot, and heartbeat tests in `crates/starmask-local-account-agent/src/agent.rs`
 - full local-stack daemon-plus-agent tests in `crates/starmask-local-account-agent/src/agent/stack_tests.rs`
 - local prompt rendering tests in `crates/starmask-local-account-agent/src/prompt.rs`
@@ -116,7 +113,7 @@ Current evidence:
 | Area | Status | Evidence | Gap |
 | --- | --- | --- | --- |
 | Protocol, lifecycle, and recovery | `strong` | `crates/starmask-core/src/service.rs`, `crates/starmaskd/tests/recovery.rs`, and `crates/starmaskd/tests/transport.rs` cover idempotency, lifecycle transitions, restart behavior, and same-instance resume. | The acceptance doc still requires manual evidence for browser- and UI-dependent release checks. |
-| Native Messaging and MCP shim | `strong` | `crates/starmask-native-host/src/framing.rs`, `crates/starmask-native-host/src/bridge.rs`, `crates/starmask-native-host/src/notify.rs`, and `crates/starmask-mcp/tests/*` cover framing, bridge mapping, notification tracking, tool registration, request mapping, and MCP error mapping. | Real Chrome registration and MCP Inspector interoperability still need manual evidence. |
+| Native Messaging and MCP shim | `partial` | `crates/starmask-native-host/src/framing.rs`, `crates/starmask-native-host/src/bridge.rs`, and `crates/starmask-native-host/src/notify.rs` cover framing, bridge mapping, and notification tracking. | The repository no longer includes the in-tree `starmask-mcp` adapter, so there is no local MCP shim coverage. Real Chrome registration and any external MCP adapter interoperability still need manual evidence. |
 | Current release gate | `partial` | The local automated story for `v1` is substantial. | The repository does not include manual verification records for approval UI rendering, live browser reconnect behavior, or real Chrome/Inspector checks required by the current acceptance doc. |
 
 ### Phase 2 Multi-Backend Contract

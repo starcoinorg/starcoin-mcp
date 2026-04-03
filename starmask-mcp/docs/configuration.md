@@ -4,6 +4,9 @@
 
 This document is the authoritative configuration contract for the current runtime.
 
+Repository status note: the in-tree `crates/starmask-mcp` adapter has been removed. Configuration
+references to `starmask-mcp` should be read as historical or external-adapter guidance.
+
 The current Rust code in `crates/starmaskd` supports both:
 
 - legacy extension-backed `v1` top-level settings for compatibility

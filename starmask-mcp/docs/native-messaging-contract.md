@@ -4,6 +4,9 @@
 
 This document is the authoritative `v1` contract for the extension-backed Native Messaging bridge.
 
+Repository status note: the in-tree `crates/starmask-mcp` adapter has been removed. This contract
+still applies to the remaining extension and daemon-side implementation.
+
 It is intentionally specific to:
 
 - Starmask extension

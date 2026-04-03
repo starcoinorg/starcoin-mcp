@@ -5,12 +5,11 @@ This file adds stricter instructions for the `starmask-mcp` subproject.
 ## Architecture Boundary
 
 - Keep the following split explicit:
-  - `starmask-mcp`: MCP stdio adapter
   - `starmaskd`: lifecycle owner and persistence owner
   - `starmask-native-host`: Chrome Native Messaging bridge
   - `Starmask` extension: approval UI and signing authority
 - Do not move signing logic into Rust binaries.
-- Do not move lifecycle ownership into the MCP adapter.
+- Do not move lifecycle ownership into transport adapters.
 
 ## Rust Implementation Shape
 
@@ -20,14 +19,14 @@ This file adds stricter instructions for the `starmask-mcp` subproject.
   - `starmask-types`
   - `starmask-core`
   - `starmaskd`
-  - `starmask-mcp`
   - `starmask-native-host`
   - `starmaskctl`
 
 ## MCP SDK Usage
 
-- Prefer the official Rust MCP SDK `rmcp` for the MCP server boundary.
-- Keep `rmcp` dependency scoped to the `starmask-mcp` crate.
+- The workspace does not currently ship an in-tree MCP server boundary.
+- If a dedicated MCP adapter crate is reintroduced, prefer the official Rust MCP SDK `rmcp` there
+  and keep MCP SDK dependencies scoped to that adapter crate.
 - Do not couple `starmask-core` or `starmaskd` to MCP SDK types.
 
 This is a project-wide layering rule, not a special exception for this subproject.

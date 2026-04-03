@@ -2,7 +2,10 @@
 
 ## Status
 
-This runbook covers the current `v1` extension-backed real-environment checks.
+This runbook covers the historical `v1` extension-backed MCP-adapter real-environment checks.
+
+Repository status note: `crates/starmask-mcp` has been removed from the workspace, so these steps
+are no longer runnable against the current in-tree binaries without an external adapter.
 
 It assumes:
 
