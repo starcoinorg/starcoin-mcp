@@ -1,6 +1,7 @@
 # Starcoin MCP
 
-This repository groups Starcoin-related MCP projects in one place.
+This repository groups Starcoin-related runtimes, host adapters, and workflow plugins in one
+place.
 
 Repository-level materials live under:
 
@@ -17,11 +18,11 @@ Key repository documents:
 
 ## Subprojects
 
-- `starmask-mcp/`
-  - local wallet-facing MCP entrypoint design
-  - includes the interface draft for `starmask-mcp`, `starmaskd`, and the Chrome extension bridge
-- `starcoin-node-mcp/`
-  - chain-facing Starcoin MCP design
+- `starmask-runtime/`
+  - wallet-facing runtime and adapter design
+  - includes the interface draft for `starmask-runtime`, `starmaskd`, and the Chrome extension bridge
+- `starcoin-node/`
+  - chain-facing Starcoin runtime and host-interface design
   - includes interface, security, deployment, configuration, RPC-adapter, and Rust implementation design docs for chain queries, transaction preparation, simulation, and signed transaction submission
   - the first conforming implementation is expected to be written in Rust
 

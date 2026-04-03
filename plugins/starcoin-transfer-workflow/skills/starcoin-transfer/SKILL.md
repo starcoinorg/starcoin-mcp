@@ -6,7 +6,7 @@ description: Use when the user wants a user-in-the-loop Starcoin transfer throug
 # Starcoin Transfer
 
 This skill turns Codex into the host-side transfer controller without depending on plugin-managed
-MCP servers.
+stdio adapters.
 
 The canonical execution path is:
 

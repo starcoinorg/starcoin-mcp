@@ -16,7 +16,11 @@ from typing import Any
 from urllib.request import Request, urlopen
 
 from node_cli_client import NodeCliClient
-from runtime_layout import resolve_workspace_root, wallet_runtime_socket_path
+from runtime_layout import (
+    STARMASKD_MANIFEST_MARKERS,
+    resolve_workspace_root,
+    wallet_runtime_socket_path,
+)
 from starmaskd_client import StarmaskDaemonClient
 from transfer_controller import (
     TransferController,
@@ -31,14 +35,14 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 
 WORKSPACE_ROOT = resolve_workspace_root(
-    PLUGIN_ROOT, ("starmask-mcp/crates/starmaskd/Cargo.toml",)
+    PLUGIN_ROOT, STARMASKD_MANIFEST_MARKERS
 )
 STARMASKD_MANIFEST = (
-    WORKSPACE_ROOT / "starmask-mcp" / "crates" / "starmaskd" / "Cargo.toml"
+    WORKSPACE_ROOT / "starmask-runtime" / "crates" / "starmaskd" / "Cargo.toml"
 )
 LOCAL_AGENT_MANIFEST = (
     WORKSPACE_ROOT
-    / "starmask-mcp"
+    / "starmask-runtime"
     / "crates"
     / "starmask-local-account-agent"
     / "Cargo.toml"

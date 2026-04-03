@@ -129,7 +129,6 @@ class StarmaskDaemonClient:
             raise RuntimeError(f"daemon {method} returned a non-object result: {result!r}")
         return result
 
-
 def parse_json_if_exists(path: Path) -> dict[str, Any] | None:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -144,9 +143,7 @@ def resolve_socket_path(socket_path_arg: str | None, runtime_dir_arg: str | None
     metadata = parse_json_if_exists(wallet_runtime_metadata_path(runtime_dir))
     if metadata is not None and metadata.get("daemon_socket_path"):
         return Path(str(metadata["daemon_socket_path"])).expanduser()
-    env_socket_path = os.environ.get("STARMASKD_SOCKET_PATH") or os.environ.get(
-        "STARMASK_MCP_DAEMON_SOCKET_PATH"
-    )
+    env_socket_path = os.environ.get("STARMASKD_SOCKET_PATH")
     if env_socket_path:
         return Path(env_socket_path).expanduser()
     return wallet_runtime_socket_path(runtime_dir)

@@ -2,12 +2,13 @@
 
 ## Purpose
 
-This document defines how Starcoin MCP servers should be packaged when a Rust host wants to:
+This document defines how Starcoin host adapters should be packaged when a Rust host wants to:
 
 - launch them as standalone binaries
 - embed them in-process as libraries
 
-The goal is to support both forms without duplicating MCP handler wiring or collapsing trust boundaries.
+The goal is to support both forms without duplicating host-adapter wiring or collapsing trust
+boundaries.
 
 ## Design Goal
 
@@ -15,22 +16,22 @@ Packaging must not change responsibility boundaries.
 
 Repository-level rule:
 
-- `starcoin-node-mcp` remains chain-facing only
-- `starmask-mcp` remains wallet-facing only
+- `starcoin-node` remains chain-facing only
+- `starmask-runtime` remains wallet-facing only
 - the repository must not ship a merged library that blurs wallet-facing and chain-facing responsibilities
 
 If an external host links both libraries into one process, that host is explicitly assuming a combined trust domain and must treat it as such.
 
 ## Common Packaging Pattern
 
-Each MCP project should follow the same high-level shape:
+Each adapter-facing subproject should follow the same high-level shape:
 
 1. domain and adapter crates stay independent of `rmcp`
-2. one MCP-facing server crate owns `rmcp` integration
-3. the server crate exposes a small library facade
+2. one host-adapter crate owns `rmcp` integration
+3. the adapter crate exposes a small library facade
 4. a thin binary entrypoint handles CLI parsing, config loading, and default tracing setup
 
-Recommended public surface for the MCP-facing server crate:
+Recommended public surface for the host-adapter crate:
 
 - one server constructor such as `*McpServer::new(deps)`
 - one stdio serving helper such as `serve_stdio(deps)`
@@ -44,27 +45,28 @@ The library facade should not:
 
 ## Host Ownership Rules
 
-When a host embeds an MCP server as a library:
+When a host embeds an adapter as a library:
 
 - the host owns Tokio runtime setup
 - the host owns tracing initialization
 - the host chooses whether to bootstrap from config or construct dependencies directly
-- the embedded MCP server still speaks MCP over the selected transport boundary
+- the embedded adapter still speaks MCP over the selected transport boundary
 
-This means the host reuses the same MCP adapter logic as the standalone binary rather than re-implementing tool registration and dispatch.
+This means the host reuses the same adapter logic as the standalone binary rather than
+re-implementing tool registration and dispatch.
 
-## Wallet MCP Packaging
+## Wallet Adapter Packaging
 
-`starmask-mcp` already has a separate daemon boundary.
+`starmask-runtime` already has a separate daemon boundary.
 
-The repository no longer ships an in-tree `starmask-mcp` adapter crate. If an MCP adapter is added
+The repository no longer ships an in-tree `starmask-runtime` adapter crate. If a host adapter is added
 back later, it should remain a thin layer over the daemon client boundary instead of taking over
 wallet lifecycle ownership.
 
 Recommended packaging model:
 
 - `starmask-core` and `starmaskd` remain independent of `rmcp`
-- any future `starmask-mcp` crate should expose the MCP adapter as a library as well as a binary
+- any future `starmask-runtime` crate should expose the host adapter as a library as well as a binary
 - the adapter depends on a `DaemonClient` trait rather than only one concrete local client
 - `LocalDaemonClient` remains the default implementation for stdio hosts that talk to `starmaskd` over local IPC
 
@@ -77,45 +79,47 @@ Recommended public facade:
 - `default_socket_path()`
 
 This keeps wallet lifecycle and persistence in `starmaskd` while allowing another Rust binary to
-reuse the same MCP adapter in-process if one is reintroduced.
+reuse the same adapter in-process if one is reintroduced.
 
-Keep the architecture boundary explicit between any future `starmask-mcp` transport adapter,
+Keep the architecture boundary explicit between any future `starmask-runtime` transport adapter,
 `starmaskd` (lifecycle owner and persistence owner), `starmask-native-host` (Chrome Native
 Messaging bridge), and the Starmask extension (approval UI and signing authority).
 
-## Node MCP Packaging
+## Node Adapter Packaging
 
-`starcoin-node-mcp` does not need a daemon in the first release.
+`starcoin-node` does not need a daemon in the first release.
 
-The repository no longer ships an in-tree `starcoin-node-mcp-server` crate. If an MCP adapter is
+The repository no longer ships an in-tree `starcoin-node-server` crate. If a host adapter is
 added back later, it should remain a thin wrapper over the existing libraries and CLI-facing app
 bootstrap.
 
 Recommended packaging model:
 
-- `starcoin-node-mcp-core` owns typed app bootstrap and orchestration
-- `starcoin-node-mcp-rpc` owns endpoint probing and RPC normalization
+- `starcoin-node-core` owns typed app bootstrap and orchestration
+- `starcoin-node-rpc` owns endpoint probing and RPC normalization
 - `starcoin-node-cli` is the current thin executable wrapper around the shared app bootstrap
-- any future MCP adapter should own `rmcp` integration as a separate thin crate
+- any future host adapter should own `rmcp` integration as a separate thin crate
 
 Recommended public facade:
 
 - `AppContext::bootstrap(config)`
 - CLI entrypoints should keep config loading and tracing at the binary boundary
-- any future MCP adapter should expose its own `serve_stdio(app)`-style helper without changing
+- any future host adapter should expose its own `serve_stdio(app)`-style helper without changing
   core or RPC crates
 
 ## Non-Goal
 
-The repository should not ship one monolithic combined library that merges wallet and node MCP behavior into a single trust domain.
+The repository should not ship one monolithic combined library that merges wallet and node
+adapter behavior into a single trust domain.
 
-If one host binary wants both capabilities, it should link both MCP server libraries separately and preserve distinct server wiring and failure-handling boundaries.
+If one host binary wants both capabilities, it should link both adapter libraries separately and
+preserve distinct wiring and failure-handling boundaries.
 
 ## Migration Strategy
 
 Recommended order:
 
-1. add `lib.rs` to the MCP-facing crate without changing tool semantics
+1. add `lib.rs` to the adapter-facing crate without changing tool semantics
 2. move stdio serving logic into library helpers
 3. reduce `main.rs` to CLI and tracing glue
 4. introduce dependency traits where a server is still bound to one concrete transport client

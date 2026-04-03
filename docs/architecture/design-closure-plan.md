@@ -1,14 +1,14 @@
-# Starmask MCP Design Closure Plan
+# Starmask Runtime Design Closure Plan
 
 ## Purpose
 
-This document defines how `starmask-mcp` design work should be completed before implementation starts.
+This document defines how `starmask-runtime` design work should be completed before implementation starts.
 
 The goal is to prevent a partial implementation from hard-coding assumptions that are still unsettled at the protocol, recovery, or security layer.
 
 ## Design Completion Standard
 
-`starmask-mcp` design is considered ready for implementation only when all of the following are true:
+`starmask-runtime` design is considered ready for implementation only when all of the following are true:
 
 1. Every runtime component has a documented responsibility and lifecycle.
 2. Every cross-process boundary has a versioned protocol contract.
@@ -24,20 +24,20 @@ The following documents should exist before implementation starts:
 
 1. `docs/architecture/host-integration.md`
 2. `docs/architecture/deployment-model.md`
-3. `starmask-mcp/docs/starmask-mcp-interface-design.md`
-4. `starmask-mcp/docs/security-model.md`
-5. `starmask-mcp/docs/daemon-protocol.md`
-6. `starmask-mcp/docs/native-messaging-contract.md`
-7. `starmask-mcp/docs/persistence-and-recovery.md`
-8. `starmask-mcp/docs/configuration.md`
-9. `starmask-mcp/docs/approval-ui-spec.md`
-10. `starmask-mcp/docs/testing-and-acceptance.md`
-11. `starmask-mcp/docs/rust-implementation-strategy.md`
-12. `starmask-mcp/docs/rust-core-api-design.md`
-13. `starmask-mcp/docs/sqlite-schema-and-migrations.md`
-14. `starmask-mcp/docs/rmcp-adapter-design.md`
-15. `starmask-mcp/docs/native-messaging-examples.md`
-16. `starmask-mcp/docs/test-harness-design.md`
+3. `starmask-runtime/docs/starmask-interface-design.md`
+4. `starmask-runtime/docs/security-model.md`
+5. `starmask-runtime/docs/daemon-protocol.md`
+6. `starmask-runtime/docs/native-messaging-contract.md`
+7. `starmask-runtime/docs/persistence-and-recovery.md`
+8. `starmask-runtime/docs/configuration.md`
+9. `starmask-runtime/docs/approval-ui-spec.md`
+10. `starmask-runtime/docs/testing-and-acceptance.md`
+11. `starmask-runtime/docs/rust-implementation-strategy.md`
+12. `starmask-runtime/docs/rust-core-api-design.md`
+13. `starmask-runtime/docs/sqlite-schema-and-migrations.md`
+14. `starmask-runtime/docs/stdio-adapter-design.md`
+15. `starmask-runtime/docs/native-messaging-examples.md`
+16. `starmask-runtime/docs/test-harness-design.md`
 
 ## Design Order
 

@@ -6,7 +6,7 @@ transfer flow.
 The current direction is Plan B:
 
 - keep the host sequencing in skills and scripts
-- remove direct runtime dependence on MCP servers for the converged transfer path
+- remove direct runtime dependence on in-tree stdio adapters for the converged transfer path
 - keep wallet approval outside Codex
 - keep chain-side transaction logic in Rust instead of reimplementing it in Python
 
@@ -25,18 +25,18 @@ flowchart LR
     W --> D["starmaskd"]
     D --> A["local-account-agent or extension"]
     N --> C["starcoin-node-cli"]
-    C --> R["starcoin-node-mcp-core"]
+    C --> R["starcoin-node-core"]
     R --> X["Starcoin RPC endpoint"]
 ```
 
 The repository still contains:
 
-- `starcoin-node-mcp`
-- `starmask-mcp`
+- `starcoin-node`
+- `starmask-runtime`
 
-Those source trees remain because the chain CLI reuses `starcoin-node-mcp-core` and the wallet
+Those source trees remain because the chain CLI reuses `starcoin-node-core` and the wallet
 runtime still uses `starmaskd` plus `local-account-agent`. The plugin bundle itself no longer
-ships an `.mcp.json` runtime entrypoint.
+ships a plugin-managed adapter entrypoint.
 
 ## Main Files
 
@@ -65,7 +65,7 @@ The workflow still keeps the original trust split:
 
 - `starmaskd` owns request lifecycle and wallet routing
 - `local-account-agent` or the extension remains the signing authority
-- `starcoin-node-cli` reuses `starcoin-node-mcp-core` for prepare, simulate, submit, and watch
+- `starcoin-node-cli` reuses `starcoin-node-core` for prepare, simulate, submit, and watch
 - the host coordinates both sides, but does not merge them into one signer-aware runtime
 
 ## Runtime Prerequisites
@@ -81,7 +81,6 @@ Default config locations now prefer `$HOME/.runtime`:
 
 - node config:
   - `$HOME/.runtime/node-cli.toml`
-  - legacy fallback: `$HOME/.runtime/node-mcp.toml`
 - wallet config:
   - `$HOME/.runtime/config.toml`
 - daemon socket:

@@ -2,34 +2,35 @@
 
 ## Status
 
-Draft design for removing the plugin's direct dependency on MCP servers while preserving the
-existing chain-side and wallet-side trust boundaries.
+Draft design for removing the plugin's direct dependency on in-tree stdio adapters while
+preserving the existing chain-side and wallet-side trust boundaries.
 
 This document is specific to `plugins/starcoin-transfer-workflow/`.
 
 ## 1. Problem Statement
 
-The current transfer workflow is intentionally MCP-centric:
+The current transfer workflow is intentionally adapter-centric:
 
-- the plugin manifest registers `starcoin-node-mcp` and `starmask-mcp`
-- the skill tells Codex to treat those MCP tools as the only valid execution path
-- the Python host-side controller uses MCP-style tool calls for every step
+- the plugin manifest registers `starcoin-node` and `starmask-runtime`
+- the skill tells Codex to treat those host tools as the only valid execution path
+- the Python host-side controller uses tool-style calls for every step
 
-That model works, but it makes the plugin runtime depend on two local MCP stdio servers even
+That model works, but it makes the plugin runtime depend on two local stdio adapter binaries even
 though:
 
 - wallet-side durable state already lives in `starmaskd`
-- chain-side logic already lives in `starcoin-node-mcp-core`
+- chain-side logic already lives in `starcoin-node-core`
 - the host-side transfer orchestration can already live in scripts and skills
 
-Plan B removes the plugin's direct use of MCP servers and replaces it with:
+Plan B removes the plugin's direct use of those adapter binaries and replaces it with:
 
 - skills for host reasoning and sequencing
 - local scripts and CLIs for concrete execution
 
 ## 2. Target Outcome
 
-The plugin should support user-in-the-loop transfers without registering any MCP server in Codex.
+The plugin should support user-in-the-loop transfers without registering any in-tree adapter
+binary in Codex.
 
 The final runtime shape is:
 
@@ -39,7 +40,7 @@ flowchart LR
     H --> N["starcoin-node CLI"]
     W --> D["starmaskd"]
     D --> A["local-account-agent or extension"]
-    N --> C["starcoin-node-mcp-core"]
+    N --> C["starcoin-node-core"]
     C --> R["Starcoin RPC endpoint"]
 ```
 
@@ -53,24 +54,24 @@ The design keeps the existing trust boundary:
 
 Today the plugin packages:
 
-1. `.mcp.json` to launch `starcoin-node-mcp` and `starmask-mcp`
+1. `.mcp.json` to launch `starcoin-node` and `starmask-runtime`
 2. one transfer skill that instructs Codex to call MCP tools in order
 3. `transfer_controller.py`, which keeps transfer session state but still speaks through MCP-style
    tool names
-4. `run_transfer_test.py`, which starts both MCP servers and drives them over `tools/call`
+4. `run_transfer_test.py`, which used to start both adapter binaries and drive them over `tools/call`
 
 The current model is therefore:
 
 - host sequencing in skill text and Python
 - wallet lifecycle in `starmaskd`
-- chain lifecycle in `starcoin-node-mcp-core`
-- MCP adapters as mandatory runtime glue
+- chain lifecycle in `starcoin-node-core`
+- adapter binaries as mandatory runtime glue
 
 ## 4. Design Iteration And Reflection
 
 ### Reflection 1: Pure Python Chain Logic Was Rejected
 
-One possible path was to drop `starcoin-node-mcp` entirely and reimplement:
+One possible path was to drop `starcoin-node` entirely and reimplement:
 
 - chain identity validation
 - sequence number lookup
@@ -81,7 +82,7 @@ One possible path was to drop `starcoin-node-mcp` entirely and reimplement:
 - `submission_unknown` handling
 - watch polling and local rate-limit semantics
 
-That would duplicate the logic already implemented in `starcoin-node-mcp-core` and create the
+That would duplicate the logic already implemented in `starcoin-node-core` and create the
 highest regression risk. Plan B therefore keeps the chain-side Rust core.
 
 Decision:
@@ -94,16 +95,16 @@ Another possible path was to build one binary that talks to both the node and th
 
 That would blur the current responsibility split:
 
-- chain-facing logic belongs to `starcoin-node-mcp-core`
+- chain-facing logic belongs to `starcoin-node-core`
 - wallet-facing lifecycle belongs to `starmaskd`
 
 Decision:
 
-- keep separate chain and wallet adapters even after removing MCP servers
+- keep separate chain and wallet adapters even after removing the in-tree adapter binaries
 
 ### Reflection 3: Wallet-Side Direct JSON-RPC Is Good Enough
 
-`starmask-mcp` is already a thin adapter over `starmaskd`:
+`starmask-runtime` is already a thin adapter over `starmaskd`:
 
 - account listing maps to `wallet.listAccounts`
 - public key lookup maps to `wallet.getPublicKey`
@@ -119,12 +120,12 @@ Decision:
 
 Decision:
 
-- remove `starmask-mcp` from the plugin runtime
+- remove `starmask-runtime` from the plugin runtime
 - replace it with a small Python JSON-RPC client that talks to `starmaskd` directly
 
 ### Reflection 4: Chain-Side State Cannot Be Ignored
 
-`starcoin-node-mcp-core` keeps some important state in memory:
+`starcoin-node-core` keeps some important state in memory:
 
 - prepared transaction attestation records
 - unresolved submission cache
@@ -172,13 +173,13 @@ Supported host-facing operations in Phase 1:
 
 ### 5.2 Chain Path
 
-Add a new non-MCP Rust CLI that reuses `starcoin-node-mcp-core`.
+Add a new standalone Rust CLI that reuses `starcoin-node-core`.
 
 Recommended shape:
 
-- one new crate under `starcoin-node-mcp/crates/`
-- config loading reused from `starcoin-node-mcp-types`
-- `AppContext::bootstrap(config)` reused from `starcoin-node-mcp-core`
+- one new crate under `starcoin-node/crates/`
+- config loading reused from `starcoin-node-types`
+- `AppContext::bootstrap(config)` reused from `starcoin-node-core`
 - structured JSON output to stdout
 - tracing and diagnostics to stderr
 
@@ -219,7 +220,7 @@ That means:
 
 - `plugin.json` should stop requiring `mcpServers`
 - the transfer skill should stop instructing Codex to call MCP tools directly
-- `doctor.py` should validate script and CLI prerequisites instead of MCP server launchability
+- `doctor.py` should validate script and CLI prerequisites instead of adapter launchability
 
 ## 6. Phase Plan
 
@@ -228,7 +229,7 @@ That means:
 Deliverables:
 
 - direct Python client for `starmaskd`
-- non-MCP chain CLI reusing `starcoin-node-mcp-core`
+- standalone chain CLI reusing `starcoin-node-core`
 - updated `run_transfer_test.py` using the new clients
 - updated design and operator docs
 
@@ -243,7 +244,7 @@ Deliverables:
 
 - remove `mcpServers` from the transfer plugin manifest
 - rewrite the skill to use scripts and CLIs as the canonical path
-- update README and remediation text to stop describing MCP servers as the normal runtime
+- update README and remediation text to stop describing the removed adapter binaries as the normal runtime
 
 ### Phase 3: Close Remaining Semantic Gaps
 
@@ -332,5 +333,5 @@ The first coding pass should aim for the smallest end-to-end proof that Plan B w
 4. switch `run_transfer_test.py` to the new clients
 5. keep the controller structure stable
 
-This gives the repository one real transfer path that no longer depends on MCP servers, while
+This gives the repository one real transfer path that no longer depends on the removed adapter binaries, while
 leaving the deeper session-durability improvements for a follow-up phase.

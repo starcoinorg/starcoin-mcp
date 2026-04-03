@@ -20,15 +20,15 @@ For this note, "enough coverage" means the standard used by the design documents
 
 The following commands were run locally:
 
-- `cargo test --workspace` in `starcoin-node-mcp/`
-- `cargo test --workspace` in `starmask-mcp/`
+- `cargo test --workspace` in `starcoin-node/`
+- `cargo test --workspace` in `starmask-runtime/`
 
 Summary:
 
 | Subproject | Result | Notes |
 | --- | --- | --- |
-| `starcoin-node-mcp` | `40 passed`, `1 ignored` | the ignored test is `crates/starcoin-node-mcp-core/tests/live_read_only.rs` and requires `STARCOIN_NODE_MCP_E2E_RPC_URL` |
-| `starmask-mcp` | `134 passed` | all local Rust workspace tests passed after the phase-2 backend additions on this branch |
+| `starcoin-node` | `40 passed`, `1 ignored` | the ignored test is `crates/starcoin-node-core/tests/live_read_only.rs` and requires `STARCOIN_NODE_E2E_RPC_URL` |
+| `starmask-runtime` | `134 passed` | all local Rust workspace tests passed after the phase-2 backend additions on this branch |
 
 Follow-up targeted runs on this branch:
 
@@ -37,56 +37,56 @@ Follow-up targeted runs on this branch:
 | `starmask-local-account-agent` | `24 passed` | covers phase-2 signing, unlock success/failure/cancellation, prompt rendering, no-password-over-daemon proof, snapshot sync, and full local-stack restart flows |
 | `starmaskd` | `45 passed` | includes transport, config, migration, compatibility, recovery, and boundedness coverage for phase 2 |
 
-## `starcoin-node-mcp`
+## `starcoin-node`
 
 Primary design references:
 
-- `starcoin-node-mcp/docs/testing-and-acceptance.md`
-- `starcoin-node-mcp/docs/design-closure-plan.md`
-- `starcoin-node-mcp/docs/starcoin-node-mcp-interface-design.md`
-- `starcoin-node-mcp/docs/rpc-adapter-design.md`
+- `starcoin-node/docs/testing-and-acceptance.md`
+- `starcoin-node/docs/design-closure-plan.md`
+- `starcoin-node/docs/starcoin-node-interface-design.md`
+- `starcoin-node/docs/rpc-adapter-design.md`
 
 Current evidence:
 
-- core unit and policy tests in `crates/starcoin-node-mcp-core/src/tests.rs`
-- flow-closure tests in `crates/starcoin-node-mcp-core/tests/flow_closure.rs`
-- RPC adapter tests in `crates/starcoin-node-mcp-rpc/src/tests.rs`
-- shared-schema compatibility test in `crates/starcoin-node-mcp-types/tests/schema_compat.rs`
-- config parsing and schema tests in `crates/starcoin-node-mcp-types/src/config.rs`
-- one ignored live read-only smoke test in `crates/starcoin-node-mcp-core/tests/live_read_only.rs`
+- core unit and policy tests in `crates/starcoin-node-core/src/tests.rs`
+- flow-closure tests in `crates/starcoin-node-core/tests/flow_closure.rs`
+- RPC adapter tests in `crates/starcoin-node-rpc/src/tests.rs`
+- shared-schema compatibility test in `crates/starcoin-node-types/tests/schema_compat.rs`
+- config parsing and schema tests in `crates/starcoin-node-types/src/config.rs`
+- one ignored live read-only smoke test in `crates/starcoin-node-core/tests/live_read_only.rs`
 
 Assessment:
 
 | Area | Status | Evidence | Gap |
 | --- | --- | --- | --- |
 | Required Rust test layers | `partial` | Layers 1-2 are present through core, RPC, and schema tests. A live endpoint layer exists as an ignored read-only smoke test. | The repository no longer includes an MCP adapter crate, so there is no in-tree MCP transport layer under test. The required end-to-end transaction layer from the acceptance doc is also not present as a routinely running automated test. |
-| Startup and capability probing | `partial` | Config and probe behavior are covered in `crates/starcoin-node-mcp-types/src/config.rs` and `crates/starcoin-node-mcp-rpc/src/tests.rs`. | The acceptance doc asks for startup behavior on chain mismatch, genesis mismatch, and capability refresh after reconnect. Those scenarios are not fully exercised as explicit startup or CLI bootstrap tests. |
-| Query and ABI correctness | `partial` | Query degradation and pending-transaction behavior are covered in `crates/starcoin-node-mcp-core/tests/flow_closure.rs`; adapter capability normalization is covered in `crates/starcoin-node-mcp-rpc/src/tests.rs`. | The design expects stable normalized outputs for the whole query and ABI surface. Coverage exists, but not as a comprehensive matrix or snapshot suite for all query tools. |
-| Preparation and simulation correctness | `strong` | Preparation, skipped-simulation behavior, explicit follow-up simulation, sequence fallback, and shared-schema compatibility are covered in `crates/starcoin-node-mcp-core/tests/flow_closure.rs`, `crates/starcoin-node-mcp-core/src/tests.rs`, and `crates/starcoin-node-mcp-types/tests/schema_compat.rs`. | The acceptance doc asks for host-facing result snapshots; current tests use structural assertions rather than snapshot fixtures. |
-| Submission and reconciliation behavior | `partial` | Local reconciliation policy, `submission_unknown`, stale blind-resubmission blocking, chain-context validation, and simulation-attestation policy are covered in `crates/starcoin-node-mcp-core/src/tests.rs` and `crates/starcoin-node-mcp-core/tests/flow_closure.rs`. | There is no automated end-to-end test proving a successful prepare -> simulate -> sign -> submit -> watch flow against a live or local endpoint. Expiry and stale-sequence handling are validated in policy code paths, but not as full endpoint-integrated scenarios. |
-| Security behavior | `partial` | Chain-context validation, submit policy, and config redaction behavior are covered in `crates/starcoin-node-mcp-core/src/tests.rs` and `crates/starcoin-node-mcp-types/src/config.rs`. | The acceptance doc also calls for evidence around transport security defaults, log redaction, and wallet-side security boundaries. The repository does not currently contain explicit manual verification records for those release-gate items. |
-| Configuration safety | `partial` | Missing chain pins, enum parsing, TOML round-trip, schema emission, and redacted token handling are covered in `crates/starcoin-node-mcp-types/src/config.rs`. | The acceptance doc explicitly calls out disallowed hosts, insecure remote transport rejection, and remote genesis-hash requirements. Those rules exist in implementation, but there are not matching explicit tests for each acceptance item. |
-| Resource and performance governance | `missing release evidence` | The implementation includes bounds and permit checks in `crates/starcoin-node-mcp-core/src/submission.rs` and `crates/starcoin-node-mcp-core/src/transaction.rs`. | The repository does not currently contain direct tests for `watch_transaction` bound clamping, watch permit exhaustion, expensive-request `rate_limited` behavior, permit release after cancellation, list-tool clamping, or `prepare_publish_package` oversize rejection. |
+| Startup and capability probing | `partial` | Config and probe behavior are covered in `crates/starcoin-node-types/src/config.rs` and `crates/starcoin-node-rpc/src/tests.rs`. | The acceptance doc asks for startup behavior on chain mismatch, genesis mismatch, and capability refresh after reconnect. Those scenarios are not fully exercised as explicit startup or CLI bootstrap tests. |
+| Query and ABI correctness | `partial` | Query degradation and pending-transaction behavior are covered in `crates/starcoin-node-core/tests/flow_closure.rs`; adapter capability normalization is covered in `crates/starcoin-node-rpc/src/tests.rs`. | The design expects stable normalized outputs for the whole query and ABI surface. Coverage exists, but not as a comprehensive matrix or snapshot suite for all query tools. |
+| Preparation and simulation correctness | `strong` | Preparation, skipped-simulation behavior, explicit follow-up simulation, sequence fallback, and shared-schema compatibility are covered in `crates/starcoin-node-core/tests/flow_closure.rs`, `crates/starcoin-node-core/src/tests.rs`, and `crates/starcoin-node-types/tests/schema_compat.rs`. | The acceptance doc asks for host-facing result snapshots; current tests use structural assertions rather than snapshot fixtures. |
+| Submission and reconciliation behavior | `partial` | Local reconciliation policy, `submission_unknown`, stale blind-resubmission blocking, chain-context validation, and simulation-attestation policy are covered in `crates/starcoin-node-core/src/tests.rs` and `crates/starcoin-node-core/tests/flow_closure.rs`. | There is no automated end-to-end test proving a successful prepare -> simulate -> sign -> submit -> watch flow against a live or local endpoint. Expiry and stale-sequence handling are validated in policy code paths, but not as full endpoint-integrated scenarios. |
+| Security behavior | `partial` | Chain-context validation, submit policy, and config redaction behavior are covered in `crates/starcoin-node-core/src/tests.rs` and `crates/starcoin-node-types/src/config.rs`. | The acceptance doc also calls for evidence around transport security defaults, log redaction, and wallet-side security boundaries. The repository does not currently contain explicit manual verification records for those release-gate items. |
+| Configuration safety | `partial` | Missing chain pins, enum parsing, TOML round-trip, schema emission, and redacted token handling are covered in `crates/starcoin-node-types/src/config.rs`. | The acceptance doc explicitly calls out disallowed hosts, insecure remote transport rejection, and remote genesis-hash requirements. Those rules exist in implementation, but there are not matching explicit tests for each acceptance item. |
+| Resource and performance governance | `missing release evidence` | The implementation includes bounds and permit checks in `crates/starcoin-node-core/src/submission.rs` and `crates/starcoin-node-core/src/transaction.rs`. | The repository does not currently contain direct tests for `watch_transaction` bound clamping, watch permit exhaustion, expensive-request `rate_limited` behavior, permit release after cancellation, list-tool clamping, or `prepare_publish_package` oversize rejection. |
 | Release-gate evidence | `not enough` | The project has a solid local unit and integration baseline. | The acceptance doc requires every area to have an automated test or manual verification record. That standard is not yet met in-repo. |
 
 Conclusion:
 
-- `starcoin-node-mcp` has a credible development baseline and a good amount of policy and adapter
+- `starcoin-node` has a credible development baseline and a good amount of policy and adapter
   coverage.
 - It does not yet meet its own documented release-gate standard.
 - The biggest structural gap is not small assertions; it is the absence of a dedicated resource-
   governance and transaction end-to-end test layer that exercises the implemented watch, rate-limit,
   and publish-package boundaries.
 
-## `starmask-mcp`
+## `starmask-runtime`
 
 Primary design references:
 
-- `starmask-mcp/docs/testing-and-acceptance.md`
-- `starmask-mcp/docs/wallet-backend-testing-and-acceptance.md`
-- `starmask-mcp/docs/test-harness-design.md`
-- `starmask-mcp/docs/wallet-backend-agent-contract.md`
-- `starmask-mcp/docs/wallet-backend-local-socket-binding.md`
+- `starmask-runtime/docs/testing-and-acceptance.md`
+- `starmask-runtime/docs/wallet-backend-testing-and-acceptance.md`
+- `starmask-runtime/docs/test-harness-design.md`
+- `starmask-runtime/docs/wallet-backend-agent-contract.md`
+- `starmask-runtime/docs/wallet-backend-local-socket-binding.md`
 
 Important scope distinction:
 
@@ -113,7 +113,7 @@ Current evidence:
 | Area | Status | Evidence | Gap |
 | --- | --- | --- | --- |
 | Protocol, lifecycle, and recovery | `strong` | `crates/starmask-core/src/service.rs`, `crates/starmaskd/tests/recovery.rs`, and `crates/starmaskd/tests/transport.rs` cover idempotency, lifecycle transitions, restart behavior, and same-instance resume. | The acceptance doc still requires manual evidence for browser- and UI-dependent release checks. |
-| Native Messaging and MCP shim | `partial` | `crates/starmask-native-host/src/framing.rs`, `crates/starmask-native-host/src/bridge.rs`, and `crates/starmask-native-host/src/notify.rs` cover framing, bridge mapping, and notification tracking. | The repository no longer includes the in-tree `starmask-mcp` adapter, so there is no local MCP shim coverage. Real Chrome registration and any external MCP adapter interoperability still need manual evidence. |
+| Native Messaging and MCP shim | `partial` | `crates/starmask-native-host/src/framing.rs`, `crates/starmask-native-host/src/bridge.rs`, and `crates/starmask-native-host/src/notify.rs` cover framing, bridge mapping, and notification tracking. | The repository no longer includes the in-tree `starmask-runtime` adapter, so there is no local MCP shim coverage. Real Chrome registration and any external MCP adapter interoperability still need manual evidence. |
 | Current release gate | `partial` | The local automated story for `v1` is substantial. | The repository does not include manual verification records for approval UI rendering, live browser reconnect behavior, or real Chrome/Inspector checks required by the current acceptance doc. |
 
 ### Phase 2 Multi-Backend Contract
@@ -133,7 +133,7 @@ Current evidence:
 
 Conclusion:
 
-- `starmask-mcp` is in a split state: the `v1` extension-backed implementation has strong local
+- `starmask-runtime` is in a split state: the `v1` extension-backed implementation has strong local
   automated coverage, while phase 2 is now close to its documented release gate.
 - This branch adds the missing structural layers that were previously absent: phase-2 backend-path
   recovery tests, full daemon-plus-agent local-stack tests, migration compatibility smoke tests,
@@ -143,10 +143,10 @@ Conclusion:
 
 ## Repository-Level Conclusion
 
-1. `starcoin-node-mcp` has a useful and reasonably well-structured automated baseline, but it is
+1. `starcoin-node` has a useful and reasonably well-structured automated baseline, but it is
    still short of its own release-gate standard.
-2. `starmask-mcp` now has strong automated coverage for both its `v1` contract and its documented
+2. `starmask-runtime` now has strong automated coverage for both its `v1` contract and its documented
    phase-2 contract inside the repository.
 3. The highest-value remaining testing work is now concentrated in two places:
-   - `starcoin-node-mcp`: resource-governance and live transaction end-to-end coverage
-   - `starmask-mcp`: external/manual environment validation beyond repo-local automation
+   - `starcoin-node`: resource-governance and live transaction end-to-end coverage
+   - `starmask-runtime`: external/manual environment validation beyond repo-local automation

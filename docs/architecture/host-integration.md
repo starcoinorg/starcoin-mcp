@@ -2,12 +2,12 @@
 
 ## Purpose
 
-This document defines the canonical orchestration model for MCP hosts that integrate both:
+This document defines the canonical orchestration model for local hosts that integrate both:
 
-- `starcoin-node-mcp`
-- `starmask-mcp`
+- `starcoin-node`
+- `starmask-runtime`
 
-The target hosts are local MCP-capable tools such as Claude Code and Codex.
+The target hosts are local host-capable tools such as Claude Code and Codex.
 
 ## Design Goal
 
@@ -15,24 +15,24 @@ The host should orchestrate chain access and wallet access without collapsing th
 
 Repository-level rule:
 
-- chain-facing tasks go to `starcoin-node-mcp`
-- wallet-facing tasks go to `starmask-mcp`
+- chain-facing tasks go to `starcoin-node`
+- wallet-facing tasks go to `starmask-runtime`
 
 ## Trust Boundary
 
-The host may coordinate both MCP servers, but it must not assume that:
+The host may coordinate both adapter boundaries, but it must not assume that:
 
-- `starcoin-node-mcp` can sign
-- `starmask-mcp` can query chain state
+- `starcoin-node` can sign
+- `starmask-runtime` can query chain state
 
 The intended boundary is:
 
-- `starcoin-node-mcp`
+- `starcoin-node`
   - query
   - prepare
   - simulate
   - submit signed transaction
-- `starmask-mcp`
+- `starmask-runtime`
   - discover wallet instances
   - discover accounts
   - expose public keys
@@ -43,7 +43,7 @@ The intended boundary is:
 
 ### 1. Read-Only Query Flow
 
-Use only `starcoin-node-mcp`.
+Use only `starcoin-node`.
 
 Typical sequence:
 
@@ -61,17 +61,17 @@ This is the canonical cross-project transaction flow.
 
 #### Phase A: Wallet discovery
 
-1. Call `starmask-mcp.wallet_status`
-2. Call `starmask-mcp.wallet_list_accounts`
+1. Call `starmask-runtime.wallet_status`
+2. Call `starmask-runtime.wallet_list_accounts`
 3. If multiple wallet instances can satisfy the request, explicitly select `wallet_instance_id`
-4. If simulation is desired before signing and no public key is known yet, call `starmask-mcp.wallet_get_public_key`
+4. If simulation is desired before signing and no public key is known yet, call `starmask-runtime.wallet_get_public_key`
 
 #### Phase B: Unsigned transaction preparation
 
 1. Call one of:
-   - `starcoin-node-mcp.prepare_transfer`
-   - `starcoin-node-mcp.prepare_contract_call`
-   - `starcoin-node-mcp.prepare_publish_package`
+   - `starcoin-node.prepare_transfer`
+   - `starcoin-node.prepare_contract_call`
+   - `starcoin-node.prepare_publish_package`
 2. Pass `sender_public_key` when available
 3. Inspect the returned unsigned transaction envelope, especially `chain_context`, `prepared_at`, and any freshness metadata
 
@@ -79,14 +79,14 @@ This is the canonical cross-project transaction flow.
 
 If preparation returned `simulation_status = skipped_missing_public_key`:
 
-1. obtain the sender public key from `starmask-mcp`
-2. call `starcoin-node-mcp.simulate_raw_transaction`
+1. obtain the sender public key from `starmask-runtime`
+2. call `starcoin-node.simulate_raw_transaction`
 
 The host may require successful simulation before requesting wallet approval.
 
 #### Phase D: Wallet approval
 
-1. Call `starmask-mcp.wallet_request_sign_transaction`
+1. Call `starmask-runtime.wallet_request_sign_transaction`
 2. Include:
    - `client_request_id`
    - `wallet_instance_id` when selection is explicit
@@ -94,7 +94,7 @@ The host may require successful simulation before requesting wallet approval.
    - `chain_id`
    - `raw_txn_bcs_hex`
 3. The first release expects the selected wallet instance to be connected and unlocked before request creation succeeds
-4. Poll `starmask-mcp.wallet_get_request_status`
+4. Poll `starmask-runtime.wallet_get_request_status`
 5. Continue until a terminal lifecycle state is reached
 
 #### Phase E: Submission
@@ -102,11 +102,11 @@ The host may require successful simulation before requesting wallet approval.
 If the wallet request is approved:
 
 1. read `signed_txn_bcs_hex` and retain the `chain_context` from the earlier preparation result
-2. call `starcoin-node-mcp.submit_signed_transaction`
+2. call `starcoin-node.submit_signed_transaction`
    Pass both `signed_txn_bcs_hex` and the previously prepared `chain_context` so the node-side server can reject chain drift before txpool contact.
    If node-side policy requires prior simulation, make sure the exact raw transaction had already been prepared or simulated through the same node-side server instance before submission.
 3. if the chain-side call is rejected locally with `rate_limited`, back off and retry the same submission step without changing the signed bytes
-4. if `submission_state = accepted`, call `starcoin-node-mcp.watch_transaction` or rely on the blocking submit convenience path with the same `min_confirmed_blocks` target
+4. if `submission_state = accepted`, call `starcoin-node.watch_transaction` or rely on the blocking submit convenience path with the same `min_confirmed_blocks` target
 5. if `submission_state = unknown`, reconcile by `txn_hash` through `get_transaction` or `watch_transaction` before any retry
 6. if the chain-side error is `transaction_expired` or `sequence_number_stale`, restart from Phase B with fresh preparation and then request fresh wallet approval
 7. if reconciliation remains unresolved after timeout, persist the unresolved submission state and surface it to the user instead of blind re-submission
@@ -119,7 +119,7 @@ Recommended transfer confirmation policy:
 
 ### 3. Message Signing Flow
 
-Use only `starmask-mcp`.
+Use only `starmask-runtime`.
 
 Typical sequence:
 
