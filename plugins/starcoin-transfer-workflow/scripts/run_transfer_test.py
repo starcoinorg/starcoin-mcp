@@ -17,7 +17,13 @@ from urllib.request import Request, urlopen
 
 from node_cli_client import NodeCliClient
 from starmaskd_client import StarmaskDaemonClient
-from transfer_controller import CANONICAL_STC_TOKEN_CODE, TransferController
+from transfer_controller import (
+    TransferController,
+    describe_confirmation_depth,
+    normalize_vm_profile,
+    normalize_min_confirmed_blocks,
+    resolve_token_code,
+)
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -93,6 +99,12 @@ def launch_command(
 
 
 def parse_args() -> argparse.Namespace:
+    def parse_vm_profile_arg(value: str) -> str:
+        try:
+            return normalize_vm_profile(value)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(str(exc)) from exc
+
     parser = argparse.ArgumentParser(
         description="Run one local user-in-the-loop transfer test through the script and CLI transfer stack."
     )
@@ -128,8 +140,14 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--token-code",
-        default=CANONICAL_STC_TOKEN_CODE,
-        help="Transfer token code passed to prepare_transfer",
+        default=None,
+        help="Transfer token code passed to prepare_transfer. Defaults to a vm_profile-matched STC token code.",
+    )
+    parser.add_argument(
+        "--vm-profile",
+        type=parse_vm_profile_arg,
+        default="auto",
+        help="RPC routing profile for the generated node-cli.toml. Use vm1_only or vm2_only for fixed transfer semantics.",
     )
     parser.add_argument(
         "--wallet-instance-id",
@@ -152,6 +170,12 @@ def parse_args() -> argparse.Namespace:
         type=int,
         default=120,
         help="Blocking submit/watch timeout passed to starcoin-node-cli",
+    )
+    parser.add_argument(
+        "--min-confirmed-blocks",
+        type=int,
+        default=2,
+        help="Minimum confirmed block count required before success. 2 means the inclusion block plus 1 additional block.",
     )
     return parser.parse_args()
 
@@ -297,6 +321,8 @@ def wait_for_wallet_instance(
 
 def main() -> int:
     args = parse_args()
+    token_code = resolve_token_code(args.token_code, args.vm_profile)
+    min_confirmed_blocks = normalize_min_confirmed_blocks(args.min_confirmed_blocks)
     runtime_dir_explicit = args.runtime_dir is not None
     if runtime_dir_explicit:
         runtime_dir = Path(args.runtime_dir).resolve()
@@ -359,7 +385,7 @@ def main() -> int:
 
     node_config = f"""rpc_endpoint_url = "{args.rpc_url}"
 mode = "transaction"
-vm_profile = "auto"
+vm_profile = "{args.vm_profile}"
 expected_chain_id = {chain_id}
 expected_network = "{network}"
 expected_genesis_hash = "{genesis_hash}"
@@ -503,22 +529,31 @@ require_strict_permissions = true
         try:
             session = controller.prepare_session(
                 wallet_instance_id=wallet_instance_id,
+                vm_profile=args.vm_profile,
                 sender=args.sender,
                 receiver=args.receiver,
                 amount=args.amount,
                 amount_unit=args.amount_unit,
-                token_code=args.token_code,
+                token_code=token_code,
             )
         except ValueError as error:
             raise SystemExit(f"invalid transfer amount: {error}") from error
         print(
             render_card(
                 "Host Transfer Confirmation",
-                controller.confirmation_rows(session),
+                controller.confirmation_rows(
+                    session,
+                    min_confirmed_blocks=min_confirmed_blocks,
+                ),
             )
         )
         print()
         print("The next step will create a wallet signing request.")
+        print(
+            "A successful result will require "
+            + describe_confirmation_depth(min_confirmed_blocks)
+            + "."
+        )
         print("The local-account-agent will then show its own CLI approval card.")
         if not prompt_yes_no("Continue with wallet signing"):
             print("Transfer test cancelled before wallet_request_sign_transaction.")
@@ -567,6 +602,7 @@ require_strict_permissions = true
         submit_outcome = controller.submit(
             session,
             timeout_seconds=args.watch_timeout_seconds,
+            min_confirmed_blocks=min_confirmed_blocks,
             blocking=True,
         )
         print()

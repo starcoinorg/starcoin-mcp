@@ -205,7 +205,8 @@ In Rust, this routing should be represented by typed enums such as a surface-sel
     - `chain.get_transaction_info`
     - `chain.get_events_by_txn_hash`
 - `watch_transaction`
-  - repeated `get_transaction` and transaction-info lookups until terminal or timeout, subject to local watch-permit limits
+  - repeated `get_transaction` and transaction-info lookups until the requested confirmation depth or timeout, subject to local watch-permit limits
+  - `chain.info` to derive the current head block number for confirmation-depth evaluation
 
 ### State and ABI
 
@@ -266,6 +267,7 @@ listing results. That is response-shape normalization, not a VM semantic bridge.
 - `submit_signed_transaction`
   - shared RPC:
     - `chain.info` to re-validate pinned chain identity immediately before submission
+    - `chain.info` again during any blocking post-submit watch path so confirmation depth reuses the same watch semantics
   - VM1 RPC surface: `txpool.submit_hex_transaction`
   - VM2 RPC surface: `txpool.submit_hex_transaction2`
   - return `invalid_chain_context` if the pre-submit chain re-check fails
@@ -326,6 +328,7 @@ Rules:
 7. on `submission_state = unknown`, the host should reconcile by `txn_hash` through `get_transaction` or `watch_transaction` before any retry
 8. on `transaction_expired` or `sequence_number_stale`, the host should restart from fresh preparation and fresh signing
 9. if reconciliation remains unresolved after timeout, preserve `submission_unknown` state and require explicit operator action instead of automatic blind re-submission
+10. if blocking submission waits for confirmation depth, it should call the same `watch_transaction` logic internally with the requested `min_confirmed_blocks` instead of defining a second watch model
 
 ## Result Normalization Rules
 

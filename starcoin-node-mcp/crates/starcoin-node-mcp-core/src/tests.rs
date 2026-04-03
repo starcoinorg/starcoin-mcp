@@ -1,11 +1,12 @@
 use super::{
     AppContext, CachedProbe, SignedUserTransaction, accepted_submission_output,
-    effective_submit_timeout_seconds, enforce_transaction_head_lag, extract_accepted_tokens,
-    extract_balance_resources, extract_chain_context, extract_optional_string,
-    is_terminal_watch_status, named_resource_entry, replace_stc_balance_with_primary_store,
+    effective_min_confirmed_blocks, effective_submit_timeout_seconds, enforce_transaction_head_lag,
+    extract_accepted_tokens, extract_balance_resources, extract_chain_context,
+    extract_optional_string, named_resource_entry, replace_stc_balance_with_primary_store,
     status_summary_from_parts, submission_unknown_output, validate_chain_identity,
     validate_signed_transaction_submission, validate_transaction_probe,
 };
+use crate::helpers::is_terminal_watch_status;
 use httpmock::prelude::*;
 use serde_json::{Value, json};
 use starcoin_node_mcp_rpc::NodeRpcClient;
@@ -308,6 +309,13 @@ fn submit_timeout_is_clamped_when_blocking() {
 }
 
 #[test]
+fn min_confirmed_blocks_defaults_to_two_and_clamps_zero_to_one() {
+    assert_eq!(effective_min_confirmed_blocks(None), 2);
+    assert_eq!(effective_min_confirmed_blocks(Some(0)), 1);
+    assert_eq!(effective_min_confirmed_blocks(Some(3)), 3);
+}
+
+#[test]
 fn head_lag_policy_fails_closed_above_threshold() {
     enforce_transaction_head_lag(120, 90, Duration::from_secs(60))
         .expect("healthy lag should pass");
@@ -455,6 +463,7 @@ async fn submit_unknown_blocks_blind_resubmission_before_second_txpool_call() {
         prepared_chain_context: sample_chain_context(254, "main", "0x1"),
         blocking: false,
         timeout_seconds: None,
+        min_confirmed_blocks: None,
     };
 
     let first = app
@@ -528,6 +537,7 @@ async fn submit_signed_transaction_degrades_when_sequence_lookup_returns_no_send
             prepared_chain_context: sample_chain_context(254, "main", "0x1"),
             blocking: false,
             timeout_seconds: None,
+            min_confirmed_blocks: None,
         })
         .await
         .expect("submit should degrade stale-check when sequence sources are unavailable");
@@ -552,19 +562,10 @@ async fn resolve_sequence_number_degrades_when_txpool_sequence_hint_is_unavailab
         -32601,
         "method not found",
     );
-    mock_json_rpc_result(&server, "state.get_account_state", Value::Null);
     mock_json_rpc_result(
         &server,
-        "state2.list_resource",
-        json!({
-            "resources": {
-                "0x1::account::Account": {
-                    "json": {
-                        "sequence_number": 9
-                    }
-                }
-            }
-        }),
+        "state.get_account_state",
+        json!({ "sequence_number": 9 }),
     );
     let config = sample_runtime_config_with_endpoint(&server.url("/"));
     let app = AppContext {
@@ -584,7 +585,7 @@ async fn resolve_sequence_number_degrades_when_txpool_sequence_hint_is_unavailab
     let (sequence, source) = app
         .resolve_sequence_number("0x1", None)
         .await
-        .expect("on-chain sequence should still be usable");
+        .expect("on-chain sequence should still be usable when txpool hints are unavailable");
     assert_eq!(sequence, 9);
     assert_eq!(
         source,

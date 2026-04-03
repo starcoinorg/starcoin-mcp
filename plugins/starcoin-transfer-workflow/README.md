@@ -94,6 +94,14 @@ Repo-local example templates:
 
 `vm_profile` only affects RPC routes that have both VM1 and VM2 method names. Shared RPC such as
 `chain.info`, `node.info`, and `txpool.gas_price` is profile-neutral.
+`auto` is RPC routing, not per-account VM detection.
+Transfer-oriented dual-surface tools such as `prepare_transfer` and `submit_signed_transaction`
+follow the selected profile, while some account/resource reads may still begin on a VM1 read path
+in `auto` and only use VM2 for repair or retry.
+For fixed transfer semantics, prefer an explicit `vm1_only` or `vm2_only` choice plus a matching
+`token_code`.
+You can override the profile per host-side call with `scripts/node_cli_client.py --vm-profile ...`
+or per end-to-end test with `scripts/run_transfer_test.py --vm-profile ...`.
 
 ## Isolated Dev Runtime
 
@@ -186,7 +194,7 @@ The converged Plan B flow is:
 7. CLI or wallet approval
 8. `request.getStatus`
 9. `submit_signed_transaction` through `starcoin-node-cli`
-10. optional `watch_transaction` through `starcoin-node-cli`
+10. `watch_transaction` through `starcoin-node-cli` until the requested confirmation depth is met
 
 If the local runtime is not ready, the right recovery is to stop and run `doctor.py`, not to fall
 back to direct `starcoin` CLI transfer commands.
@@ -206,7 +214,9 @@ python3 ./scripts/run_transfer_test.py \
   --sender <sender-address> \
   --receiver <receiver-address> \
   --amount 1 \
-  --amount-unit stc
+  --amount-unit stc \
+  --vm-profile vm2_only \
+  --min-confirmed-blocks 3
 ```
 
 ### Reuse A Running Wallet Supervisor
@@ -220,7 +230,9 @@ python3 ./scripts/run_transfer_test.py \
   --sender <sender-address> \
   --receiver <receiver-address> \
   --amount 1 \
-  --amount-unit stc
+  --amount-unit stc \
+  --vm-profile vm2_only \
+  --min-confirmed-blocks 3
 ```
 
 In one-shot mode, `run_transfer_test.py` does this:
@@ -241,11 +253,25 @@ runs the same direct daemon + CLI host flow.
 `prepare_transfer.amount` is a raw on-chain integer. The test script accepts `--amount-unit stc`
 for human-readable STC input and normalizes it to raw units before calling `prepare_transfer`.
 `1 STC = 1_000_000_000` raw units.
-The default STC token code is `0x1::starcoin_coin::STC`, because the default `vm_profile = auto`
-prefers VM2 routes.
+If `--token-code` is omitted, the default STC token code now follows `--vm-profile`:
+
+- `vm1_only` -> `0x1::STC::STC`
+- `auto` -> `0x1::starcoin_coin::STC`
+- `vm2_only` -> `0x1::starcoin_coin::STC`
+
 The workflow does not automatically switch between `0x1::STC::STC` and
 `0x1::starcoin_coin::STC`. If the connected chain expects one specific STC token code on one VM
 surface, pass that token code explicitly.
+
+Final success now also depends on confirmation depth:
+
+- `--min-confirmed-blocks 2` is the default
+- the count includes the inclusion block itself
+- the default therefore means the inclusion block plus at least 1 additional observed block
+- `--min-confirmed-blocks 1` means inclusion-only success
+
+The transfer script maps that one higher-level setting onto both `submit_signed_transaction` and
+`watch_transaction`, so the blocking submit path and any follow-up watch use the same semantics.
 
 If submission is accepted but final confirmation is still missing, the script reports that as an
 intermediate state and exits non-zero instead of treating it as a completed successful transfer.

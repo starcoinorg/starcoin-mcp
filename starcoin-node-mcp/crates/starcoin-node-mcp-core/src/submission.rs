@@ -1,5 +1,7 @@
 use super::*;
 
+const DEFAULT_MIN_CONFIRMED_BLOCKS: u64 = 2;
+
 impl AppContext {
     pub async fn watch_transaction(
         &self,
@@ -19,6 +21,8 @@ impl AppContext {
             .poll_interval_seconds
             .unwrap_or(self.config.watch_poll_interval.as_secs())
             .max(self.config.min_watch_poll_interval.as_secs());
+        let effective_min_confirmed_blocks =
+            effective_min_confirmed_blocks(input.min_confirmed_blocks);
         let deadline =
             OffsetDateTime::now_utc().unix_timestamp() as u64 + effective_timeout_seconds;
         let mut last_status_summary = TransactionStatusSummary {
@@ -29,6 +33,8 @@ impl AppContext {
         };
         let mut last_transaction_info = None;
         let mut last_events = Vec::new();
+        let mut last_confirmed_blocks = None;
+        let mut last_inclusion_block_number = None;
         loop {
             let current = self
                 .get_transaction(GetTransactionInput {
@@ -37,19 +43,38 @@ impl AppContext {
                     decode: true,
                 })
                 .await?;
+            let (current_confirmed_blocks, current_inclusion_block_number) =
+                if current.status_summary.confirmed {
+                    let snapshot = self.load_transaction_endpoint_snapshot().await?;
+                    confirmation_depth_from_transaction_info(
+                        current.transaction_info.as_ref(),
+                        snapshot.chain_context.head_block_number,
+                    )?
+                } else {
+                    (None, None)
+                };
             if current.status_summary.found {
                 self.clear_unresolved_submission(&input.txn_hash).await;
                 last_status_summary = current.status_summary.clone();
                 last_transaction_info = current.transaction_info.clone();
                 last_events = current.events.clone();
+                last_confirmed_blocks = current_confirmed_blocks;
+                last_inclusion_block_number = current_inclusion_block_number;
             }
-            if is_terminal_watch_status(&current.status_summary) {
+            if watch_confirmation_satisfied(
+                &current.status_summary,
+                current_confirmed_blocks,
+                effective_min_confirmed_blocks,
+            ) {
                 return Ok(WatchTransactionOutput {
                     txn_hash: input.txn_hash,
                     found: current.status_summary.found,
                     confirmed: true,
                     effective_timeout_seconds,
                     effective_poll_interval_seconds,
+                    effective_min_confirmed_blocks,
+                    confirmed_blocks: current_confirmed_blocks,
+                    inclusion_block_number: current_inclusion_block_number,
                     transaction_info: current.transaction_info,
                     events: current.events,
                     status_summary: current.status_summary,
@@ -59,9 +84,16 @@ impl AppContext {
                 return Ok(WatchTransactionOutput {
                     txn_hash: input.txn_hash,
                     found: last_status_summary.found,
-                    confirmed: false,
+                    confirmed: watch_confirmation_satisfied(
+                        &last_status_summary,
+                        last_confirmed_blocks,
+                        effective_min_confirmed_blocks,
+                    ),
                     effective_timeout_seconds,
                     effective_poll_interval_seconds,
+                    effective_min_confirmed_blocks,
+                    confirmed_blocks: last_confirmed_blocks,
+                    inclusion_block_number: last_inclusion_block_number,
                     transaction_info: last_transaction_info,
                     events: last_events,
                     status_summary: last_status_summary,
@@ -156,6 +188,7 @@ impl AppContext {
                             txn_hash: txn_hash.clone(),
                             timeout_seconds: effective_timeout_seconds,
                             poll_interval_seconds: Some(self.config.watch_poll_interval.as_secs()),
+                            min_confirmed_blocks: input.min_confirmed_blocks,
                         })
                         .await
                     {
@@ -340,6 +373,40 @@ pub(crate) fn effective_submit_timeout_seconds(
             .unwrap_or(watch_timeout.as_secs())
             .min(max_submit_blocking_timeout.as_secs())
     })
+}
+
+pub(crate) fn effective_min_confirmed_blocks(requested_min_confirmed_blocks: Option<u64>) -> u64 {
+    requested_min_confirmed_blocks
+        .unwrap_or(DEFAULT_MIN_CONFIRMED_BLOCKS)
+        .max(1)
+}
+
+fn confirmation_depth_from_transaction_info(
+    transaction_info: Option<&Value>,
+    head_block_number: u64,
+) -> Result<(Option<u64>, Option<u64>), SharedError> {
+    let Some(transaction_info) = transaction_info else {
+        return Ok((None, None));
+    };
+    let inclusion_block_number = extract_optional_u64(transaction_info, &["block_number"])
+        .ok_or_else(|| {
+            SharedError::new(
+                SharedErrorCode::RpcUnavailable,
+                "transaction_info is missing block_number",
+            )
+        })?;
+    let confirmed_blocks = head_block_number
+        .saturating_sub(inclusion_block_number)
+        .saturating_add(1);
+    Ok((Some(confirmed_blocks), Some(inclusion_block_number)))
+}
+
+fn watch_confirmation_satisfied(
+    status_summary: &TransactionStatusSummary,
+    confirmed_blocks: Option<u64>,
+    effective_min_confirmed_blocks: u64,
+) -> bool {
+    status_summary.confirmed && confirmed_blocks.unwrap_or(0) >= effective_min_confirmed_blocks
 }
 
 pub(crate) fn accepted_submission_output(

@@ -159,7 +159,8 @@ Example input:
   "prepared_chain_context": {
     "...": "use the chain_context from prepare_transfer"
   },
-  "blocking": false
+  "blocking": false,
+  "min_confirmed_blocks": 2
 }
 ```
 
@@ -178,6 +179,12 @@ Expected output fields:
 
 If `next_action = watch_transaction`, the host should immediately follow with
 `starcoin-node-mcp.watch_transaction`.
+
+Recommended transfer confirmation policy:
+
+- default to `min_confirmed_blocks = 2`
+- interpret that as the inclusion block plus at least 1 additional observed block
+- treat `status_summary.confirmed = true` with top-level `confirmed = false` as "included but not yet deep enough"
 
 ## Retry And Recovery Rules
 

@@ -111,7 +111,7 @@ The implementation must demonstrate:
 
 The implementation must demonstrate:
 
-1. `watch_transaction` clamps timeout and poll inputs to configured bounds and returns the effective applied values
+1. `watch_transaction` clamps timeout and poll inputs to configured bounds, clamps `min_confirmed_blocks` to at least 1 block, and returns the effective applied values
 2. list-style tools clamp oversized `count`, `limit`, `resource_limit`, `module_limit`, and `max_size` inputs and surface the effective applied bounds
 3. `prepare_publish_package` rejects payloads above `max_publish_package_bytes` locally with `payload_too_large`
 4. watch requests beyond `max_concurrent_watch_requests` fail fast with `rate_limited`
@@ -124,15 +124,16 @@ The implementation must demonstrate:
 The first release must pass these end-to-end scenarios:
 
 1. read-only query flow against one healthy endpoint
-2. prepare, simulate, sign through wallet, submit, and watch one transaction successfully
+2. prepare, simulate, sign through wallet, submit, and watch one transaction successfully with the default confirmation depth of 2 blocks
 3. prepare without public key, simulate later, then sign and submit
 4. reconcile a transaction after uncertain submission result
 5. re-prepare and re-sign after expiry or stale sequence rejection
 6. persist and surface an unresolved submission after reconciliation timeout without blind retry
 7. fail safely on remote chain identity mismatch before any transaction tool is served
 8. clamp oversize watch and query inputs and surface the effective applied values
-9. reject an oversize publish-package payload locally before any RPC side effect
-10. return `rate_limited` when watch concurrency is exhausted and recover after an existing watch completes or is cancelled
+9. wait for an explicitly requested confirmation depth and surface `confirmed_blocks`, `inclusion_block_number`, and `effective_min_confirmed_blocks`
+10. reject an oversize publish-package payload locally before any RPC side effect
+11. return `rate_limited` when watch concurrency is exhausted and recover after an existing watch completes or is cancelled
 
 ## Release Gate
 

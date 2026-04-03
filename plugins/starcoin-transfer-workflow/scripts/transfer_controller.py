@@ -11,11 +11,27 @@ VM1_STC_TOKEN_CODE = "0x1::STC::STC"
 # Default STC transfers follow the vm_profile=auto runtime, which prefers VM2.
 CANONICAL_STC_TOKEN_CODE = "0x1::starcoin_coin::STC"
 STARCOIN_COIN_STC_TOKEN_CODE = CANONICAL_STC_TOKEN_CODE
+DEFAULT_VM_PROFILE = "auto"
+VM1_ONLY_VM_PROFILE = "vm1_only"
+VM2_ONLY_VM_PROFILE = "vm2_only"
+VM_PROFILE_ALIASES = {
+    DEFAULT_VM_PROFILE: DEFAULT_VM_PROFILE,
+    "vm1-only": VM1_ONLY_VM_PROFILE,
+    VM1_ONLY_VM_PROFILE: VM1_ONLY_VM_PROFILE,
+    "vm2-only": VM2_ONLY_VM_PROFILE,
+    VM2_ONLY_VM_PROFILE: VM2_ONLY_VM_PROFILE,
+}
+VM_PROFILE_STC_TOKEN_DEFAULTS = {
+    DEFAULT_VM_PROFILE: CANONICAL_STC_TOKEN_CODE,
+    VM1_ONLY_VM_PROFILE: VM1_STC_TOKEN_CODE,
+    VM2_ONLY_VM_PROFILE: CANONICAL_STC_TOKEN_CODE,
+}
 STC_TOKEN_CODE_ALIASES = {
     CANONICAL_STC_TOKEN_CODE.lower(),
     VM1_STC_TOKEN_CODE.lower(),
     STARCOIN_COIN_STC_TOKEN_CODE.lower(),
 }
+DEFAULT_MIN_CONFIRMED_BLOCKS = 2
 STC_SCALE = 1_000_000_000
 STC_AMOUNT_PATTERN = re.compile(r"^(?P<whole>\d+)(?:\.(?P<fraction>\d{1,9}))?$")
 TERMINAL_REQUEST_STATUSES = {"approved", "rejected", "cancelled", "expired", "failed"}
@@ -48,6 +64,7 @@ class TransferSession:
     sender: str
     receiver: str
     wallet_instance_id: str
+    vm_profile: str
     chain_id: int
     network: str
     genesis_hash: str
@@ -81,6 +98,40 @@ def normalize_token_code(token_code: str) -> str:
     if not normalized:
         raise ValueError("token code must not be empty")
     return normalized
+
+
+def normalize_vm_profile(vm_profile: str) -> str:
+    normalized = vm_profile.strip().lower().replace("-", "_")
+    resolved = VM_PROFILE_ALIASES.get(normalized)
+    if resolved is None:
+        raise ValueError(
+            "vm profile must be one of auto, vm1_only, or vm2_only"
+        )
+    return resolved
+
+
+def default_token_code_for_vm_profile(vm_profile: str) -> str:
+    return VM_PROFILE_STC_TOKEN_DEFAULTS[normalize_vm_profile(vm_profile)]
+
+
+def resolve_token_code(token_code: str | None, vm_profile: str) -> str:
+    if token_code is None:
+        return default_token_code_for_vm_profile(vm_profile)
+    return normalize_token_code(token_code)
+
+
+def normalize_min_confirmed_blocks(min_confirmed_blocks: int | None) -> int:
+    if min_confirmed_blocks is None:
+        return DEFAULT_MIN_CONFIRMED_BLOCKS
+    return max(1, min_confirmed_blocks)
+
+
+def describe_confirmation_depth(min_confirmed_blocks: int) -> str:
+    normalized = normalize_min_confirmed_blocks(min_confirmed_blocks)
+    if normalized == 1:
+        return "1 block (the inclusion block only)"
+    additional_blocks = normalized - 1
+    return f"{normalized} blocks (the inclusion block plus {additional_blocks} more)"
 
 
 def normalize_transfer_amount(amount: str, amount_unit: str, token_code: str) -> TransferAmount:
@@ -133,11 +184,25 @@ def validate_prepare_result(prepare_result: dict[str, Any]) -> dict[str, Any]:
 
 def summarize_watch_result(watch_result: dict[str, Any]) -> list[tuple[str, str]]:
     status_summary = watch_result.get("status_summary") or {}
-    return [
+    rows = [
         ("Confirmed", str(watch_result.get("confirmed"))),
         ("Found", str(status_summary.get("found"))),
         ("VM Status", str(status_summary.get("vm_status"))),
     ]
+    if watch_result.get("confirmed_blocks") is not None:
+        rows.append(("Confirmed Blocks", str(watch_result.get("confirmed_blocks"))))
+    if watch_result.get("effective_min_confirmed_blocks") is not None:
+        rows.append(
+            (
+                "Required Blocks",
+                str(watch_result.get("effective_min_confirmed_blocks")),
+            )
+        )
+    if watch_result.get("inclusion_block_number") is not None:
+        rows.append(
+            ("Inclusion Block", str(watch_result.get("inclusion_block_number")))
+        )
+    return rows
 
 
 def submit_recovery_hint(
@@ -176,12 +241,14 @@ class TransferController:
         self,
         *,
         wallet_instance_id: str,
+        vm_profile: str,
         sender: str,
         receiver: str,
         amount: str,
         amount_unit: str,
         token_code: str,
     ) -> TransferSession:
+        normalized_vm_profile = normalize_vm_profile(vm_profile)
         normalized_amount = normalize_transfer_amount(amount, amount_unit, token_code)
         wallet_instances = self.wallet_client.call_tool("wallet_list_instances")
         wallet_accounts = self.wallet_client.call_tool(
@@ -210,6 +277,7 @@ class TransferController:
             sender=sender,
             receiver=receiver,
             wallet_instance_id=wallet_instance_id,
+            vm_profile=normalized_vm_profile,
             chain_id=self.chain_id,
             network=self.network,
             genesis_hash=self.genesis_hash,
@@ -220,7 +288,12 @@ class TransferController:
             prepare_result=prepare_result,
         )
 
-    def confirmation_rows(self, session: TransferSession) -> list[tuple[str, str]]:
+    def confirmation_rows(
+        self,
+        session: TransferSession,
+        *,
+        min_confirmed_blocks: int | None = None,
+    ) -> list[tuple[str, str]]:
         prepared_token_code = (
             session.prepare_result.get("transaction_summary", {}).get("token_code")
             or session.amount.token_code
@@ -229,6 +302,7 @@ class TransferController:
             ("Network", f"{session.network} ({session.chain_id})"),
             ("Genesis", session.genesis_hash),
             ("Wallet Instance", session.wallet_instance_id),
+            ("VM Profile", session.vm_profile),
             ("Known Wallets", str(len(session.wallet_instances["wallet_instances"]))),
             (
                 "Visible Accounts",
@@ -258,6 +332,13 @@ class TransferController:
                 ("Prepared At", session.prepare_result["prepared_at"]),
             ]
         )
+        if min_confirmed_blocks is not None:
+            rows.append(
+                (
+                    "Confirm Depth",
+                    describe_confirmation_depth(min_confirmed_blocks),
+                )
+            )
         return rows
 
     def create_sign_request(
@@ -316,10 +397,12 @@ class TransferController:
         session: TransferSession,
         *,
         timeout_seconds: int,
+        min_confirmed_blocks: int | None = None,
         blocking: bool = True,
     ) -> TransferSubmitOutcome:
         if session.signed_txn_bcs_hex is None:
             raise RuntimeError("transfer session does not have signed_txn_bcs_hex yet")
+        normalized_min_confirmed_blocks = normalize_min_confirmed_blocks(min_confirmed_blocks)
         submit_result = self.node_client.call_tool(
             "submit_signed_transaction",
             {
@@ -327,6 +410,7 @@ class TransferController:
                 "prepared_chain_context": session.prepare_result["chain_context"],
                 "blocking": blocking,
                 "timeout_seconds": timeout_seconds,
+                "min_confirmed_blocks": normalized_min_confirmed_blocks,
             },
         )
         session.submit_result = submit_result
@@ -338,6 +422,7 @@ class TransferController:
                 {
                     "txn_hash": submit_result["txn_hash"],
                     "timeout_seconds": timeout_seconds,
+                    "min_confirmed_blocks": normalized_min_confirmed_blocks,
                 },
             )
             watch_source = "reconcile"
@@ -351,6 +436,7 @@ class TransferController:
                 {
                     "txn_hash": submit_result["txn_hash"],
                     "timeout_seconds": timeout_seconds,
+                    "min_confirmed_blocks": normalized_min_confirmed_blocks,
                 },
             )
             watch_source = "follow-up watch"

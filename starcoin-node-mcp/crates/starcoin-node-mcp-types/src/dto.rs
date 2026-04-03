@@ -51,6 +51,8 @@ pub struct WatchTransactionInput {
     pub timeout_seconds: Option<u64>,
     #[serde(default)]
     pub poll_interval_seconds: Option<u64>,
+    #[serde(default)]
+    pub min_confirmed_blocks: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -208,6 +210,8 @@ pub struct SubmitSignedTransactionInput {
     pub blocking: bool,
     #[serde(default)]
     pub timeout_seconds: Option<u64>,
+    #[serde(default)]
+    pub min_confirmed_blocks: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
@@ -277,6 +281,11 @@ pub struct WatchTransactionOutput {
     pub confirmed: bool,
     pub effective_timeout_seconds: u64,
     pub effective_poll_interval_seconds: u64,
+    pub effective_min_confirmed_blocks: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub confirmed_blocks: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub inclusion_block_number: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub transaction_info: Option<Value>,
     pub events: Vec<Value>,

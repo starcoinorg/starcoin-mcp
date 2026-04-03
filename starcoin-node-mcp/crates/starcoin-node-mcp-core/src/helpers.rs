@@ -171,6 +171,7 @@ pub(crate) fn status_summary_from_parts(
     }
 }
 
+#[cfg(test)]
 pub(crate) fn is_terminal_watch_status(summary: &TransactionStatusSummary) -> bool {
     summary.confirmed
 }

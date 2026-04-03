@@ -34,7 +34,7 @@ script path itself has changed.
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py status`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py up --replace`
 - End-to-end test:
-  - `python3 ./plugins/starcoin-transfer-workflow/scripts/run_transfer_test.py --rpc-url http://127.0.0.1:9850 --wallet-runtime-dir $HOME/.runtime/wallet-runtime --sender <sender> --receiver <receiver> --amount 1 --amount-unit stc`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/run_transfer_test.py --rpc-url http://127.0.0.1:9850 --wallet-runtime-dir $HOME/.runtime/wallet-runtime --sender <sender> --receiver <receiver> --amount 1 --amount-unit stc --vm-profile vm2_only --min-confirmed-blocks 3`
 
 Default runtime locations for this workflow:
 
@@ -50,6 +50,7 @@ Known important parameters:
   - `--socket-path <sock>`
 - `node_cli_client.py`
   - `--config <node-cli.toml>`
+  - `--vm-profile <auto|vm1_only|vm2_only>`
   - `--workspace-root <starcoin-mcp-root>`
 - `wallet_runtime.py`
   - `--runtime-dir <dir>`
@@ -59,7 +60,9 @@ Known important parameters:
   - `--wallet-runtime-dir <dir>` or `--wallet-dir <dir>`
   - `--sender <address> --receiver <address>`
   - `--amount <value> [--amount-unit raw|stc]`
-  - `--token-code 0x1::starcoin_coin::STC`
+  - `--vm-profile <auto|vm1_only|vm2_only>`
+  - `--min-confirmed-blocks <n>`
+  - `--token-code <vm-profile-matched-stc-or-explicit-token>`
 
 ## Workflow
 
@@ -70,6 +73,7 @@ Known important parameters:
 - Use `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_list_accounts` to list accounts.
 - Use `python3 ./plugins/starcoin-transfer-workflow/scripts/node_cli_client.py call chain_status` to inspect chain context.
 - If the node config is not in the default location, add `--config <node-cli.toml>`.
+- If the transfer semantics are fixed to one VM surface, add `--vm-profile vm1_only` or `--vm-profile vm2_only` to the chain-side `node_cli_client.py` calls.
 - If the sender public key is not already known, call `wallet_get_public_key` through `starmaskd_client.py`.
 - If sender, receiver, amount, token, or wallet instance are ambiguous, ask before preparing a transaction.
 
@@ -77,7 +81,12 @@ Known important parameters:
 
 - `prepare_transfer.amount` expects the raw on-chain integer amount.
 - If the user gives a human-readable STC amount and `token_code` is omitted or equals `0x1::STC::STC` or `0x1::starcoin_coin::STC`, normalize it with 9 decimals before preparation. `1 STC = 1_000_000_000` raw units.
-- The workflow default STC token code is `0x1::starcoin_coin::STC`, because the default `vm_profile = auto` prefers VM2 routes.
+- `vm_profile` is RPC routing, not per-account VM detection.
+- Shared RPC such as `chain.info`, `node.info`, and `txpool.gas_price` is profile-neutral, while transfer-oriented dual-surface tools such as `prepare_transfer` and `submit_signed_transaction` follow the selected profile.
+- If `token_code` is omitted, the workflow default STC token code follows `vm_profile`:
+  - `vm1_only` -> `0x1::STC::STC`
+  - `auto` -> `0x1::starcoin_coin::STC`
+  - `vm2_only` -> `0x1::starcoin_coin::STC`
 - Do not automatically switch between `0x1::STC::STC` and `0x1::starcoin_coin::STC`. They may map to different semantics on different VM RPC surfaces or chains.
 - If the chosen STC token code fails during dry-run, stop and ask for the correct `token_code` instead of retrying on another STC alias.
 - For non-STC assets, only normalize a human-readable amount when decimals are already known from trusted chain metadata or prior explicit context. Otherwise ask instead of guessing.
@@ -121,11 +130,14 @@ Known important parameters:
 ### 6. Submit And Watch
 
 - Call `submit_signed_transaction` through `node_cli_client.py`.
+- Use one confirmation-depth target for the whole transfer. The default is `min_confirmed_blocks = 2`, which means the inclusion block plus at least 1 additional observed block.
 - Pass the `chain_context` from the same preparation result that produced the signed transaction.
+- Pass the same `min_confirmed_blocks` value to both `submit_signed_transaction` and any direct `watch_transaction` follow-up.
 - Inspect `submit_signed_transaction.next_action`.
 - If `next_action = watch_transaction`, immediately call `watch_transaction`.
 - If `next_action = reconcile_by_txn_hash`, reconcile by `txn_hash` through `watch_transaction` instead of blindly resubmitting.
 - If `next_action = reprepare_then_resign`, discard the old signed bytes and restart from `prepare_transfer`.
+- If `status_summary.confirmed = true` but top-level `confirmed = false`, report that the transaction is included but has not yet reached the requested confirmation depth.
 - If submission is accepted but confirmation is still unavailable, report that the transaction is submitted but not yet confirmed. Do not present that state as final success.
 
 ## Safety Rules

@@ -5,14 +5,18 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
+from transfer_controller import normalize_vm_profile
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
+VM_PROFILE_LINE_PATTERN = re.compile(r"(?m)^\s*vm_profile\s*=\s*.*$")
 
 
 def resolve_workspace_root() -> Path:
@@ -109,12 +113,26 @@ def launch_command(
 
 
 class NodeCliClient:
-    def __init__(self, *, config_path: Path, workspace_root: Path = WORKSPACE_ROOT):
+    def __init__(
+        self,
+        *,
+        config_path: Path,
+        workspace_root: Path = WORKSPACE_ROOT,
+        vm_profile: str | None = None,
+    ):
         self.config_path = Path(config_path).resolve()
         self.workspace_root = Path(workspace_root).resolve()
+        self.vm_profile = normalize_vm_profile(vm_profile) if vm_profile is not None else None
 
     def call_tool(self, name: str, arguments: dict[str, Any] | None = None) -> dict[str, Any]:
         payload = json.dumps(arguments or {}, separators=(",", ":"))
+        config_path = self.config_path
+        temporary_config_path: Path | None = None
+        if self.vm_profile is not None:
+            temporary_config_path = write_vm_profile_override_config(
+                self.config_path, self.vm_profile
+            )
+            config_path = temporary_config_path
         command = launch_command(
             env_name="STARCOIN_NODE_CLI_BIN",
             binary_name="starcoin-node-cli",
@@ -122,24 +140,47 @@ class NodeCliClient:
                 os.environ.get("STARCOIN_NODE_CLI_MANIFEST", str(NODE_CLI_MANIFEST))
             ).resolve(),
             cargo_bin_name="starcoin-node-cli",
-            program_args=["--config", str(self.config_path), "call", name],
+            program_args=["--config", str(config_path), "call", name],
         )
-        completed = subprocess.run(
-            command,
-            cwd=str(self.workspace_root),
-            input=payload,
-            text=True,
-            capture_output=True,
-        )
-        if completed.returncode != 0:
-            stderr = completed.stderr.strip()
-            raise RuntimeError(
-                f"starcoin-node-cli {name} failed with exit code {completed.returncode}: {stderr}"
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=str(self.workspace_root),
+                input=payload,
+                text=True,
+                capture_output=True,
             )
-        stdout = completed.stdout.strip()
-        if not stdout:
-            raise RuntimeError(f"starcoin-node-cli {name} returned empty stdout")
-        return json.loads(stdout)
+            if completed.returncode != 0:
+                stderr = completed.stderr.strip()
+                raise RuntimeError(
+                    f"starcoin-node-cli {name} failed with exit code {completed.returncode}: {stderr}"
+                )
+            stdout = completed.stdout.strip()
+            if not stdout:
+                raise RuntimeError(f"starcoin-node-cli {name} returned empty stdout")
+            return json.loads(stdout)
+        finally:
+            if temporary_config_path is not None:
+                temporary_config_path.unlink(missing_ok=True)
+
+
+def rewrite_vm_profile_config_text(config_text: str, vm_profile: str) -> str:
+    replacement = f'vm_profile = "{normalize_vm_profile(vm_profile)}"'
+    if VM_PROFILE_LINE_PATTERN.search(config_text):
+        return VM_PROFILE_LINE_PATTERN.sub(replacement, config_text, count=1)
+    if config_text and not config_text.endswith("\n"):
+        config_text += "\n"
+    return f"{config_text}{replacement}\n"
+
+
+def write_vm_profile_override_config(config_path: Path, vm_profile: str) -> Path:
+    original_config = config_path.read_text(encoding="utf-8")
+    updated_config = rewrite_vm_profile_config_text(original_config, vm_profile)
+    with tempfile.NamedTemporaryFile(
+        "w", encoding="utf-8", suffix=".toml", delete=False
+    ) as handle:
+        handle.write(updated_config)
+        return Path(handle.name)
 
 
 def read_json_arguments() -> dict[str, Any]:
@@ -153,6 +194,12 @@ def read_json_arguments() -> dict[str, Any]:
 
 
 def parse_args() -> argparse.Namespace:
+    def parse_vm_profile_arg(value: str) -> str:
+        try:
+            return normalize_vm_profile(value)
+        except ValueError as exc:
+            raise argparse.ArgumentTypeError(str(exc)) from exc
+
     parser = argparse.ArgumentParser(
         description="Call the non-MCP starcoin-node-cli with JSON arguments on stdin."
     )
@@ -160,6 +207,12 @@ def parse_args() -> argparse.Namespace:
         "--config",
         default=None,
         help="Path to the node runtime TOML config. Defaults to node-cli.toml, then falls back to node-mcp.toml.",
+    )
+    parser.add_argument(
+        "--vm-profile",
+        type=parse_vm_profile_arg,
+        default=None,
+        help="Override vm_profile for this invocation without editing the base config file.",
     )
     parser.add_argument(
         "--workspace-root",
@@ -177,6 +230,7 @@ def main() -> int:
     client = NodeCliClient(
         config_path=resolve_config_path(args.config),
         workspace_root=Path(args.workspace_root),
+        vm_profile=args.vm_profile,
     )
     if args.command != "call":
         raise SystemExit(f"unsupported command: {args.command}")

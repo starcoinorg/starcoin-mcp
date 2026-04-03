@@ -12,25 +12,30 @@
 
 ## vm_profile follow-ups
 
-- [ ] Expose `vm_profile` as a first-class plugin/runtime choice for transfer workflows. Today the skill and `prepare_transfer` tool inputs do not let a caller pick the profile per transfer.
-- [ ] Add a `--vm-profile` option to `scripts/run_transfer_test.py`. The test script currently writes `vm_profile = "auto"` into the generated node-cli config.
+- [x] Expose `vm_profile` as a first-class plugin/runtime choice for transfer workflows.
+  - `scripts/node_cli_client.py` now accepts `--vm-profile` and rewrites a temporary `node-cli.toml` per invocation so host-side transfer calls can target an explicit routing profile.
+- [x] Add a `--vm-profile` option to `scripts/run_transfer_test.py`.
   - Prefer the generated `node-cli.toml` name and keep `node-mcp.toml` only as an input compatibility alias.
 - [ ] Decide whether transfer-oriented configs and examples should keep defaulting to `vm_profile = "auto"` or require an explicit `vm1_only` / `vm2_only` choice for semantically fixed operations.
 - [ ] If per-transfer profile selection is needed, choose an implementation direction. Candidates:
-  - [ ] Profile-aware CLI startup/config switching before the transfer run starts.
+  - [x] Profile-aware CLI startup/config switching before the transfer run starts.
   - [ ] Separate node-cli configs for VM1-only and VM2-only paths.
   - [ ] Extend the plugin surface so a transfer flow can target a selected routing profile explicitly.
-- [ ] Add a short user-facing note in the plugin docs explaining that `auto` is RPC routing, not per-account VM detection, and which methods are shared, VM1-surface, or VM2-surface.
+- [x] Add a short user-facing note in the plugin docs explaining that `auto` is RPC routing, not per-account VM detection, and which methods are shared, VM1-surface, or VM2-surface.
 
 ## transfer confirmation follow-ups
 
-- [ ] Change the default post-submit behavior so a submitted transaction waits for at least 1 additional block before the workflow reports success. The current flow treats `watch_transaction` as optional, which makes "submitted" and "confirmed" too easy to conflate.
-- [ ] Add a user-facing transfer option for block-based confirmation depth, for example `confirm_blocks` or `min_confirmed_blocks`, so callers can request more than the default 1 block when they need stronger confirmation.
-- [ ] Prefer `watch_transaction` as the single source of truth for confirmation-depth waiting. It should accept the target confirmation depth and own the block-based success criteria.
-- [ ] Expose one higher-level confirmation setting in the transfer skill/plugin and map it onto `watch_transaction`, so users do not need to reason about tool boundaries during a transfer.
-- [ ] Keep `submit_signed_transaction` focused on submission and immediate execution status. If it offers a blocking convenience mode, it should reuse `watch_transaction` semantics instead of defining a second confirmation model.
-- [ ] Define the confirmation semantics precisely in docs and tool output: whether the count means the inclusion block only, inclusion plus N more blocks, or a minimum chain height delta observed after inclusion.
-- [ ] Update the transfer skill, README, and `scripts/run_transfer_test.py` so the documented default matches the runtime behavior and the CLI test can exercise both the default 1-block wait and a user-specified confirmation depth.
+- [x] Change the default post-submit behavior so a submitted transaction waits for at least 1 additional block before the workflow reports success.
+  - The converged default is now `min_confirmed_blocks = 2`, which means the inclusion block plus at least 1 additional observed block.
+- [x] Add a user-facing transfer option for block-based confirmation depth.
+  - `scripts/run_transfer_test.py` now exposes `--min-confirmed-blocks`.
+- [x] Prefer `watch_transaction` as the single source of truth for confirmation-depth waiting.
+  - `starcoin-node-mcp.submit_signed_transaction(blocking = true)` now reuses `watch_transaction` semantics instead of defining a separate confirmation model.
+- [x] Expose one higher-level confirmation setting in the transfer skill/plugin and map it onto `watch_transaction`, so users do not need to reason about tool boundaries during a transfer.
+- [x] Keep `submit_signed_transaction` focused on submission and immediate execution status. If it offers a blocking convenience mode, it should reuse `watch_transaction` semantics instead of defining a second confirmation model.
+- [x] Define the confirmation semantics precisely in docs and tool output.
+  - `confirmed_blocks` now means `head_block_number - inclusion_block_number + 1`, and `status_summary.confirmed = true` with top-level `confirmed = false` means "included but not yet deep enough".
+- [x] Update the transfer skill, README, and `scripts/run_transfer_test.py` so the documented default matches the runtime behavior and the CLI test can exercise both the default 1-block wait and a user-specified confirmation depth.
 
 ## transfer usability and recovery follow-ups
 
