@@ -81,13 +81,11 @@ fn main() -> Result<()> {
 }
 
 fn default_socket_path() -> PathBuf {
-    daemon_socket_env_override().unwrap_or_else(|| resolve_default_socket_path(&default_home_dir()))
+    daemon_socket_env_override().unwrap_or_else(|| RuntimeSocketLayout::detect().socket_path)
 }
 
 fn daemon_socket_env_override() -> Option<PathBuf> {
-    ["STARMASKD_SOCKET_PATH", "STARMASK_MCP_DAEMON_SOCKET_PATH"]
-        .into_iter()
-        .find_map(non_empty_env_path)
+    non_empty_env_path("STARMASKD_SOCKET_PATH")
 }
 
 fn default_home_dir() -> PathBuf {
@@ -104,128 +102,81 @@ fn non_empty_env_path(name: &str) -> Option<PathBuf> {
     })
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RuntimeSocketLayout {
+    socket_path: PathBuf,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct LinuxSocketDirs {
-    state_home: PathBuf,
     runtime_dir: PathBuf,
+}
+
+impl RuntimeSocketLayout {
+    fn detect() -> Self {
+        Self::for_home(&default_home_dir())
+    }
+
+    fn for_home(home: &Path) -> Self {
+        if cfg!(target_os = "macos") {
+            Self {
+                socket_path: macos_runtime_support_dir(home)
+                    .join("run")
+                    .join("starmaskd.sock"),
+            }
+        } else {
+            Self::for_linux_dirs(&linux_socket_dirs(home))
+        }
+    }
+
+    fn for_linux_dirs(dirs: &LinuxSocketDirs) -> Self {
+        Self {
+            socket_path: linux_socket_path(&dirs.runtime_dir),
+        }
+    }
 }
 
 fn linux_socket_dirs(home: &Path) -> LinuxSocketDirs {
     let state_home =
         non_empty_env_path("XDG_STATE_HOME").unwrap_or_else(|| home.join(".local").join("state"));
-    let runtime_dir = non_empty_env_path("XDG_RUNTIME_DIR").unwrap_or_else(|| state_home.clone());
     LinuxSocketDirs {
-        state_home,
-        runtime_dir,
+        runtime_dir: non_empty_env_path("XDG_RUNTIME_DIR").unwrap_or(state_home),
     }
 }
 
-fn resolve_default_socket_path(home: &Path) -> PathBuf {
-    let preferred = preferred_socket_path(home);
-    if preferred.exists() {
-        return preferred;
-    }
-
-    let legacy = legacy_socket_path(home);
-    if legacy.exists() {
-        return legacy;
-    }
-
-    preferred
+fn macos_runtime_support_dir(home: &Path) -> PathBuf {
+    home.join("Library")
+        .join("Application Support")
+        .join("StarmaskRuntime")
 }
 
-fn preferred_socket_path(home: &Path) -> PathBuf {
-    if cfg!(target_os = "macos") {
-        home.join("Library")
-            .join("Application Support")
-            .join("StarmaskRuntime")
-            .join("run")
-            .join("starmaskd.sock")
-    } else {
-        preferred_linux_socket_path(&linux_socket_dirs(home))
-    }
-}
-
-fn legacy_socket_path(home: &Path) -> PathBuf {
-    if cfg!(target_os = "macos") {
-        home.join("Library")
-            .join("Application Support")
-            .join("StarcoinMCP")
-            .join("run")
-            .join("starmaskd.sock")
-    } else {
-        legacy_linux_socket_path(&linux_socket_dirs(home))
-    }
-}
-
-fn preferred_linux_socket_path(dirs: &LinuxSocketDirs) -> PathBuf {
-    dirs.runtime_dir
-        .join("starmask-runtime")
-        .join("starmaskd.sock")
-}
-
-fn legacy_linux_socket_path(dirs: &LinuxSocketDirs) -> PathBuf {
-    dirs.state_home.join("starcoin-mcp").join("starmaskd.sock")
+fn linux_socket_path(runtime_dir: &Path) -> PathBuf {
+    runtime_dir.join("starmask-runtime").join("starmaskd.sock")
 }
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
     use std::path::PathBuf;
 
-    use tempfile::tempdir;
-
-    use super::{
-        LinuxSocketDirs, legacy_linux_socket_path, legacy_socket_path, preferred_linux_socket_path,
-        preferred_socket_path, resolve_default_socket_path,
-    };
+    use super::{LinuxSocketDirs, RuntimeSocketLayout, linux_socket_path};
 
     #[test]
-    fn prefers_existing_new_socket_path() {
-        let tempdir = tempdir().expect("tempdir");
-        let preferred = preferred_socket_path(tempdir.path());
-        let legacy = legacy_socket_path(tempdir.path());
-        fs::create_dir_all(preferred.parent().expect("preferred parent")).expect("create new path");
-        fs::create_dir_all(legacy.parent().expect("legacy parent")).expect("create legacy path");
-        fs::write(&preferred, []).expect("write new socket placeholder");
-        fs::write(&legacy, []).expect("write legacy socket placeholder");
-
-        assert_eq!(resolve_default_socket_path(tempdir.path()), preferred);
-    }
-
-    #[test]
-    fn falls_back_to_existing_legacy_socket_path() {
-        let tempdir = tempdir().expect("tempdir");
-        let legacy = legacy_socket_path(tempdir.path());
-        fs::create_dir_all(legacy.parent().expect("legacy parent")).expect("create legacy path");
-        fs::write(&legacy, []).expect("write legacy socket placeholder");
-
-        assert_eq!(resolve_default_socket_path(tempdir.path()), legacy);
-    }
-
-    #[test]
-    fn linux_preferred_socket_path_uses_xdg_runtime_dir() {
+    fn linux_runtime_socket_layout_uses_xdg_runtime_dir() {
         let dirs = LinuxSocketDirs {
-            state_home: PathBuf::from("/tmp/state-home"),
             runtime_dir: PathBuf::from("/tmp/runtime-dir"),
         };
 
         assert_eq!(
-            preferred_linux_socket_path(&dirs),
+            RuntimeSocketLayout::for_linux_dirs(&dirs).socket_path,
             PathBuf::from("/tmp/runtime-dir/starmask-runtime/starmaskd.sock")
         );
     }
 
     #[test]
-    fn linux_legacy_socket_path_uses_xdg_state_home() {
-        let dirs = LinuxSocketDirs {
-            state_home: PathBuf::from("/tmp/state-home"),
-            runtime_dir: PathBuf::from("/tmp/runtime-dir"),
-        };
-
+    fn linux_socket_path_uses_runtime_dir() {
         assert_eq!(
-            legacy_linux_socket_path(&dirs),
-            PathBuf::from("/tmp/state-home/starcoin-mcp/starmaskd.sock")
+            linux_socket_path(std::path::Path::new("/tmp/runtime-dir")),
+            PathBuf::from("/tmp/runtime-dir/starmask-runtime/starmaskd.sock")
         );
     }
 }

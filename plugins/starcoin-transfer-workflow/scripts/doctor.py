@@ -18,6 +18,7 @@ from runtime_layout import (
     platform_node_config_candidates,
     platform_wallet_config_candidates,
     resolve_existing_path,
+    resolve_node_config_override,
     resolve_wallet_daemon_socket_path,
     resolve_wallet_runtime_dir,
     resolve_workspace_root,
@@ -87,11 +88,9 @@ def platform_paths() -> tuple[Path, Path, Path, Path]:
 
 
 def resolve_node_config_path(preferred_path: Path, fallback_path: Path) -> Path:
-    override = os.environ.get("STARCOIN_NODE_CLI_CONFIG") or os.environ.get(
-        "STARCOIN_NODE_MCP_CONFIG"
-    )
+    override = resolve_node_config_override()
     if override:
-        return Path(override).expanduser().resolve()
+        return override.resolve()
     if preferred_path.exists():
         return preferred_path
     if fallback_path.exists():

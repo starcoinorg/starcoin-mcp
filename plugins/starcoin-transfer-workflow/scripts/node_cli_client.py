@@ -16,6 +16,7 @@ from runtime_layout import (
     STARCOIN_NODE_CLI_MARKERS,
     platform_node_config_candidates,
     resolve_existing_path,
+    resolve_node_config_override,
     resolve_workspace_root,
 )
 from transfer_controller import normalize_vm_profile
@@ -39,10 +40,9 @@ def platform_config_candidates() -> list[Path]:
 def resolve_config_path(config_arg: str | None) -> Path:
     if config_arg:
         return Path(config_arg).expanduser().resolve()
-    for env_name in ("STARCOIN_NODE_CLI_CONFIG", "STARCOIN_NODE_MCP_CONFIG"):
-        override = os.environ.get(env_name)
-        if override:
-            return Path(override).expanduser().resolve()
+    override = resolve_node_config_override()
+    if override is not None:
+        return override.resolve()
     return resolve_existing_path(platform_config_candidates())
 
 

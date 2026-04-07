@@ -10,8 +10,10 @@ from unittest.mock import patch
 
 from runtime_layout import (
     DEFAULT_WALLET_RUNTIME_DIR,
+    current_platform_paths,
     metadata_daemon_socket_path,
     platform_daemon_socket_candidates,
+    resolve_node_config_override,
     resolve_wallet_daemon_socket_path,
     resolve_wallet_runtime_dir,
     wallet_runtime_metadata_path,
@@ -78,26 +80,11 @@ class RuntimeLayoutTests(unittest.TestCase):
                 Path("/tmp/runtime-arg") / "run" / "starmaskd.sock",
             )
 
-    def test_resolve_wallet_daemon_socket_path_uses_legacy_env_alias(self) -> None:
+    def test_resolve_wallet_daemon_socket_path_uses_socket_env_override(self) -> None:
         runtime_dir = Path("/tmp/runtime-from-arg")
         with patch.dict(
             os.environ,
-            {"STARMASK_MCP_DAEMON_SOCKET_PATH": "/tmp/legacy-daemon.sock"},
-            clear=True,
-        ):
-            self.assertEqual(
-                resolve_wallet_daemon_socket_path(runtime_dir),
-                Path("/tmp/legacy-daemon.sock"),
-            )
-
-    def test_resolve_wallet_daemon_socket_path_prefers_new_env_alias(self) -> None:
-        runtime_dir = Path("/tmp/runtime-from-arg")
-        with patch.dict(
-            os.environ,
-            {
-                "STARMASKD_SOCKET_PATH": "/tmp/new-daemon.sock",
-                "STARMASK_MCP_DAEMON_SOCKET_PATH": "/tmp/legacy-daemon.sock",
-            },
+            {"STARMASKD_SOCKET_PATH": "/tmp/new-daemon.sock"},
             clear=True,
         ):
             self.assertEqual(
@@ -116,7 +103,7 @@ class RuntimeLayoutTests(unittest.TestCase):
                 default_socket_path,
             )
 
-    def test_platform_daemon_socket_candidates_include_legacy_platform_path(self) -> None:
+    def test_platform_daemon_socket_candidates_include_current_platform_path(self) -> None:
         with patch("runtime_layout.platform.system", return_value="Linux"), patch.object(
             Path,
             "home",
@@ -130,8 +117,36 @@ class RuntimeLayoutTests(unittest.TestCase):
             clear=True,
         ):
             self.assertIn(
-                Path("/tmp/runtime-layout-state/starcoin-mcp/starmaskd.sock").resolve(),
+                Path("/tmp/runtime-layout-run/starmask-runtime/starmaskd.sock").resolve(),
                 platform_daemon_socket_candidates(),
+            )
+
+    def test_current_platform_paths_use_xdg_linux_layout(self) -> None:
+        with patch("runtime_layout.platform.system", return_value="Linux"), patch.object(
+            Path,
+            "home",
+            return_value=Path("/tmp/runtime-layout-home"),
+        ), patch.dict(
+            os.environ,
+            {
+                "XDG_CONFIG_HOME": "/tmp/runtime-layout-config",
+                "XDG_STATE_HOME": "/tmp/runtime-layout-state",
+                "XDG_RUNTIME_DIR": "/tmp/runtime-layout-run",
+            },
+            clear=True,
+        ):
+            paths = current_platform_paths()
+            self.assertEqual(
+                paths.node_config_path,
+                Path("/tmp/runtime-layout-config/starcoin-node/node-cli.toml"),
+            )
+            self.assertEqual(
+                paths.wallet_config_path,
+                Path("/tmp/runtime-layout-config/starmask-runtime/config.toml"),
+            )
+            self.assertEqual(
+                paths.daemon_socket_path,
+                Path("/tmp/runtime-layout-run/starmask-runtime/starmaskd.sock"),
             )
 
     def test_metadata_daemon_socket_path_ignores_non_string_values(self) -> None:
@@ -154,6 +169,17 @@ class RuntimeLayoutTests(unittest.TestCase):
                     metadata={"daemon_socket_path": True},
                 ),
                 Path("/tmp/new-daemon.sock"),
+            )
+
+    def test_resolve_node_config_override_uses_current_env_name(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"STARCOIN_NODE_CLI_CONFIG": "/tmp/node-cli.toml"},
+            clear=True,
+        ):
+            self.assertEqual(
+                resolve_node_config_override(),
+                Path("/tmp/node-cli.toml"),
             )
 
 

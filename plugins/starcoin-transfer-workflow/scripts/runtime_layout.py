@@ -3,24 +3,34 @@ from __future__ import annotations
 
 import os
 import platform
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping
 
 
 DEFAULT_WALLET_RUNTIME_DIR = Path.home() / ".runtime" / "wallet-runtime"
 RUNTIME_METADATA_NAME = "wallet-runtime.json"
-DAEMON_SOCKET_ENV_NAMES = (
-    "STARMASKD_SOCKET_PATH",
-    "STARMASK_MCP_DAEMON_SOCKET_PATH",
-)
+DAEMON_SOCKET_ENV_NAME = "STARMASKD_SOCKET_PATH"
 STARCOIN_NODE_CLI_MARKERS = (
     "starcoin-node/crates/starcoin-node-cli/Cargo.toml",
-    "starcoin-node-mcp/crates/starcoin-node-cli/Cargo.toml",
 )
 STARMASKD_MANIFEST_MARKERS = (
     "starmask-runtime/crates/starmaskd/Cargo.toml",
-    "starmask-mcp/crates/starmaskd/Cargo.toml",
 )
+
+
+@dataclass(frozen=True)
+class LinuxRuntimeDirs:
+    config_home: Path
+    runtime_dir: Path
+
+
+@dataclass(frozen=True)
+class PlatformRuntimePaths:
+    runtime_root: Path
+    node_config_path: Path
+    wallet_config_path: Path
+    daemon_socket_path: Path
 
 
 def first_env_value(*names: str) -> str | None:
@@ -57,7 +67,6 @@ def resolve_workspace_root(plugin_root: Path, marker_paths: Iterable[str]) -> Pa
     env_override = first_env_value(
         "STARCOIN_TRANSFER_WORKSPACE_ROOT",
         "STARCOIN_WORKSPACE_ROOT",
-        "STARCOIN_MCP_WORKSPACE_ROOT",
     )
     if env_override:
         return Path(env_override).expanduser().resolve()
@@ -96,6 +105,66 @@ def wallet_runtime_socket_path(runtime_dir: Path) -> Path:
     return Path(runtime_dir).expanduser() / "run" / "starmaskd.sock"
 
 
+def non_empty_env_path(name: str) -> Path | None:
+    value = os.environ.get(name)
+    if not value:
+        return None
+    return Path(value).expanduser()
+
+
+def home_dir() -> Path:
+    return Path.home()
+
+
+def xdg_config_home(home: Path) -> Path:
+    return non_empty_env_path("XDG_CONFIG_HOME") or home / ".config"
+
+
+def xdg_state_home(home: Path) -> Path:
+    return non_empty_env_path("XDG_STATE_HOME") or home / ".local" / "state"
+
+
+def xdg_runtime_dir(state_home: Path) -> Path:
+    return non_empty_env_path("XDG_RUNTIME_DIR") or state_home
+
+
+def linux_runtime_dirs(home: Path) -> LinuxRuntimeDirs:
+    state_home = xdg_state_home(home)
+    return LinuxRuntimeDirs(
+        config_home=xdg_config_home(home),
+        runtime_dir=xdg_runtime_dir(state_home),
+    )
+
+
+def current_platform_paths() -> PlatformRuntimePaths:
+    home = home_dir()
+    runtime_root = home / ".runtime"
+    system = platform.system()
+    if system == "Darwin":
+        support_dir = home / "Library" / "Application Support"
+        return PlatformRuntimePaths(
+            runtime_root=runtime_root,
+            node_config_path=support_dir / "StarcoinNode" / "node-cli.toml",
+            wallet_config_path=support_dir / "StarmaskRuntime" / "config.toml",
+            daemon_socket_path=support_dir / "StarmaskRuntime" / "run" / "starmaskd.sock",
+        )
+    if system == "Linux":
+        dirs = linux_runtime_dirs(home)
+        return PlatformRuntimePaths(
+            runtime_root=runtime_root,
+            node_config_path=dirs.config_home / "starcoin-node" / "node-cli.toml",
+            wallet_config_path=dirs.config_home / "starmask-runtime" / "config.toml",
+            daemon_socket_path=dirs.runtime_dir / "starmask-runtime" / "starmaskd.sock",
+        )
+    roaming_dir = home / "AppData" / "Roaming"
+    return PlatformRuntimePaths(
+        runtime_root=runtime_root,
+        node_config_path=roaming_dir / "StarcoinNode" / "node-cli.toml",
+        wallet_config_path=roaming_dir / "StarmaskRuntime" / "config.toml",
+        daemon_socket_path=roaming_dir / "StarmaskRuntime" / "starmaskd.sock",
+    )
+
+
 def metadata_daemon_socket_path(metadata: Mapping[str, object] | None) -> Path | None:
     if metadata is None:
         return None
@@ -106,10 +175,11 @@ def metadata_daemon_socket_path(metadata: Mapping[str, object] | None) -> Path |
 
 
 def resolve_daemon_socket_override() -> Path | None:
-    override = first_env_value(*DAEMON_SOCKET_ENV_NAMES)
-    if not override:
-        return None
-    return Path(override).expanduser()
+    return non_empty_env_path(DAEMON_SOCKET_ENV_NAME)
+
+
+def resolve_node_config_override() -> Path | None:
+    return non_empty_env_path("STARCOIN_NODE_CLI_CONFIG")
 
 
 def resolve_wallet_daemon_socket_path(
@@ -132,84 +202,32 @@ def resolve_wallet_daemon_socket_path(
 
 
 def platform_node_config_candidates() -> list[Path]:
-    runtime_root = Path.home() / ".runtime"
-    system = platform.system()
-    if system == "Darwin":
-        preferred = [Path.home() / "Library" / "Application Support" / "StarcoinNode" / "node-cli.toml"]
-        legacy = [
-            Path.home() / "Library" / "Application Support" / "StarcoinMCP" / "node-cli.toml",
-            Path.home() / "Library" / "Application Support" / "StarcoinMCP" / "node-mcp.toml",
-        ]
-    elif system == "Linux":
-        config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-        preferred = [config_home / "starcoin-node" / "node-cli.toml"]
-        legacy = [
-            config_home / "starcoin-mcp" / "node-cli.toml",
-            config_home / "starcoin-mcp" / "node-mcp.toml",
-        ]
-    else:
-        config_home = Path.home() / "AppData" / "Roaming"
-        preferred = [config_home / "StarcoinNode" / "node-cli.toml"]
-        legacy = [
-            config_home / "StarcoinMCP" / "node-cli.toml",
-            config_home / "StarcoinMCP" / "node-mcp.toml",
-        ]
+    paths = current_platform_paths()
     return dedupe_paths(
         [
-            runtime_root / "node-cli.toml",
-            runtime_root / "node-mcp.toml",
-            *preferred,
-            *legacy,
+            paths.runtime_root / "node-cli.toml",
+            paths.node_config_path,
         ]
     )
 
 
 def platform_wallet_config_candidates() -> list[Path]:
-    runtime_root = Path.home() / ".runtime"
-    system = platform.system()
-    if system == "Darwin":
-        preferred = [Path.home() / "Library" / "Application Support" / "StarmaskRuntime" / "config.toml"]
-        legacy = [Path.home() / "Library" / "Application Support" / "StarcoinMCP" / "config.toml"]
-    elif system == "Linux":
-        config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-        preferred = [config_home / "starmask-runtime" / "config.toml"]
-        legacy = [config_home / "starcoin-mcp" / "config.toml"]
-    else:
-        config_home = Path.home() / "AppData" / "Roaming"
-        preferred = [config_home / "StarmaskRuntime" / "config.toml"]
-        legacy = [config_home / "StarcoinMCP" / "config.toml"]
+    paths = current_platform_paths()
     return dedupe_paths(
         [
             DEFAULT_WALLET_RUNTIME_DIR / "starmaskd.toml",
-            runtime_root / "config.toml",
-            *preferred,
-            *legacy,
+            paths.runtime_root / "config.toml",
+            paths.wallet_config_path,
         ]
     )
 
 
 def platform_daemon_socket_candidates() -> list[Path]:
-    runtime_root = Path.home() / ".runtime"
-    system = platform.system()
-    if system == "Darwin":
-        preferred = [Path.home() / "Library" / "Application Support" / "StarmaskRuntime" / "run" / "starmaskd.sock"]
-        legacy = [Path.home() / "Library" / "Application Support" / "StarcoinMCP" / "run" / "starmaskd.sock"]
-    elif system == "Linux":
-        state_home = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
-        runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR", state_home))
-        preferred = [runtime_dir / "starmask-runtime" / "starmaskd.sock"]
-        legacy = [
-            state_home / "starcoin-mcp" / "starmaskd.sock",
-            runtime_dir / "starcoin-mcp" / "starmaskd.sock",
-        ]
-    else:
-        preferred = [Path.home() / "AppData" / "Roaming" / "StarmaskRuntime" / "starmaskd.sock"]
-        legacy = [Path.home() / "AppData" / "Roaming" / "StarcoinMCP" / "starmaskd.sock"]
+    paths = current_platform_paths()
     return dedupe_paths(
         [
             wallet_runtime_socket_path(DEFAULT_WALLET_RUNTIME_DIR),
-            runtime_root / "run" / "starmaskd.sock",
-            *preferred,
-            *legacy,
+            paths.runtime_root / "run" / "starmaskd.sock",
+            paths.daemon_socket_path,
         ]
     )
