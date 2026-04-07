@@ -41,7 +41,7 @@ Default runtime locations for this workflow:
 - wallet runtime: `$HOME/.runtime/wallet-runtime`
 - wallet dir: `$HOME/.runtime/devwallet`
 - node config: `$HOME/.runtime/node-cli.toml`
-- wallet config: `$HOME/.runtime/config.toml`
+- wallet config: `$HOME/.runtime/wallet-runtime/starmaskd.toml`
 
 Known important parameters:
 

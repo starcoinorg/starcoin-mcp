@@ -225,7 +225,7 @@ Poll a transaction until the requested confirmation depth or timeout.
 - `txn_hash`
 - `timeout_seconds`
 - `poll_interval_seconds`
-- `min_confirmed_blocks`: optional, default `2`
+- `min_confirmed_blocks`: optional, default `2`; effective minimum is `1` (smaller values are clamped)
 
 `min_confirmed_blocks` counts the inclusion block itself. The default value `2` therefore means:
 
@@ -538,7 +538,7 @@ Submit an already signed transaction.
 - `prepared_chain_context`: the `chain_context` returned by the preparation result that produced the signed transaction
 - `blocking`: boolean, default `false`
 - `timeout_seconds`: optional when `blocking = true`
-- `min_confirmed_blocks`: optional when `blocking = true`, default `2`
+- `min_confirmed_blocks`: optional when `blocking = true`, default `2`; effective minimum is `1` (smaller values are clamped)
 
 When `allow_submit_without_prior_simulation = false`, the implementation should require a local chain-side preparation or simulation record for the raw transaction and fail closed otherwise.
 
@@ -622,7 +622,7 @@ Submission tools should compute and return `txn_hash` even before the endpoint c
 When a blocking submission includes a watch result, that nested result should be interpreted the
 same way as a direct `watch_transaction` call:
 
-- `status_summary.confirmed` means the transaction has been included on chain
+- `status_summary.confirmed` means the transaction has been included on-chain
 - top-level `confirmed` means the requested `min_confirmed_blocks` threshold was reached
 - `confirmed_blocks` means `head_block_number - inclusion_block_number + 1`
 

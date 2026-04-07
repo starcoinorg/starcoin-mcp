@@ -78,6 +78,20 @@ class TransferConfirmationTests(unittest.TestCase):
             "2 blocks (the inclusion block plus 1 more)",
         )
 
+    def test_confirmation_rows_show_effective_default_depth(self) -> None:
+        controller = TransferController(
+            node_client=FakeToolClient({}),
+            wallet_client=FakeToolClient({}),
+            chain_id=254,
+            network="dev",
+            genesis_hash="0xabc",
+        )
+
+        self.assertIn(
+            ("Confirm Depth", describe_confirmation_depth(2)),
+            controller.confirmation_rows(sample_session()),
+        )
+
     def test_submit_threads_min_confirmed_blocks_to_follow_up_watch(self) -> None:
         node_client = FakeToolClient(
             {

@@ -332,13 +332,14 @@ class TransferController:
                 ("Prepared At", session.prepare_result["prepared_at"]),
             ]
         )
-        if min_confirmed_blocks is not None:
-            rows.append(
-                (
-                    "Confirm Depth",
-                    describe_confirmation_depth(min_confirmed_blocks),
-                )
+        rows.append(
+            (
+                "Confirm Depth",
+                describe_confirmation_depth(
+                    normalize_min_confirmed_blocks(min_confirmed_blocks)
+                ),
             )
+        )
         return rows
 
     def create_sign_request(
