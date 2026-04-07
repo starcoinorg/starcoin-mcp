@@ -16,6 +16,7 @@ from typing import Any
 from urllib.request import Request, urlopen
 
 from node_cli_client import NodeCliClient
+from runtime_layout import resolve_workspace_root, wallet_runtime_socket_path
 from starmaskd_client import StarmaskDaemonClient
 from transfer_controller import (
     TransferController,
@@ -29,32 +30,9 @@ from transfer_controller import (
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 
-def resolve_workspace_root() -> Path:
-    env_override = os.environ.get("STARCOIN_TRANSFER_WORKSPACE_ROOT") or os.environ.get(
-        "STARCOIN_MCP_WORKSPACE_ROOT"
-    )
-    if env_override:
-        return Path(env_override).expanduser().resolve()
-
-    plugin_default = PLUGIN_ROOT.parent.parent.resolve()
-    candidates = [plugin_default]
-    cwd = Path.cwd().resolve()
-    for base in (cwd, *cwd.parents):
-        candidates.append(base)
-        candidates.append(base / "starcoin-mcp")
-
-    seen: set[Path] = set()
-    for candidate in candidates:
-        candidate = candidate.resolve()
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        if (candidate / "starmask-mcp" / "crates" / "starmaskd" / "Cargo.toml").exists():
-            return candidate
-    return plugin_default
-
-
-WORKSPACE_ROOT = resolve_workspace_root()
+WORKSPACE_ROOT = resolve_workspace_root(
+    PLUGIN_ROOT, ("starmask-mcp/crates/starmaskd/Cargo.toml",)
+)
 STARMASKD_MANIFEST = (
     WORKSPACE_ROOT / "starmask-mcp" / "crates" / "starmaskd" / "Cargo.toml"
 )
@@ -244,12 +222,6 @@ def write_text(path: Path, content: str) -> None:
     path.write_text(content, encoding="utf-8")
 
 
-def choose_socket_path(runtime_dir: Path) -> Path:
-    socket_dir = runtime_dir / "run"
-    socket_dir.mkdir(parents=True, exist_ok=True)
-    return socket_dir / "starmaskd.sock"
-
-
 def read_text_if_exists(path: Path) -> str:
     if not path.exists():
         return ""
@@ -376,7 +348,7 @@ def main() -> int:
                 f"wallet runtime chain_id {metadata_chain_id} does not match rpc chain_id {chain_id}"
             )
     else:
-        socket_path = choose_socket_path(runtime_dir)
+        socket_path = wallet_runtime_socket_path(runtime_dir)
     database_path = run_dir / "starmaskd.sqlite3"
     node_config_path = runtime_dir / "node-cli.toml"
     wallet_config_path = runtime_dir / "starmaskd.toml"

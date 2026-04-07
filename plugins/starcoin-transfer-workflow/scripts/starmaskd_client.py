@@ -4,22 +4,19 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import platform
 import socket
 from pathlib import Path
 import sys
 from typing import Any
 
+from runtime_layout import (
+    resolve_wallet_runtime_dir,
+    wallet_runtime_metadata_path,
+    wallet_runtime_socket_path,
+)
+
 
 DAEMON_PROTOCOL_VERSION = 1
-PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-WORKSPACE_ROOT = Path(
-    os.environ.get(
-        "STARCOIN_TRANSFER_WORKSPACE_ROOT",
-        os.environ.get("STARCOIN_MCP_WORKSPACE_ROOT", str(PLUGIN_ROOT.parent.parent)),
-    )
-).resolve()
-DEFAULT_WALLET_RUNTIME_DIR = Path.home() / ".runtime" / "wallet-runtime"
 
 
 class StarmaskDaemonClient:
@@ -133,21 +130,6 @@ class StarmaskDaemonClient:
         return result
 
 
-def platform_socket_path() -> Path:
-    runtime_root = Path.home() / ".runtime"
-    system = platform.system()
-    if system == "Darwin":
-        return runtime_root / "run" / "starmaskd.sock"
-    if system == "Linux":
-        config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-        state_home = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
-        runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR", state_home / "starcoin-mcp"))
-        if runtime_dir.name != "starcoin-mcp":
-            return runtime_dir / "starcoin-mcp" / "starmaskd.sock"
-        return runtime_dir / "starmaskd.sock"
-    return runtime_root / "run" / "starmaskd.sock"
-
-
 def parse_json_if_exists(path: Path) -> dict[str, Any] | None:
     try:
         return json.loads(path.read_text(encoding="utf-8"))
@@ -158,11 +140,8 @@ def parse_json_if_exists(path: Path) -> dict[str, Any] | None:
 def resolve_socket_path(socket_path_arg: str | None, runtime_dir_arg: str | None) -> Path:
     if socket_path_arg:
         return Path(socket_path_arg).expanduser()
-    runtime_dir = Path(
-        runtime_dir_arg
-        or os.environ.get("STARMASK_WALLET_RUNTIME_DIR", str(DEFAULT_WALLET_RUNTIME_DIR))
-    ).expanduser()
-    metadata = parse_json_if_exists(runtime_dir / "wallet-runtime.json")
+    runtime_dir = resolve_wallet_runtime_dir(runtime_dir_arg)
+    metadata = parse_json_if_exists(wallet_runtime_metadata_path(runtime_dir))
     if metadata is not None and metadata.get("daemon_socket_path"):
         return Path(str(metadata["daemon_socket_path"])).expanduser()
     env_socket_path = os.environ.get("STARMASKD_SOCKET_PATH") or os.environ.get(
@@ -170,7 +149,7 @@ def resolve_socket_path(socket_path_arg: str | None, runtime_dir_arg: str | None
     )
     if env_socket_path:
         return Path(env_socket_path).expanduser()
-    return platform_socket_path()
+    return wallet_runtime_socket_path(runtime_dir)
 
 
 def read_json_arguments() -> dict[str, Any]:

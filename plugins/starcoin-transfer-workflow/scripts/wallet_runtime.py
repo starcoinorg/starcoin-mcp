@@ -13,36 +13,19 @@ import time
 from pathlib import Path
 from typing import Any
 
+from runtime_layout import (
+    RUNTIME_METADATA_NAME,
+    resolve_workspace_root,
+    wallet_runtime_socket_path,
+)
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 
-def resolve_workspace_root() -> Path:
-    env_override = os.environ.get("STARCOIN_TRANSFER_WORKSPACE_ROOT") or os.environ.get(
-        "STARCOIN_MCP_WORKSPACE_ROOT"
-    )
-    if env_override:
-        return Path(env_override).expanduser().resolve()
-
-    plugin_default = PLUGIN_ROOT.parent.parent.resolve()
-    candidates = [plugin_default]
-    cwd = Path.cwd().resolve()
-    for base in (cwd, *cwd.parents):
-        candidates.append(base)
-        candidates.append(base / "starcoin-mcp")
-
-    seen: set[Path] = set()
-    for candidate in candidates:
-        candidate = candidate.resolve()
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        if (candidate / "starmask-mcp" / "crates" / "starmaskd" / "Cargo.toml").exists():
-            return candidate
-    return plugin_default
-
-
-WORKSPACE_ROOT = resolve_workspace_root()
+WORKSPACE_ROOT = resolve_workspace_root(
+    PLUGIN_ROOT, ("starmask-mcp/crates/starmaskd/Cargo.toml",)
+)
 STARMASKD_MANIFEST = (
     WORKSPACE_ROOT / "starmask-mcp" / "crates" / "starmaskd" / "Cargo.toml"
 )
@@ -53,7 +36,6 @@ LOCAL_AGENT_MANIFEST = (
     / "starmask-local-account-agent"
     / "Cargo.toml"
 )
-RUNTIME_METADATA_NAME = "wallet-runtime.json"
 
 
 def resolve_binary(env_name: str, binary_name: str) -> str | None:
@@ -136,12 +118,6 @@ def parse_args() -> argparse.Namespace:
     down.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
     return parser.parse_args()
-
-
-def choose_socket_path(runtime_dir: Path) -> Path:
-    socket_dir = runtime_dir.parent / "run"
-    socket_dir.mkdir(parents=True, exist_ok=True)
-    return socket_dir / "starmaskd.sock"
 
 
 def ensure_private_wallet_dir(wallet_dir: Path) -> None:
@@ -314,7 +290,7 @@ def load_status(runtime_dir: Path) -> dict[str, Any]:
     paths = runtime_paths(runtime_dir)
     metadata = read_json(paths["metadata_path"]) or {}
     socket_path = Path(
-        metadata.get("daemon_socket_path", str(choose_socket_path(runtime_dir)))
+        metadata.get("daemon_socket_path", str(wallet_runtime_socket_path(runtime_dir)))
     )
     starmaskd_pid = read_pid(paths["starmaskd_pid_path"])
     agent_pid = read_pid(paths["agent_pid_path"])
@@ -428,7 +404,7 @@ def main() -> int:
 
     paths["run_dir"].mkdir(parents=True, exist_ok=True)
     paths["logs_dir"].mkdir(parents=True, exist_ok=True)
-    socket_path = choose_socket_path(runtime_dir)
+    socket_path = wallet_runtime_socket_path(runtime_dir)
     remove_if_exists(socket_path)
 
     wallet_config = build_wallet_config(

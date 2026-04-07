@@ -13,38 +13,16 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
+from runtime_layout import resolve_workspace_root
 from transfer_controller import normalize_vm_profile
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 VM_PROFILE_LINE_PATTERN = re.compile(r"(?m)^\s*vm_profile\s*=\s*.*$")
 
 
-def resolve_workspace_root() -> Path:
-    env_override = os.environ.get("STARCOIN_TRANSFER_WORKSPACE_ROOT") or os.environ.get(
-        "STARCOIN_MCP_WORKSPACE_ROOT"
-    )
-    if env_override:
-        return Path(env_override).expanduser().resolve()
-
-    plugin_default = PLUGIN_ROOT.parent.parent.resolve()
-    candidates = [plugin_default]
-    cwd = Path.cwd().resolve()
-    for base in (cwd, *cwd.parents):
-        candidates.append(base)
-        candidates.append(base / "starcoin-mcp")
-
-    seen: set[Path] = set()
-    for candidate in candidates:
-        candidate = candidate.resolve()
-        if candidate in seen:
-            continue
-        seen.add(candidate)
-        if (candidate / "starcoin-node-mcp" / "crates" / "starcoin-node-cli" / "Cargo.toml").exists():
-            return candidate
-    return plugin_default
-
-
-WORKSPACE_ROOT = resolve_workspace_root()
+WORKSPACE_ROOT = resolve_workspace_root(
+    PLUGIN_ROOT, ("starcoin-node-mcp/crates/starcoin-node-cli/Cargo.toml",)
+)
 NODE_CLI_MANIFEST = (
     WORKSPACE_ROOT / "starcoin-node-mcp" / "crates" / "starcoin-node-cli" / "Cargo.toml"
 )
