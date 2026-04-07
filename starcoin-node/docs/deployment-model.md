@@ -145,7 +145,7 @@ Startup must fail fast when:
 
 In steady state:
 
-- `starcoin-node` may be short-lived or tied to one MCP host session
+- a `starcoin-node` instance may be short-lived or tied to one MCP host session
 - no durable request state is required in the first release
 - endpoint metadata and ABI results may be cached in memory for short periods
 - transaction-adjacent tools must use a fresh chain-context check before returning or submitting payloads

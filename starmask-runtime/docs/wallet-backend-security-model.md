@@ -16,6 +16,7 @@ the core trust boundaries of the stack.
 It applies to:
 
 - `starmaskd` as coordinator
+- `starmask-native-host` or an external MCP transport adapter
 - generic wallet backend agents
 - `local_account_dir`
 
@@ -23,15 +24,15 @@ It applies to:
 
 The primary phase-2 goal is:
 
-`starmask-runtime` must allow a local MCP host to request signatures from more than one backend kind
-without giving the MCP host private key access, password access, or authority over the approval
-surface.
+`starmaskd` must allow a local MCP host to request signatures from more than one
+backend kind without giving the MCP host private key access, password access, or
+authority over the approval surface.
 
 ## 3. Non-Negotiable Invariants
 
 These rules remain mandatory:
 
-1. `starmask-runtime` never signs
+1. the host transport adapter, such as `starmask-native-host` or an external MCP adapter, never signs
 2. `starmaskd` never signs
 3. private keys remain inside the selected backend
 4. passwords or unlock secrets never cross the MCP boundary
@@ -51,7 +52,8 @@ Trusted for persistence, routing, and recovery, but not signing:
 
 Trusted for protocol adaptation only:
 
-- `starmask-runtime`
+- `starmask-native-host`
+- any external MCP transport adapter
 
 Untrusted for approval truth:
 

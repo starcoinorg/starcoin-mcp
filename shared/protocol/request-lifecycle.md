@@ -4,7 +4,8 @@
 
 This document defines a shared lifecycle vocabulary for asynchronous approval and signing requests.
 
-It is intended to be reused by wallet-facing MCP projects such as `starmask-runtime`.
+It is intended to be reused by wallet-facing runtime/adapter projects such as
+`starmask-runtime`.
 
 ## Canonical States
 

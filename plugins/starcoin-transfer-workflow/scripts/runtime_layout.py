@@ -4,11 +4,15 @@ from __future__ import annotations
 import os
 import platform
 from pathlib import Path
-from typing import Iterable
+from typing import Iterable, Mapping
 
 
 DEFAULT_WALLET_RUNTIME_DIR = Path.home() / ".runtime" / "wallet-runtime"
 RUNTIME_METADATA_NAME = "wallet-runtime.json"
+DAEMON_SOCKET_ENV_NAMES = (
+    "STARMASKD_SOCKET_PATH",
+    "STARMASK_MCP_DAEMON_SOCKET_PATH",
+)
 STARCOIN_NODE_CLI_MARKERS = (
     "starcoin-node/crates/starcoin-node-cli/Cargo.toml",
     "starcoin-node-mcp/crates/starcoin-node-cli/Cargo.toml",
@@ -92,6 +96,41 @@ def wallet_runtime_socket_path(runtime_dir: Path) -> Path:
     return Path(runtime_dir).expanduser() / "run" / "starmaskd.sock"
 
 
+def metadata_daemon_socket_path(metadata: Mapping[str, object] | None) -> Path | None:
+    if metadata is None:
+        return None
+    socket_path = metadata.get("daemon_socket_path")
+    if not socket_path:
+        return None
+    return Path(str(socket_path)).expanduser()
+
+
+def resolve_daemon_socket_override() -> Path | None:
+    override = first_env_value(*DAEMON_SOCKET_ENV_NAMES)
+    if not override:
+        return None
+    return Path(override).expanduser()
+
+
+def resolve_wallet_daemon_socket_path(
+    runtime_dir: Path,
+    *,
+    metadata: Mapping[str, object] | None = None,
+    default_socket_path: Path | None = None,
+) -> Path:
+    metadata_socket_path = metadata_daemon_socket_path(metadata)
+    if metadata_socket_path is not None:
+        return metadata_socket_path
+
+    env_socket_path = resolve_daemon_socket_override()
+    if env_socket_path is not None:
+        return env_socket_path
+
+    if default_socket_path is not None and runtime_dir == DEFAULT_WALLET_RUNTIME_DIR:
+        return default_socket_path
+    return wallet_runtime_socket_path(runtime_dir)
+
+
 def platform_node_config_candidates() -> list[Path]:
     runtime_root = Path.home() / ".runtime"
     system = platform.system()
@@ -154,16 +193,23 @@ def platform_daemon_socket_candidates() -> list[Path]:
     system = platform.system()
     if system == "Darwin":
         preferred = [Path.home() / "Library" / "Application Support" / "StarmaskRuntime" / "run" / "starmaskd.sock"]
+        legacy = [Path.home() / "Library" / "Application Support" / "StarcoinMCP" / "run" / "starmaskd.sock"]
     elif system == "Linux":
         state_home = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
         runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR", state_home))
         preferred = [runtime_dir / "starmask-runtime" / "starmaskd.sock"]
+        legacy = [
+            state_home / "starcoin-mcp" / "starmaskd.sock",
+            runtime_dir / "starcoin-mcp" / "starmaskd.sock",
+        ]
     else:
         preferred = [Path.home() / "AppData" / "Roaming" / "StarmaskRuntime" / "starmaskd.sock"]
+        legacy = [Path.home() / "AppData" / "Roaming" / "StarcoinMCP" / "starmaskd.sock"]
     return dedupe_paths(
         [
             wallet_runtime_socket_path(DEFAULT_WALLET_RUNTIME_DIR),
             runtime_root / "run" / "starmaskd.sock",
             *preferred,
+            *legacy,
         ]
     )

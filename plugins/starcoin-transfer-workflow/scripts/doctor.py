@@ -12,17 +12,16 @@ import sys
 from pathlib import Path
 
 from runtime_layout import (
-    DEFAULT_WALLET_RUNTIME_DIR,
     STARMASKD_MANIFEST_MARKERS,
     STARCOIN_NODE_CLI_MARKERS,
     platform_daemon_socket_candidates,
     platform_node_config_candidates,
     platform_wallet_config_candidates,
     resolve_existing_path,
+    resolve_wallet_daemon_socket_path,
     resolve_wallet_runtime_dir,
     resolve_workspace_root,
     wallet_runtime_metadata_path,
-    wallet_runtime_socket_path,
 )
 
 try:
@@ -203,14 +202,11 @@ def resolve_daemon_socket_path(
     runtime_dir_arg: str | None, default_socket_path: Path
 ) -> tuple[Path, Path, dict | None]:
     runtime_dir, metadata_path, metadata = resolve_runtime_metadata(runtime_dir_arg)
-    if metadata is not None and metadata.get("daemon_socket_path"):
-        return Path(metadata["daemon_socket_path"]), metadata_path, metadata
-    daemon_socket_override = os.environ.get("STARMASKD_SOCKET_PATH")
-    if daemon_socket_override:
-        return Path(daemon_socket_override).expanduser(), metadata_path, metadata
-    socket_path = wallet_runtime_socket_path(runtime_dir)
-    if runtime_dir == DEFAULT_WALLET_RUNTIME_DIR:
-        socket_path = default_socket_path
+    socket_path = resolve_wallet_daemon_socket_path(
+        runtime_dir,
+        metadata=metadata,
+        default_socket_path=default_socket_path,
+    )
     return socket_path, metadata_path, metadata
 
 

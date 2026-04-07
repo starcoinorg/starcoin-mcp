@@ -52,7 +52,7 @@ The documents should be completed in this order:
 7. Rust implementation strategy
 8. core Rust API design
 9. SQLite schema and migration design
-10. MCP shim adapter design
+10. stdio adapter design
 11. native messaging examples
 12. approval UI specification
 13. testing and acceptance criteria

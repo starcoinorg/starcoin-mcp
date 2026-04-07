@@ -107,7 +107,7 @@ These instructions apply to the whole repository unless a subproject adds strict
 - After each push, re-read the latest review summary instead of assuming resolved threads mean the PR is review-clean.
 - If an automated reviewer keeps surfacing adjacent issues, stop the line-by-line patching pattern and do a module-level sweep before the next push.
 
-## Starmask Runtime Specific Rules
+## Starmask Runtime-Specific Rules
 
 - `Starmask` extension is the only signing authority.
 - `starmaskd` owns lifecycle state transitions.

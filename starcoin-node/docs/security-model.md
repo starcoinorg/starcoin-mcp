@@ -9,7 +9,8 @@ The stack includes:
 - the local MCP host
 - `starcoin-node`
 - one configured Starcoin RPC endpoint
-- an external wallet-facing signer such as `starmask-runtime`
+- a selected wallet backend or approval UI that owns signing authority
+- an optional wallet-transport adapter such as `starmask-native-host` or an external `starmask-runtime` adapter
 
 ## Security Goal
 
@@ -34,7 +35,11 @@ The following rules must remain true in every implementation phase:
 
 ### Trusted for wallet approval and signing
 
-- the wallet-facing system such as `starmask-runtime` and its extension
+- the selected wallet backend or approval UI
+
+### Trusted for wallet-transport adaptation only
+
+- `starmask-native-host` or any external `starmask-runtime` adapter
 
 ### Trusted for chain-tool policy and payload construction
 
@@ -79,7 +84,7 @@ The first implementation should explicitly defend against:
 The first implementation does not attempt to defend against:
 
 1. a fully compromised local user account
-2. a malicious wallet runtime
+2. a malicious wallet backend, approval UI, or wallet-transport adapter
 3. a fully dishonest remote RPC endpoint that fabricates chain data while still satisfying basic probes
 
 Those remain important risks, but they are outside the practical trust model of a local chain adapter.

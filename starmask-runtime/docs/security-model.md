@@ -2,8 +2,8 @@
 
 ## Status
 
-This document is the authoritative `v1` security model for the current extension-backed
-implementation.
+This document is the authoritative `v1` security model for the shipped
+extension-backed daemon stack.
 
 Repository status note: the in-tree `crates/starmask-runtime` adapter has been removed. References to
 `starmask-runtime` in this document describe the historical MCP transport role or a possible future
@@ -17,22 +17,24 @@ Future multi-backend security evolution is tracked separately in:
 
 ## 1. Purpose
 
-This document defines the security model for the `starmask-runtime` stack.
+This document defines the security model for the extension-backed `v1` deployment
+centered on `starmaskd`.
 
 The current stack includes:
 
-- `starmask-runtime`
 - `starmaskd`
 - `starmask-native-host`
 - Starmask Chrome extension
 - the local MCP host
+- an optional external `starmask-runtime` adapter that terminates at the same
+  daemon boundary
 
 ## 2. Security Goal
 
 The primary security goal is:
 
-`starmask-runtime` must allow a local MCP host to request wallet actions without granting that host
-signing authority or private key access.
+The daemon stack must allow a local MCP host to request wallet actions without
+granting that host signing authority or private key access.
 
 ## 3. Security Invariants
 
@@ -58,8 +60,8 @@ The following rules must remain true in the current implementation:
 
 ### Trusted for transport adaptation only
 
-- `starmask-runtime`
 - `starmask-native-host`
+- any external `starmask-runtime` adapter
 
 ### Untrusted for security decisions
 
@@ -95,7 +97,8 @@ The current implementation does not attempt to defend against:
 
 1. a fully compromised OS user account
 2. a malicious browser runtime with arbitrary extension code execution
-3. malware with the same OS-user privileges and direct access to the local wallet runtime
+3. malware with the same OS-user privileges and direct access to the local
+   daemon transport
 
 ## 7. Approval Security Rules
 
@@ -250,5 +253,7 @@ Mitigation:
 
 ## 15. Non-Goals
 
-This security model does not define the planned generic signer-backend model. That follow-on work is
-tracked in `docs/unified-wallet-coordinator-evolution.md`.
+This security model does not define the planned generic signer-backend model or
+the multi-backend `local_account_dir` trust extensions. That follow-on work is
+tracked in `docs/unified-wallet-coordinator-evolution.md` and
+`docs/wallet-backend-security-model.md`.

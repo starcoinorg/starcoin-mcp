@@ -8,7 +8,7 @@ mod notify;
 use std::{
     env,
     io::{self, BufReader},
-    path::PathBuf,
+    path::{Path, PathBuf},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, Ordering},
@@ -81,23 +81,93 @@ fn main() -> Result<()> {
 }
 
 fn default_socket_path() -> PathBuf {
-    let home = env::var_os("HOME")
+    daemon_socket_env_override().unwrap_or_else(|| resolve_default_socket_path(&default_home_dir()))
+}
+
+fn daemon_socket_env_override() -> Option<PathBuf> {
+    ["STARMASKD_SOCKET_PATH", "STARMASK_MCP_DAEMON_SOCKET_PATH"]
+        .into_iter()
+        .find_map(|name| env::var_os(name).map(PathBuf::from))
+}
+
+fn default_home_dir() -> PathBuf {
+    env::var_os("HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
-    env::var_os("STARMASKD_SOCKET_PATH")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            if cfg!(target_os = "macos") {
-                home.join("Library")
-                    .join("Application Support")
-                    .join("StarmaskRuntime")
-                    .join("run")
-                    .join("starmaskd.sock")
-            } else {
-                home.join(".local")
-                    .join("state")
-                    .join("starmask-runtime")
-                    .join("starmaskd.sock")
-            }
-        })
+        .unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn resolve_default_socket_path(home: &Path) -> PathBuf {
+    let preferred = preferred_socket_path(home);
+    if preferred.exists() {
+        return preferred;
+    }
+
+    let legacy = legacy_socket_path(home);
+    if legacy.exists() {
+        return legacy;
+    }
+
+    preferred
+}
+
+fn preferred_socket_path(home: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        home.join("Library")
+            .join("Application Support")
+            .join("StarmaskRuntime")
+            .join("run")
+            .join("starmaskd.sock")
+    } else {
+        home.join(".local")
+            .join("state")
+            .join("starmask-runtime")
+            .join("starmaskd.sock")
+    }
+}
+
+fn legacy_socket_path(home: &Path) -> PathBuf {
+    if cfg!(target_os = "macos") {
+        home.join("Library")
+            .join("Application Support")
+            .join("StarcoinMCP")
+            .join("run")
+            .join("starmaskd.sock")
+    } else {
+        home.join(".local")
+            .join("state")
+            .join("starcoin-mcp")
+            .join("starmaskd.sock")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::tempdir;
+
+    use super::{legacy_socket_path, preferred_socket_path, resolve_default_socket_path};
+
+    #[test]
+    fn prefers_existing_new_socket_path() {
+        let tempdir = tempdir().expect("tempdir");
+        let preferred = preferred_socket_path(tempdir.path());
+        let legacy = legacy_socket_path(tempdir.path());
+        fs::create_dir_all(preferred.parent().expect("preferred parent")).expect("create new path");
+        fs::create_dir_all(legacy.parent().expect("legacy parent")).expect("create legacy path");
+        fs::write(&preferred, []).expect("write new socket placeholder");
+        fs::write(&legacy, []).expect("write legacy socket placeholder");
+
+        assert_eq!(resolve_default_socket_path(tempdir.path()), preferred);
+    }
+
+    #[test]
+    fn falls_back_to_existing_legacy_socket_path() {
+        let tempdir = tempdir().expect("tempdir");
+        let legacy = legacy_socket_path(tempdir.path());
+        fs::create_dir_all(legacy.parent().expect("legacy parent")).expect("create legacy path");
+        fs::write(&legacy, []).expect("write legacy socket placeholder");
+
+        assert_eq!(resolve_default_socket_path(tempdir.path()), legacy);
+    }
 }

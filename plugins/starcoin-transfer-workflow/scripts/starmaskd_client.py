@@ -3,16 +3,15 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 import socket
 from pathlib import Path
 import sys
 from typing import Any
 
 from runtime_layout import (
+    resolve_wallet_daemon_socket_path,
     resolve_wallet_runtime_dir,
     wallet_runtime_metadata_path,
-    wallet_runtime_socket_path,
 )
 
 
@@ -141,12 +140,7 @@ def resolve_socket_path(socket_path_arg: str | None, runtime_dir_arg: str | None
         return Path(socket_path_arg).expanduser()
     runtime_dir = resolve_wallet_runtime_dir(runtime_dir_arg)
     metadata = parse_json_if_exists(wallet_runtime_metadata_path(runtime_dir))
-    if metadata is not None and metadata.get("daemon_socket_path"):
-        return Path(str(metadata["daemon_socket_path"])).expanduser()
-    env_socket_path = os.environ.get("STARMASKD_SOCKET_PATH")
-    if env_socket_path:
-        return Path(env_socket_path).expanduser()
-    return wallet_runtime_socket_path(runtime_dir)
+    return resolve_wallet_daemon_socket_path(runtime_dir, metadata=metadata)
 
 
 def read_json_arguments() -> dict[str, Any]:
