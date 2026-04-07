@@ -823,49 +823,63 @@ fn channel_name(channel: Channel) -> &'static str {
     }
 }
 
-fn default_config_path() -> Option<PathBuf> {
-    let home = env::var_os("HOME").map(PathBuf::from)?;
-    if cfg!(target_os = "macos") {
-        Some(
-            home.join("Library")
-                .join("Application Support")
-                .join("StarmaskRuntime")
-                .join("config.toml"),
-        )
-    } else {
-        Some(
-            home.join(".config")
-                .join("starmask-runtime")
-                .join("config.toml"),
-        )
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct RuntimePathLayout {
+    config_path: PathBuf,
+    socket_path: PathBuf,
+    database_path: PathBuf,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct LinuxRuntimeDirs {
+    config_home: PathBuf,
+    state_home: PathBuf,
+    runtime_dir: PathBuf,
+}
+
+impl RuntimePathLayout {
+    fn detect() -> Self {
+        Self::for_home(&default_home_dir())
     }
+
+    fn for_home(home: &Path) -> Self {
+        if cfg!(target_os = "macos") {
+            let support_dir = macos_runtime_support_dir(home);
+            Self {
+                config_path: support_dir.join("config.toml"),
+                socket_path: support_dir.join("run").join("starmaskd.sock"),
+                database_path: support_dir.join("starmaskd.sqlite3"),
+            }
+        } else {
+            Self::for_linux_dirs(&linux_runtime_dirs(home))
+        }
+    }
+
+    fn for_linux_dirs(dirs: &LinuxRuntimeDirs) -> Self {
+        Self {
+            config_path: linux_config_path(&dirs.config_home),
+            socket_path: linux_socket_path(&dirs.runtime_dir),
+            database_path: linux_database_path(&dirs.state_home),
+        }
+    }
+}
+
+fn default_config_path() -> Option<PathBuf> {
+    Some(RuntimePathLayout::detect().config_path)
 }
 
 pub fn default_socket_path() -> PathBuf {
-    let home = default_home_dir();
-    if cfg!(target_os = "macos") {
-        home.join("Library")
-            .join("Application Support")
-            .join("StarmaskRuntime")
-            .join("run")
-            .join("starmaskd.sock")
-    } else {
-        let state_home = xdg_state_home(&home);
-        let runtime_dir = xdg_runtime_dir(&state_home);
-        linux_socket_path(&runtime_dir)
-    }
+    RuntimePathLayout::detect().socket_path
 }
 
 pub fn default_database_path() -> PathBuf {
-    let home = default_home_dir();
-    if cfg!(target_os = "macos") {
-        home.join("Library")
-            .join("Application Support")
-            .join("StarmaskRuntime")
-            .join("starmaskd.sqlite3")
-    } else {
-        linux_database_path(&xdg_state_home(&home))
-    }
+    RuntimePathLayout::detect().database_path
+}
+
+fn macos_runtime_support_dir(home: &Path) -> PathBuf {
+    home.join("Library")
+        .join("Application Support")
+        .join("StarmaskRuntime")
 }
 
 fn default_home_dir() -> PathBuf {
@@ -882,12 +896,29 @@ fn non_empty_env_path(name: &str) -> Option<PathBuf> {
     })
 }
 
+fn linux_runtime_dirs(home: &Path) -> LinuxRuntimeDirs {
+    let state_home = xdg_state_home(home);
+    LinuxRuntimeDirs {
+        config_home: xdg_config_home(home),
+        runtime_dir: xdg_runtime_dir(&state_home),
+        state_home,
+    }
+}
+
+fn xdg_config_home(home: &Path) -> PathBuf {
+    non_empty_env_path("XDG_CONFIG_HOME").unwrap_or_else(|| home.join(".config"))
+}
+
 fn xdg_state_home(home: &Path) -> PathBuf {
     non_empty_env_path("XDG_STATE_HOME").unwrap_or_else(|| home.join(".local").join("state"))
 }
 
 fn xdg_runtime_dir(state_home: &Path) -> PathBuf {
     non_empty_env_path("XDG_RUNTIME_DIR").unwrap_or_else(|| state_home.to_path_buf())
+}
+
+fn linux_config_path(config_home: &Path) -> PathBuf {
+    config_home.join("starmask-runtime").join("config.toml")
 }
 
 fn linux_socket_path(runtime_dir: &Path) -> PathBuf {
@@ -916,8 +947,8 @@ mod tests {
 
     use super::{
         ApprovalSurface, BackendKind, Channel, FileConfig, FileWalletBackendConfig,
-        build_phase2_backends, default_native_host_name, linux_database_path, linux_socket_path,
-        read_extension_ids, validate_allowed_extension_ids,
+        LinuxRuntimeDirs, RuntimePathLayout, build_phase2_backends, default_native_host_name,
+        linux_database_path, linux_socket_path, read_extension_ids, validate_allowed_extension_ids,
     };
 
     #[test]
@@ -954,6 +985,28 @@ mod tests {
         assert_eq!(
             default_native_host_name(Channel::Production),
             "com.starcoin.starmask.production"
+        );
+    }
+
+    #[test]
+    fn linux_runtime_path_layout_uses_expected_dirs() {
+        let layout = RuntimePathLayout::for_linux_dirs(&LinuxRuntimeDirs {
+            config_home: PathBuf::from("/tmp/config-home"),
+            state_home: PathBuf::from("/tmp/state-home"),
+            runtime_dir: PathBuf::from("/tmp/runtime-dir"),
+        });
+
+        assert_eq!(
+            layout.config_path,
+            PathBuf::from("/tmp/config-home/starmask-runtime/config.toml")
+        );
+        assert_eq!(
+            layout.socket_path,
+            PathBuf::from("/tmp/runtime-dir/starmask-runtime/starmaskd.sock")
+        );
+        assert_eq!(
+            layout.database_path,
+            PathBuf::from("/tmp/state-home/starmask-runtime/starmaskd.sqlite3")
         );
     }
 
