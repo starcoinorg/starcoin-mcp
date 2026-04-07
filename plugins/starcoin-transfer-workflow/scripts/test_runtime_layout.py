@@ -9,6 +9,12 @@ from pathlib import Path
 from unittest.mock import patch
 
 from runtime_layout import (
+    DEFAULT_WALLET_RUNTIME_DIR,
+    current_platform_paths,
+    metadata_daemon_socket_path,
+    platform_daemon_socket_candidates,
+    resolve_node_config_override,
+    resolve_wallet_daemon_socket_path,
     resolve_wallet_runtime_dir,
     wallet_runtime_metadata_path,
     wallet_runtime_socket_path,
@@ -72,6 +78,108 @@ class RuntimeLayoutTests(unittest.TestCase):
             self.assertEqual(
                 resolve_socket_path(None, "/tmp/runtime-arg"),
                 Path("/tmp/runtime-arg") / "run" / "starmaskd.sock",
+            )
+
+    def test_resolve_wallet_daemon_socket_path_uses_socket_env_override(self) -> None:
+        runtime_dir = Path("/tmp/runtime-from-arg")
+        with patch.dict(
+            os.environ,
+            {"STARMASKD_SOCKET_PATH": "/tmp/new-daemon.sock"},
+            clear=True,
+        ):
+            self.assertEqual(
+                resolve_wallet_daemon_socket_path(runtime_dir),
+                Path("/tmp/new-daemon.sock"),
+            )
+
+    def test_resolve_wallet_daemon_socket_path_uses_default_socket_for_default_runtime(self) -> None:
+        default_socket_path = Path("/tmp/platform-default.sock")
+        with patch.dict(os.environ, {}, clear=True):
+            self.assertEqual(
+                resolve_wallet_daemon_socket_path(
+                    DEFAULT_WALLET_RUNTIME_DIR,
+                    default_socket_path=default_socket_path,
+                ),
+                default_socket_path,
+            )
+
+    def test_platform_daemon_socket_candidates_include_current_platform_path(self) -> None:
+        with patch("runtime_layout.platform.system", return_value="Linux"), patch.object(
+            Path,
+            "home",
+            return_value=Path("/tmp/runtime-layout-home"),
+        ), patch.dict(
+            os.environ,
+            {
+                "XDG_STATE_HOME": "/tmp/runtime-layout-state",
+                "XDG_RUNTIME_DIR": "/tmp/runtime-layout-run",
+            },
+            clear=True,
+        ):
+            self.assertIn(
+                Path("/tmp/runtime-layout-run/starmask-runtime/starmaskd.sock").resolve(),
+                platform_daemon_socket_candidates(),
+            )
+
+    def test_current_platform_paths_use_xdg_linux_layout(self) -> None:
+        with patch("runtime_layout.platform.system", return_value="Linux"), patch.object(
+            Path,
+            "home",
+            return_value=Path("/tmp/runtime-layout-home"),
+        ), patch.dict(
+            os.environ,
+            {
+                "XDG_CONFIG_HOME": "/tmp/runtime-layout-config",
+                "XDG_STATE_HOME": "/tmp/runtime-layout-state",
+                "XDG_RUNTIME_DIR": "/tmp/runtime-layout-run",
+            },
+            clear=True,
+        ):
+            paths = current_platform_paths()
+            self.assertEqual(
+                paths.node_config_path,
+                Path("/tmp/runtime-layout-config/starcoin-node/node-cli.toml"),
+            )
+            self.assertEqual(
+                paths.wallet_config_path,
+                Path("/tmp/runtime-layout-config/starmask-runtime/config.toml"),
+            )
+            self.assertEqual(
+                paths.daemon_socket_path,
+                Path("/tmp/runtime-layout-run/starmask-runtime/starmaskd.sock"),
+            )
+
+    def test_metadata_daemon_socket_path_ignores_non_string_values(self) -> None:
+        self.assertIsNone(metadata_daemon_socket_path({"daemon_socket_path": True}))
+        self.assertIsNone(metadata_daemon_socket_path({"daemon_socket_path": 1}))
+        self.assertIsNone(
+            metadata_daemon_socket_path({"daemon_socket_path": ["/tmp/runtime.sock"]})
+        )
+
+    def test_resolve_wallet_daemon_socket_path_ignores_invalid_metadata(self) -> None:
+        runtime_dir = Path("/tmp/runtime-from-arg")
+        with patch.dict(
+            os.environ,
+            {"STARMASKD_SOCKET_PATH": "/tmp/new-daemon.sock"},
+            clear=True,
+        ):
+            self.assertEqual(
+                resolve_wallet_daemon_socket_path(
+                    runtime_dir,
+                    metadata={"daemon_socket_path": True},
+                ),
+                Path("/tmp/new-daemon.sock"),
+            )
+
+    def test_resolve_node_config_override_uses_current_env_name(self) -> None:
+        with patch.dict(
+            os.environ,
+            {"STARCOIN_NODE_CLI_CONFIG": "/tmp/node-cli.toml"},
+            clear=True,
+        ):
+            self.assertEqual(
+                resolve_node_config_override(),
+                Path("/tmp/node-cli.toml"),
             )
 
 

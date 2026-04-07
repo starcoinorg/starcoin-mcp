@@ -4,7 +4,8 @@
 
 This document describes how the `starcoin-mcp` repository is organized at the project level.
 
-The repository is intended to host multiple Starcoin-related MCP projects under one umbrella, while keeping:
+The repository is intended to host multiple Starcoin-related runtimes and host-adapter designs
+under one umbrella, while keeping:
 
 - project-specific interfaces close to each subproject
 - shared protocol contracts in one place
@@ -16,7 +17,7 @@ The repository is organized into three logical layers:
 
 1. `docs/architecture/`
 2. `shared/`
-3. subprojects such as `starmask-mcp/` and `starcoin-node-mcp/`
+3. subprojects such as `starmask-runtime/` and `starcoin-node/`
 
 ## 1. `docs/architecture/`
 
@@ -24,9 +25,9 @@ This directory holds repository-level design documents.
 
 It answers questions such as:
 
-- what major MCP projects exist in this repository
+- what major subprojects exist in this repository
 - how they relate to each other
-- how MCP hosts interact with chain-facing and wallet-facing MCP servers
+- how local hosts interact with chain-facing and wallet-facing adapters
 - what the trust boundaries are
 - how the system is deployed
 
@@ -62,12 +63,12 @@ This layer is normative. If multiple subprojects use a common request lifecycle 
 
 ## 3. Subprojects
 
-Each MCP project lives in its own directory.
+Each subproject lives in its own directory.
 
 Examples:
 
-- `starmask-mcp/`
-- `starcoin-node-mcp/`
+- `starmask-runtime/`
+- `starcoin-node/`
 
 Each subproject should contain:
 
@@ -98,7 +99,7 @@ starcoin-mcp/
       unsigned-transaction-envelope.schema.json
       wallet-sign-request.schema.json
       wallet-sign-result.schema.json
-  starmask-mcp/
+  starmask-runtime/
     README.md
     docs/
       approval-ui-spec.md
@@ -107,9 +108,9 @@ starcoin-mcp/
       native-messaging-contract.md
       persistence-and-recovery.md
       security-model.md
-      starmask-mcp-interface-design.md
+      starmask-interface-design.md
       testing-and-acceptance.md
-  starcoin-node-mcp/
+  starcoin-node/
     README.md
     docs/
       configuration.md
@@ -118,7 +119,7 @@ starcoin-mcp/
       rpc-adapter-design.md
       rust-implementation-strategy.md
       security-model.md
-      starcoin-node-mcp-interface-design.md
+      starcoin-node-interface-design.md
       testing-and-acceptance.md
 ```
 
@@ -135,8 +136,8 @@ The current structure is designed so that future MCP projects can be added witho
 
 The repository now contains:
 
-- an implementation-oriented design set for `starmask-mcp`
-- an implementation-oriented design set for `starcoin-node-mcp`
+- an implementation-oriented design set for `starmask-runtime`
+- an implementation-oriented design set for `starcoin-node`
 
 For the current first-release design set, the local MCP binaries are specified with Rust-first implementation constraints in their subproject documents.
 

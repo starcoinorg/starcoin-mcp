@@ -1,6 +1,6 @@
 # Starcoin MCP
 
-This repository contains Starcoin-related MCP projects, with current emphasis on `starmask-mcp` and `starcoin-node-mcp`.
+This repository contains Starcoin-related MCP projects, with current emphasis on `starmask-runtime` and `starcoin-node`.
 
 These instructions apply to the whole repository unless a subproject adds stricter local guidance.
 
@@ -48,16 +48,16 @@ These instructions apply to the whole repository unless a subproject adds strict
 - If you change an API, protocol, lifecycle rule, config surface, or persistence behavior, update the corresponding docs in the same change.
 - If you change repository-wide engineering conventions, layering rules, SDK usage policy, or workflow expectations, update `AGENTS.md` in the same change.
 - Do not update `AGENTS.md` for incidental implementation details that do not change project guidance.
-- For `starmask-mcp`, the following docs are part of the implementation contract:
-  - `starmask-mcp/docs/starmask-mcp-interface-design.md`
-  - `starmask-mcp/docs/security-model.md`
-  - `starmask-mcp/docs/daemon-protocol.md`
-  - `starmask-mcp/docs/native-messaging-contract.md`
-  - `starmask-mcp/docs/persistence-and-recovery.md`
-  - `starmask-mcp/docs/configuration.md`
-  - `starmask-mcp/docs/approval-ui-spec.md`
-  - `starmask-mcp/docs/testing-and-acceptance.md`
-  - `starmask-mcp/docs/rust-implementation-strategy.md`
+- For `starmask-runtime`, the following docs are part of the implementation contract:
+  - `starmask-runtime/docs/starmask-interface-design.md`
+  - `starmask-runtime/docs/security-model.md`
+  - `starmask-runtime/docs/daemon-protocol.md`
+  - `starmask-runtime/docs/native-messaging-contract.md`
+  - `starmask-runtime/docs/persistence-and-recovery.md`
+  - `starmask-runtime/docs/configuration.md`
+  - `starmask-runtime/docs/approval-ui-spec.md`
+  - `starmask-runtime/docs/testing-and-acceptance.md`
+  - `starmask-runtime/docs/rust-implementation-strategy.md`
 
 ## Testing
 
@@ -107,11 +107,11 @@ These instructions apply to the whole repository unless a subproject adds strict
 - After each push, re-read the latest review summary instead of assuming resolved threads mean the PR is review-clean.
 - If an automated reviewer keeps surfacing adjacent issues, stop the line-by-line patching pattern and do a module-level sweep before the next push.
 
-## Starmask-MCP Specific Rules
+## Starmask Runtime-Specific Rules
 
 - `Starmask` extension is the only signing authority.
 - `starmaskd` owns lifecycle state transitions.
-- `starmask-mcp` is an MCP adapter, not a policy engine.
+- `starmask-runtime` is a host-adapter contract, not a policy engine.
 - `rmcp` belongs at the MCP shim boundary, not inside `starmaskd` or `starmask-core`.
 - `starmask-native-host` is a transport shim, not a wallet runtime.
 - After `request.presented`, recovery is same-instance only.

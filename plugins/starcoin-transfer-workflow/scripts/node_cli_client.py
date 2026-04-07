@@ -4,7 +4,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import platform
 import re
 import shutil
 import subprocess
@@ -13,7 +12,13 @@ import tempfile
 from pathlib import Path
 from typing import Any
 
-from runtime_layout import resolve_workspace_root
+from runtime_layout import (
+    STARCOIN_NODE_CLI_MARKERS,
+    platform_node_config_candidates,
+    resolve_existing_path,
+    resolve_node_config_override,
+    resolve_workspace_root,
+)
 from transfer_controller import normalize_vm_profile
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -21,42 +26,24 @@ VM_PROFILE_LINE_PATTERN = re.compile(r"(?m)^\s*vm_profile\s*=\s*.*$")
 
 
 WORKSPACE_ROOT = resolve_workspace_root(
-    PLUGIN_ROOT, ("starcoin-node-mcp/crates/starcoin-node-cli/Cargo.toml",)
+    PLUGIN_ROOT, STARCOIN_NODE_CLI_MARKERS
 )
 NODE_CLI_MANIFEST = (
-    WORKSPACE_ROOT / "starcoin-node-mcp" / "crates" / "starcoin-node-cli" / "Cargo.toml"
+    WORKSPACE_ROOT / "starcoin-node" / "crates" / "starcoin-node-cli" / "Cargo.toml"
 )
 
 
 def platform_config_candidates() -> list[Path]:
-    runtime_dir = Path.home() / ".runtime"
-    system = platform.system()
-    if system == "Darwin":
-        config_dir = Path.home() / "Library" / "Application Support" / "StarcoinMCP"
-    elif system == "Linux":
-        config_dir = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "starcoin-mcp"
-    else:
-        config_dir = Path.home() / "AppData" / "Roaming" / "StarcoinMCP"
-    return [
-        runtime_dir / "node-cli.toml",
-        runtime_dir / "node-mcp.toml",
-        config_dir / "node-cli.toml",
-        config_dir / "node-mcp.toml",
-    ]
+    return platform_node_config_candidates()
 
 
 def resolve_config_path(config_arg: str | None) -> Path:
     if config_arg:
         return Path(config_arg).expanduser().resolve()
-    for env_name in ("STARCOIN_NODE_CLI_CONFIG", "STARCOIN_NODE_MCP_CONFIG"):
-        override = os.environ.get(env_name)
-        if override:
-            return Path(override).expanduser().resolve()
-    candidates = platform_config_candidates()
-    for candidate in candidates:
-        if candidate.exists():
-            return candidate.resolve()
-    return candidates[0].resolve()
+    override = resolve_node_config_override()
+    if override is not None:
+        return override.resolve()
+    return resolve_existing_path(platform_config_candidates())
 
 
 def resolve_binary(env_name: str, binary_name: str) -> str | None:
@@ -179,12 +166,12 @@ def parse_args() -> argparse.Namespace:
             raise argparse.ArgumentTypeError(str(exc)) from exc
 
     parser = argparse.ArgumentParser(
-        description="Call the non-MCP starcoin-node-cli with JSON arguments on stdin."
+        description="Call the standalone starcoin-node-cli with JSON arguments on stdin."
     )
     parser.add_argument(
         "--config",
         default=None,
-        help="Path to the node runtime TOML config. Defaults to node-cli.toml, then falls back to node-mcp.toml.",
+        help="Path to the node runtime TOML config. Defaults to node-cli.toml.",
     )
     parser.add_argument(
         "--vm-profile",

@@ -6,7 +6,7 @@ This document defines the deployment and runtime model for the local wallet-faci
 
 The scope of this document is:
 
-- `starmask-mcp`
+- `starmask-runtime`
 - `starmaskd`
 - `starmask-native-host`
 - `Starmask` Chrome extension
@@ -24,7 +24,7 @@ The deployment model must preserve the signing trust boundary:
 
 ```mermaid
 flowchart LR
-    H["MCP Host"] --> M["starmask-mcp (stdio)"]
+    H["MCP Host"] --> M["starmask-runtime (stdio)"]
     M --> D["starmaskd (local daemon)"]
     D --> N["starmask-native-host"]
     N --> E["Starmask Chrome Extension"]
@@ -56,7 +56,7 @@ The following profiles are out of scope:
 
 The local installation consists of:
 
-1. `starmask-mcp`
+1. `starmask-runtime`
 2. `starmaskd`
 3. `starmask-native-host`
 4. `Starmask` Chrome extension
@@ -66,12 +66,12 @@ The local installation consists of:
 
 ### MCP Host
 
-- launches `starmask-mcp`
+- launches `starmask-runtime`
 - invokes MCP tools
 - persists `request_id` when necessary
 - never talks directly to the extension
 
-### `starmask-mcp`
+### `starmask-runtime`
 
 - speaks MCP over stdio
 - validates request shape
@@ -108,8 +108,8 @@ The normal startup sequence is:
 4. the browser extension connects to the native host
 5. the native host connects to the daemon
 6. the extension registers its `wallet_instance_id`
-7. the MCP host starts `starmask-mcp` when needed
-8. `starmask-mcp` connects to the daemon on demand
+7. the MCP host starts `starmask-runtime` when needed
+8. `starmask-runtime` connects to the daemon on demand
 
 The design assumes that wallet connectivity may come before or after the MCP host starts.
 
@@ -118,7 +118,7 @@ The design assumes that wallet connectivity may come before or after the MCP hos
 In steady state:
 
 - `starmaskd` stays alive across many MCP tool calls
-- `starmask-mcp` may be short-lived
+- `starmask-runtime` may be short-lived
 - the extension may disconnect and reconnect without losing canonical request state
 - the native host may be restarted by Chrome without changing logical wallet identity
 
@@ -129,12 +129,12 @@ In steady state:
 1. browser is already open
 2. extension is already connected
 3. daemon already knows the wallet instance
-4. MCP host later starts `starmask-mcp`
+4. MCP host later starts `starmask-runtime`
 5. requests can be delivered immediately
 
 ### Path 2: Host-First
 
-1. MCP host starts `starmask-mcp`
+1. MCP host starts `starmask-runtime`
 2. daemon is reachable but no extension is connected yet
 3. host may still query wallet status
 4. in the first release, signing request creation fails fast until a connected unlocked wallet instance is available
@@ -151,7 +151,7 @@ In steady state:
 
 ### MCP Host Exit
 
-- `starmask-mcp` may exit immediately
+- `starmask-runtime` may exit immediately
 - the daemon keeps all non-terminal requests
 - the host can later resume by polling the same `request_id`
 
@@ -214,7 +214,7 @@ The deployment model depends on:
 1. a valid Native Messaging host manifest
 2. an exact allowlist of extension IDs per release channel
 3. compatible protocol versions across:
-   - `starmask-mcp`
+   - `starmask-runtime`
    - `starmaskd`
    - `starmask-native-host`
    - `Starmask` extension
@@ -234,9 +234,9 @@ The first implementation should prefer simple local diagnostics over remote tele
 
 The deployment model is considered ready only when the following follow-up documents exist:
 
-1. `starmask-mcp/docs/daemon-protocol.md`
-2. `starmask-mcp/docs/native-messaging-contract.md`
-3. `starmask-mcp/docs/persistence-and-recovery.md`
-4. `starmask-mcp/docs/configuration.md`
+1. `starmask-runtime/docs/daemon-protocol.md`
+2. `starmask-runtime/docs/native-messaging-contract.md`
+3. `starmask-runtime/docs/persistence-and-recovery.md`
+4. `starmask-runtime/docs/configuration.md`
 
 This document defines where components live and how they relate. It does not define exact wire messages or database layout.

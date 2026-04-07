@@ -15,7 +15,7 @@
 - [x] Expose `vm_profile` as a first-class plugin/runtime choice for transfer workflows.
   - `scripts/node_cli_client.py` now accepts `--vm-profile` and rewrites a temporary `node-cli.toml` per invocation so host-side transfer calls can target an explicit routing profile.
 - [x] Add a `--vm-profile` option to `scripts/run_transfer_test.py`.
-  - Prefer the generated `node-cli.toml` name and keep `node-mcp.toml` only as an input compatibility alias.
+  - Prefer the generated `node-cli.toml` name in transfer-oriented setup and examples.
 - [ ] Decide whether transfer-oriented configs and examples should keep defaulting to `vm_profile = "auto"` or require an explicit `vm1_only` / `vm2_only` choice for semantically fixed operations.
 - [ ] If per-transfer profile selection is needed, choose an implementation direction. Candidates:
   - [x] Profile-aware CLI startup/config switching before the transfer run starts.
@@ -30,7 +30,7 @@
 - [x] Add a user-facing transfer option for block-based confirmation depth.
   - `scripts/run_transfer_test.py` now exposes `--min-confirmed-blocks`.
 - [x] Prefer `watch_transaction` as the single source of truth for confirmation-depth waiting.
-  - `starcoin-node-mcp.submit_signed_transaction(blocking = true)` now reuses `watch_transaction` semantics instead of defining a separate confirmation model.
+  - `starcoin-node.submit_signed_transaction(blocking = true)` now reuses `watch_transaction` semantics instead of defining a separate confirmation model.
 - [x] Expose one higher-level confirmation setting in the transfer skill/plugin and map it onto `watch_transaction`, so users do not need to reason about tool boundaries during a transfer.
 - [x] Keep `submit_signed_transaction` focused on submission and immediate execution status. If it offers a blocking convenience mode, it should reuse `watch_transaction` semantics instead of defining a second confirmation model.
 - [x] Define the confirmation semantics precisely in docs and tool output.
@@ -51,7 +51,7 @@
 
 ## script runtime contract follow-ups
 
-- [ ] Make `node-cli.toml` the only documented chain config name and keep `node-mcp.toml` as a compatibility fallback until migration is complete.
+- [x] Make `node-cli.toml` the only documented chain config name.
 - [ ] Reduce environment-variable-driven launcher indirection in the normal script path so PATH-based binaries and default config locations remain the primary operator story.
 - [ ] Move any remaining source-tree-only overrides behind clearly dev-scoped documentation instead of mixing them into the default setup path.
 - [ ] Keep reviewing `scripts/doctor.py` output and remediation text so normal users are guided toward default install locations and PATH setup first.

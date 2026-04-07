@@ -12,11 +12,17 @@ import sys
 from pathlib import Path
 
 from runtime_layout import (
-    DEFAULT_WALLET_RUNTIME_DIR,
+    STARMASKD_MANIFEST_MARKERS,
+    STARCOIN_NODE_CLI_MARKERS,
+    platform_daemon_socket_candidates,
+    platform_node_config_candidates,
+    platform_wallet_config_candidates,
+    resolve_existing_path,
+    resolve_node_config_override,
+    resolve_wallet_daemon_socket_path,
     resolve_wallet_runtime_dir,
     resolve_workspace_root,
     wallet_runtime_metadata_path,
-    wallet_runtime_socket_path,
 )
 
 try:
@@ -30,10 +36,7 @@ PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
 WORKSPACE_ROOT = resolve_workspace_root(
     PLUGIN_ROOT,
-    (
-        "starcoin-node-mcp/crates/starcoin-node-cli/Cargo.toml",
-        "starmask-mcp/crates/starmaskd/Cargo.toml",
-    ),
+    (*STARCOIN_NODE_CLI_MARKERS, *STARMASKD_MANIFEST_MARKERS),
 )
 MARKETPLACE_PATH = WORKSPACE_ROOT / ".agents" / "plugins" / "marketplace.json"
 PLUGIN_MANIFEST_PATH = PLUGIN_ROOT / ".codex-plugin" / "plugin.json"
@@ -44,21 +47,21 @@ WALLET_EXAMPLE_PATH = PLUGIN_ROOT / "examples" / "starmaskd-local-account.exampl
 
 DEFAULT_NODE_MANIFEST = (
     WORKSPACE_ROOT
-    / "starcoin-node-mcp"
+    / "starcoin-node"
     / "crates"
     / "starcoin-node-cli"
     / "Cargo.toml"
 )
 DEFAULT_STARMASKD_MANIFEST = (
     WORKSPACE_ROOT
-    / "starmask-mcp"
+    / "starmask-runtime"
     / "crates"
     / "starmaskd"
     / "Cargo.toml"
 )
 DEFAULT_LOCAL_AGENT_MANIFEST = (
     WORKSPACE_ROOT
-    / "starmask-mcp"
+    / "starmask-runtime"
     / "crates"
     / "starmask-local-account-agent"
     / "Cargo.toml"
@@ -73,45 +76,26 @@ def resolve_binary(env_name: str, binary_name: str) -> str | None:
 
 
 def platform_paths() -> tuple[Path, Path, Path, Path]:
-    system = platform.system()
-    runtime_root = Path.home() / ".runtime"
-    if system == "Darwin":
-        return (
-            runtime_root / "node-cli.toml",
-            runtime_root / "node-mcp.toml",
-            runtime_root / "config.toml",
-            wallet_runtime_socket_path(DEFAULT_WALLET_RUNTIME_DIR),
-        )
-    if system == "Linux":
-        config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-        return (
-            config_home / "starcoin-mcp" / "node-cli.toml",
-            config_home / "starcoin-mcp" / "node-mcp.toml",
-            config_home / "starcoin-mcp" / "config.toml",
-            wallet_runtime_socket_path(DEFAULT_WALLET_RUNTIME_DIR),
-        )
-    root = Path.home() / "AppData" / "Roaming" / "StarcoinMCP"
+    node_candidates = platform_node_config_candidates()
+    wallet_candidates = platform_wallet_config_candidates()
+    socket_candidates = platform_daemon_socket_candidates()
     return (
-        root / "node-cli.toml",
-        root / "node-mcp.toml",
-        root / "config.toml",
-        wallet_runtime_socket_path(DEFAULT_WALLET_RUNTIME_DIR),
+        node_candidates[0],
+        resolve_existing_path(node_candidates[1:]) if len(node_candidates) > 1 else node_candidates[0],
+        resolve_existing_path(wallet_candidates),
+        select_socket_candidate(socket_candidates),
     )
 
 
-def resolve_node_config_path(
-    preferred_path: Path, legacy_path: Path
-) -> tuple[Path, Path | None]:
-    override = os.environ.get("STARCOIN_NODE_CLI_CONFIG") or os.environ.get(
-        "STARCOIN_NODE_MCP_CONFIG"
-    )
+def resolve_node_config_path(preferred_path: Path, fallback_path: Path) -> Path:
+    override = resolve_node_config_override()
     if override:
-        return Path(override).expanduser(), None
+        return override.resolve()
     if preferred_path.exists():
-        return preferred_path, None
-    if legacy_path.exists():
-        return legacy_path, legacy_path
-    return preferred_path, legacy_path
+        return preferred_path
+    if fallback_path.exists():
+        return fallback_path
+    return preferred_path
 
 
 def parse_toml(path: Path) -> dict:
@@ -172,6 +156,24 @@ def cleanup_stale_socket(path: Path, detail: str) -> tuple[bool, str] | None:
         return False, f"failed to remove stale socket {path}: {exc}"
 
 
+def select_socket_candidate(candidates: list[Path]) -> Path:
+    if platform.system() == "Windows":
+        return resolve_existing_path(candidates)
+
+    socket_candidates: list[Path] = []
+    for candidate in candidates:
+        if not candidate.exists() or not is_unix_socket(candidate):
+            continue
+        socket_candidates.append(candidate)
+        reachable, _ = socket_reachable(candidate)
+        if reachable:
+            return candidate
+
+    if socket_candidates:
+        return socket_candidates[0]
+    return resolve_existing_path(candidates)
+
+
 def check(name: str, ok: bool, detail: str, hint: str | None = None) -> dict:
     return {
         "name": name,
@@ -217,16 +219,11 @@ def resolve_daemon_socket_path(
     runtime_dir_arg: str | None, default_socket_path: Path
 ) -> tuple[Path, Path, dict | None]:
     runtime_dir, metadata_path, metadata = resolve_runtime_metadata(runtime_dir_arg)
-    if metadata is not None and metadata.get("daemon_socket_path"):
-        return Path(metadata["daemon_socket_path"]), metadata_path, metadata
-    daemon_socket_override = os.environ.get("STARMASKD_SOCKET_PATH") or os.environ.get(
-        "STARMASK_MCP_DAEMON_SOCKET_PATH"
+    socket_path = resolve_wallet_daemon_socket_path(
+        runtime_dir,
+        metadata=metadata,
+        default_socket_path=default_socket_path,
     )
-    if daemon_socket_override:
-        return Path(daemon_socket_override).expanduser(), metadata_path, metadata
-    socket_path = wallet_runtime_socket_path(runtime_dir)
-    if runtime_dir == DEFAULT_WALLET_RUNTIME_DIR:
-        socket_path = default_socket_path
     return socket_path, metadata_path, metadata
 
 
@@ -252,12 +249,12 @@ def main() -> int:
 
     (
         preferred_node_config_path,
-        legacy_node_config_path,
+        fallback_node_config_path,
         wallet_config_path,
         platform_socket_path,
     ) = platform_paths()
-    node_config_path, legacy_node_config_hint = resolve_node_config_path(
-        preferred_node_config_path, legacy_node_config_path
+    node_config_path = resolve_node_config_path(
+        preferred_node_config_path, fallback_node_config_path
     )
     daemon_socket_path, runtime_metadata_path, runtime_metadata = resolve_daemon_socket_path(
         args.runtime_dir, platform_socket_path
@@ -372,15 +369,7 @@ def main() -> int:
                 "node config",
                 node_config_path.exists() and "_parse_error" not in node_config,
                 str(node_config_path),
-                (
-                    f"Copy {NODE_EXAMPLE_PATH} to {preferred_node_config_path}"
-                    + (
-                        f". The runtime also accepts the legacy path {legacy_node_config_hint}"
-                        if legacy_node_config_hint
-                        else ""
-                    )
-                    + ", or export STARCOIN_NODE_CLI_CONFIG."
-                ),
+                f"Copy {NODE_EXAMPLE_PATH} to {preferred_node_config_path}, or export STARCOIN_NODE_CLI_CONFIG.",
             ),
             check(
                 "node config mode",
