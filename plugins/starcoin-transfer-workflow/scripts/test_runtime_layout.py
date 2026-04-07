@@ -10,6 +10,7 @@ from unittest.mock import patch
 
 from runtime_layout import (
     DEFAULT_WALLET_RUNTIME_DIR,
+    metadata_daemon_socket_path,
     platform_daemon_socket_candidates,
     resolve_wallet_daemon_socket_path,
     resolve_wallet_runtime_dir,
@@ -131,6 +132,28 @@ class RuntimeLayoutTests(unittest.TestCase):
             self.assertIn(
                 Path("/tmp/runtime-layout-state/starcoin-mcp/starmaskd.sock").resolve(),
                 platform_daemon_socket_candidates(),
+            )
+
+    def test_metadata_daemon_socket_path_ignores_non_string_values(self) -> None:
+        self.assertIsNone(metadata_daemon_socket_path({"daemon_socket_path": True}))
+        self.assertIsNone(metadata_daemon_socket_path({"daemon_socket_path": 1}))
+        self.assertIsNone(
+            metadata_daemon_socket_path({"daemon_socket_path": ["/tmp/runtime.sock"]})
+        )
+
+    def test_resolve_wallet_daemon_socket_path_ignores_invalid_metadata(self) -> None:
+        runtime_dir = Path("/tmp/runtime-from-arg")
+        with patch.dict(
+            os.environ,
+            {"STARMASKD_SOCKET_PATH": "/tmp/new-daemon.sock"},
+            clear=True,
+        ):
+            self.assertEqual(
+                resolve_wallet_daemon_socket_path(
+                    runtime_dir,
+                    metadata={"daemon_socket_path": True},
+                ),
+                Path("/tmp/new-daemon.sock"),
             )
 
 

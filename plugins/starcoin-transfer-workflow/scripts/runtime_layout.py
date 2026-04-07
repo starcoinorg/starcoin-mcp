@@ -100,9 +100,9 @@ def metadata_daemon_socket_path(metadata: Mapping[str, object] | None) -> Path |
     if metadata is None:
         return None
     socket_path = metadata.get("daemon_socket_path")
-    if not socket_path:
+    if not isinstance(socket_path, str) or not socket_path.strip():
         return None
-    return Path(str(socket_path)).expanduser()
+    return Path(socket_path).expanduser()
 
 
 def resolve_daemon_socket_override() -> Path | None:

@@ -87,13 +87,37 @@ fn default_socket_path() -> PathBuf {
 fn daemon_socket_env_override() -> Option<PathBuf> {
     ["STARMASKD_SOCKET_PATH", "STARMASK_MCP_DAEMON_SOCKET_PATH"]
         .into_iter()
-        .find_map(|name| env::var_os(name).map(PathBuf::from))
+        .find_map(non_empty_env_path)
 }
 
 fn default_home_dir() -> PathBuf {
-    env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."))
+    non_empty_env_path("HOME").unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn non_empty_env_path(name: &str) -> Option<PathBuf> {
+    env::var_os(name).and_then(|value| {
+        if value.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(value))
+        }
+    })
+}
+
+#[derive(Clone, Debug)]
+struct LinuxSocketDirs {
+    state_home: PathBuf,
+    runtime_dir: PathBuf,
+}
+
+fn linux_socket_dirs(home: &Path) -> LinuxSocketDirs {
+    let state_home =
+        non_empty_env_path("XDG_STATE_HOME").unwrap_or_else(|| home.join(".local").join("state"));
+    let runtime_dir = non_empty_env_path("XDG_RUNTIME_DIR").unwrap_or_else(|| state_home.clone());
+    LinuxSocketDirs {
+        state_home,
+        runtime_dir,
+    }
 }
 
 fn resolve_default_socket_path(home: &Path) -> PathBuf {
@@ -118,10 +142,7 @@ fn preferred_socket_path(home: &Path) -> PathBuf {
             .join("run")
             .join("starmaskd.sock")
     } else {
-        home.join(".local")
-            .join("state")
-            .join("starmask-runtime")
-            .join("starmaskd.sock")
+        preferred_linux_socket_path(&linux_socket_dirs(home))
     }
 }
 
@@ -133,20 +154,31 @@ fn legacy_socket_path(home: &Path) -> PathBuf {
             .join("run")
             .join("starmaskd.sock")
     } else {
-        home.join(".local")
-            .join("state")
-            .join("starcoin-mcp")
-            .join("starmaskd.sock")
+        legacy_linux_socket_path(&linux_socket_dirs(home))
     }
+}
+
+fn preferred_linux_socket_path(dirs: &LinuxSocketDirs) -> PathBuf {
+    dirs.runtime_dir
+        .join("starmask-runtime")
+        .join("starmaskd.sock")
+}
+
+fn legacy_linux_socket_path(dirs: &LinuxSocketDirs) -> PathBuf {
+    dirs.state_home.join("starcoin-mcp").join("starmaskd.sock")
 }
 
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::PathBuf;
 
     use tempfile::tempdir;
 
-    use super::{legacy_socket_path, preferred_socket_path, resolve_default_socket_path};
+    use super::{
+        LinuxSocketDirs, legacy_linux_socket_path, legacy_socket_path, preferred_linux_socket_path,
+        preferred_socket_path, resolve_default_socket_path,
+    };
 
     #[test]
     fn prefers_existing_new_socket_path() {
@@ -169,5 +201,31 @@ mod tests {
         fs::write(&legacy, []).expect("write legacy socket placeholder");
 
         assert_eq!(resolve_default_socket_path(tempdir.path()), legacy);
+    }
+
+    #[test]
+    fn linux_preferred_socket_path_uses_xdg_runtime_dir() {
+        let dirs = LinuxSocketDirs {
+            state_home: PathBuf::from("/tmp/state-home"),
+            runtime_dir: PathBuf::from("/tmp/runtime-dir"),
+        };
+
+        assert_eq!(
+            preferred_linux_socket_path(&dirs),
+            PathBuf::from("/tmp/runtime-dir/starmask-runtime/starmaskd.sock")
+        );
+    }
+
+    #[test]
+    fn linux_legacy_socket_path_uses_xdg_state_home() {
+        let dirs = LinuxSocketDirs {
+            state_home: PathBuf::from("/tmp/state-home"),
+            runtime_dir: PathBuf::from("/tmp/runtime-dir"),
+        };
+
+        assert_eq!(
+            legacy_linux_socket_path(&dirs),
+            PathBuf::from("/tmp/state-home/starcoin-mcp/starmaskd.sock")
+        );
     }
 }

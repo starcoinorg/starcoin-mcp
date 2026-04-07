@@ -82,7 +82,7 @@ def platform_paths() -> tuple[Path, Path, Path, Path]:
         node_candidates[0],
         resolve_existing_path(node_candidates[1:]) if len(node_candidates) > 1 else node_candidates[0],
         resolve_existing_path(wallet_candidates),
-        resolve_existing_path(socket_candidates),
+        select_socket_candidate(socket_candidates),
     )
 
 
@@ -155,6 +155,24 @@ def cleanup_stale_socket(path: Path, detail: str) -> tuple[bool, str] | None:
         return True, f"removed stale socket {path}"
     except OSError as exc:
         return False, f"failed to remove stale socket {path}: {exc}"
+
+
+def select_socket_candidate(candidates: list[Path]) -> Path:
+    if platform.system() == "Windows":
+        return resolve_existing_path(candidates)
+
+    socket_candidates: list[Path] = []
+    for candidate in candidates:
+        if not candidate.exists() or not is_unix_socket(candidate):
+            continue
+        socket_candidates.append(candidate)
+        reachable, _ = socket_reachable(candidate)
+        if reachable:
+            return candidate
+
+    if socket_candidates:
+        return socket_candidates[0]
+    return resolve_existing_path(candidates)
 
 
 def check(name: str, ok: bool, detail: str, hint: str | None = None) -> dict:

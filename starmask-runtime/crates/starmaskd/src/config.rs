@@ -842,9 +842,7 @@ fn default_config_path() -> Option<PathBuf> {
 }
 
 pub fn default_socket_path() -> PathBuf {
-    let home = env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+    let home = default_home_dir();
     if cfg!(target_os = "macos") {
         home.join("Library")
             .join("Application Support")
@@ -852,28 +850,54 @@ pub fn default_socket_path() -> PathBuf {
             .join("run")
             .join("starmaskd.sock")
     } else {
-        home.join(".local")
-            .join("state")
-            .join("starmask-runtime")
-            .join("starmaskd.sock")
+        let state_home = xdg_state_home(&home);
+        let runtime_dir = xdg_runtime_dir(&state_home);
+        linux_socket_path(&runtime_dir)
     }
 }
 
 pub fn default_database_path() -> PathBuf {
-    let home = env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| PathBuf::from("."));
+    let home = default_home_dir();
     if cfg!(target_os = "macos") {
         home.join("Library")
             .join("Application Support")
             .join("StarmaskRuntime")
             .join("starmaskd.sqlite3")
     } else {
-        home.join(".local")
-            .join("state")
-            .join("starmask-runtime")
-            .join("starmaskd.sqlite3")
+        linux_database_path(&xdg_state_home(&home))
     }
+}
+
+fn default_home_dir() -> PathBuf {
+    non_empty_env_path("HOME").unwrap_or_else(|| PathBuf::from("."))
+}
+
+fn non_empty_env_path(name: &str) -> Option<PathBuf> {
+    env::var_os(name).and_then(|value| {
+        if value.is_empty() {
+            None
+        } else {
+            Some(PathBuf::from(value))
+        }
+    })
+}
+
+fn xdg_state_home(home: &Path) -> PathBuf {
+    non_empty_env_path("XDG_STATE_HOME").unwrap_or_else(|| home.join(".local").join("state"))
+}
+
+fn xdg_runtime_dir(state_home: &Path) -> PathBuf {
+    non_empty_env_path("XDG_RUNTIME_DIR").unwrap_or_else(|| state_home.to_path_buf())
+}
+
+fn linux_socket_path(runtime_dir: &Path) -> PathBuf {
+    runtime_dir.join("starmask-runtime").join("starmaskd.sock")
+}
+
+fn linux_database_path(state_home: &Path) -> PathBuf {
+    state_home
+        .join("starmask-runtime")
+        .join("starmaskd.sqlite3")
 }
 
 pub fn default_native_host_name(channel: Channel) -> String {
@@ -883,6 +907,7 @@ pub fn default_native_host_name(channel: Channel) -> String {
 #[cfg(test)]
 mod tests {
     use std::fs;
+    use std::path::{Path, PathBuf};
 
     #[cfg(unix)]
     use std::os::unix::fs::{PermissionsExt, symlink};
@@ -891,8 +916,8 @@ mod tests {
 
     use super::{
         ApprovalSurface, BackendKind, Channel, FileConfig, FileWalletBackendConfig,
-        build_phase2_backends, default_native_host_name, read_extension_ids,
-        validate_allowed_extension_ids,
+        build_phase2_backends, default_native_host_name, linux_database_path, linux_socket_path,
+        read_extension_ids, validate_allowed_extension_ids,
     };
 
     #[test]
@@ -929,6 +954,22 @@ mod tests {
         assert_eq!(
             default_native_host_name(Channel::Production),
             "com.starcoin.starmask.production"
+        );
+    }
+
+    #[test]
+    fn linux_socket_path_uses_runtime_dir() {
+        assert_eq!(
+            linux_socket_path(Path::new("/tmp/runtime-dir")),
+            PathBuf::from("/tmp/runtime-dir/starmask-runtime/starmaskd.sock")
+        );
+    }
+
+    #[test]
+    fn linux_database_path_uses_state_home() {
+        assert_eq!(
+            linux_database_path(Path::new("/tmp/state-home")),
+            PathBuf::from("/tmp/state-home/starmask-runtime/starmaskd.sqlite3")
         );
     }
 
