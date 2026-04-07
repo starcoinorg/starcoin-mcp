@@ -259,6 +259,13 @@ For an operator-facing supervisor or TUI, the startup contract becomes:
    connection state instead
 5. treat missing backend registration as a degraded or failed startup state, not as success
 
+Product-grade deployment implications:
+
+1. the supervisor should pass an absolute config path to each agent
+2. agent pid files and logs must live in owner-only runtime state directories
+3. the supervisor must fail closed if the configured daemon socket path or future pipe ACL broadens
+   access beyond the current user
+
 ## 13. Performance and Operations Notes
 
 Configuration should help keep the system bounded.

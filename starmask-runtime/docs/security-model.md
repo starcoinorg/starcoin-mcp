@@ -182,6 +182,35 @@ Required properties:
 3. no unauthenticated localhost HTTP bridge
 4. protocol version negotiation on every extension registration
 
+### 11.1 Unix socket and future named-pipe hardening
+
+Required deployment rules:
+
+1. the daemon listener must live inside a private per-user runtime directory
+2. on POSIX, the socket parent directory must be locked to the current user and the socket itself
+   must also be current-user only
+3. deployments must not place the daemon socket directly in a shared writable directory such as
+   `/tmp`; if such a base directory is unavoidable, the runtime must first create a private
+   subdirectory
+4. stale socket cleanup must happen only after a failed connect attempt and only for a path inside
+   an owned private runtime directory
+5. cleanup logic must not follow symlinks or future Windows reparse-point equivalents while
+   removing stale transport artifacts
+6. future Windows named pipes must use an ACL restricted to the current user or service SID and
+   must not grant broad access to `Everyone` or similar groups
+
+### 11.2 Native-host deployment hardening
+
+Required deployment rules:
+
+1. each release channel must use an exact `allowed_origins` allowlist with no wildcard entries
+2. the Native Messaging manifest file must be owner-writable only
+3. the manifest must point to an absolute native-host binary path
+4. the native-host binary and its parent directories must not be writable by other OS users
+5. production manifests must not point to development binaries or development channel IDs
+6. operator-facing supervisors must not keep `starmask-native-host` alive outside the browser-owned
+   lifecycle
+
 ## 12. Release Channel Separation
 
 Development, staging, and production channels must remain isolated.
@@ -191,6 +220,7 @@ Rules:
 1. each channel uses a distinct extension ID
 2. each channel uses a distinct Native Messaging manifest
 3. production binaries must not trust development extension IDs
+4. each channel uses distinct runtime directories, daemon sockets or pipes, and databases
 
 ## 13. Rust Implementation Security Notes
 

@@ -235,6 +235,63 @@ Current implementation facts:
 - Windows named pipes remain a design target for a later wallet-runtime phase
 - `starcoin-node-cli` consumes HTTP or HTTPS RPC endpoints and does not impose a local daemon
 
+## Product-Grade Deployment Hardening
+
+The deployment model is not product-ready unless the operating-system packaging and runtime layout
+preserve the same trust boundaries as the protocol design.
+
+### Local IPC hardening
+
+Required rules:
+
+1. wallet socket paths must live in a per-user runtime directory, not directly in a shared writable
+   directory such as `/tmp`
+2. on POSIX, the socket parent directory must be locked to the current user, and the socket itself
+   must also be current-user only
+3. stale socket cleanup may happen only after a failed connect attempt and only for a socket path
+   inside an owned private runtime directory
+4. cleanup logic must not follow symlinks, hardlink tricks, or future Windows reparse-point
+   equivalents when removing stale transport artifacts
+5. future Windows named pipes must use a channel-scoped pipe name and an ACL restricted to the
+   launching user or service SID rather than broad identities such as `Everyone`
+
+### Files, logs, and state hardening
+
+Required rules:
+
+1. config files, databases, logs, pid files, TUI state, and crash artifacts must be owner-writable
+   only
+2. development, staging, and production channels must use separate sockets or pipes, databases,
+   manifests, and state directories
+3. runtime processes should run as an unprivileged user unless a deployment has a documented reason
+   to do otherwise
+4. log rotation and crash-dump collection must preserve redaction and restrictive file permissions
+
+### Process launch hygiene
+
+Required rules:
+
+1. supervisors should launch `starmaskd`, `local-account-agent`, and any managed node-side service
+   through absolute executable paths or pinned package-managed entrypoints
+2. production deployments should not depend on ambient `PATH` lookup for security-sensitive child
+   processes
+3. secrets must not be passed on argv
+4. inherited environment variables should be minimized so child processes do not receive unrelated
+   credentials or tokens by accident
+
+### Managed node-side service hardening
+
+If a TUI or supervisor manages a local node-side service, it must also enforce:
+
+1. loopback bind by default for the current HTTP or HTTPS RPC deployment model
+2. explicit operator opt-in before exposing the RPC listener beyond the local machine
+3. TLS, authentication, or equivalent network controls when exposure beyond the local machine is
+   intentional
+4. admin or debug RPC surfaces disabled, removed, or isolated from the endpoint consumed by
+   `starcoin-node-cli`
+5. RPC credentials stored in protected configuration or environment injection rather than command
+   lines
+
 ## Observability Requirements
 
 The runtime model requires:

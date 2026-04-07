@@ -291,6 +291,26 @@ These names follow the precedence order defined earlier in this document:
 
 In env-only deployments, unset optional endpoint variables fall back to config-file values when present, and otherwise to built-in defaults.
 
+## Product-Grade Deployment Hardening
+
+Configuration must be paired with deployment constraints or the safety model weakens in practice.
+
+Required rules:
+
+1. config files, logs, cache directories, pid files, and copied diagnostics must be owner-writable
+   only
+2. production deployments should prefer protected config files or controlled environment injection
+   for endpoint credentials instead of putting tokens on command lines or in shell history
+3. `rpc_headers`, bearer tokens, and pinned-certificate settings must be redacted from logs and
+   diagnostics
+4. supervisors and TUIs should launch node-side services through absolute executable paths with a
+   minimized inherited environment
+5. a managed local node-side service should bind to loopback by default
+6. if a deployment intentionally exposes an RPC listener beyond the local machine, it should also
+   enforce TLS, authentication, and host allowlisting or certificate pinning
+7. admin or debug RPC surfaces should be disabled or isolated from the endpoint consumed by
+   `starcoin-node-cli`
+
 ## Safe Bounds
 
 The implementation should clamp unsafe timing values:

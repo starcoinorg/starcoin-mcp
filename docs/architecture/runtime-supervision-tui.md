@@ -104,6 +104,55 @@ Recommended profile kinds:
 The first TUI pass should support selecting one profile at startup rather than hot-switching
 profiles while processes are running.
 
+## Supervisor Security Requirements
+
+The TUI does not become a signer, but it can still weaken the deployment if it launches or adopts
+processes unsafely.
+
+### Child-process launch hygiene
+
+Required rules:
+
+1. resolve every managed executable to an absolute path before launch
+2. avoid ambient `PATH` search in product packaging
+3. use an explicit working directory for managed node-side services
+4. pass secrets through protected config or narrowly scoped environment injection rather than argv
+5. minimize inherited environment variables before spawning child processes
+
+### Runtime state and artifact hardening
+
+`runtime_state_dir` must be treated as sensitive operator state.
+
+Required rules:
+
+1. the state directory must be current-user only
+2. pid files, launch metadata, logs, and copied diagnostics must not be written into shared
+   writable directories
+3. TUI-local logs must follow the same redaction rules as the managed processes
+4. channel-specific profiles must not share the same pid metadata or socket override files
+
+### Process adoption and stale-artifact safety
+
+Required rules:
+
+1. process adoption must verify more than the pid alone
+2. adoption should confirm executable path, current OS user, and process start identity before the
+   TUI treats a process as owned
+3. stale socket cleanup must happen only after a failed connect and only inside an owned private
+   runtime directory
+4. the TUI must not delete arbitrary filesystem paths just because a pid file or launch record
+   points there
+
+### Managed node-side service hardening
+
+If `manage_node_service = true`, the TUI must additionally enforce:
+
+1. local bind by default
+2. a visible warning before starting a node-side service that listens beyond loopback
+3. no attempt to supervise admin or debug RPC surfaces as if they were the same endpoint used by
+   `starcoin-node-cli`
+4. readiness checks against the exact endpoint URL that later chain commands use
+
 ## Wallet Supervision Model
 
 ### Process ownership
@@ -263,3 +312,6 @@ answers:
    - `starcoin-node-cli`
 5. What is the first safe packaging choice?
    - a separate Rust TUI that supervises child processes
+6. What security constraints must the implementation preserve?
+   - private runtime directories, safe process adoption, no secrets on argv, and local-only wallet
+     IPC defaults

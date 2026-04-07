@@ -138,6 +138,9 @@ Rules:
    - endpoint reachability
    - chain identity
    - capability availability
+6. when the TUI launches a local node-side service, that service should bind to loopback by default
+7. admin or debug RPC surfaces should not be exposed on the same endpoint consumed by
+   `starcoin-node-cli`
 
 ## Startup Model
 
@@ -230,16 +233,21 @@ The deployment model requires the following recovery behavior:
 
 ## Local and Remote Transport Requirements
 
-The first implementation should support:
+The current `starcoin-node-cli` implementation should support:
 
-- local IPC, HTTP, or WebSocket endpoints for development and colocated deployments
-- remote HTTPS or secure WebSocket endpoints for hosted nodes
+- local loopback HTTP endpoints for colocated deployments
+- remote HTTPS endpoints for hosted nodes
 - optional remote endpoint allowlisting or certificate-pinning configuration for transaction mode
+
+Future external adapters may add other transports later, but they must preserve the same chain-pin,
+credential-redaction, and non-signer trust boundaries.
 
 The first release should avoid:
 
 - unauthenticated public-network transaction endpoints by default
 - automatic downgrade from secure remote transport to insecure remote transport
+- local node-side services that silently listen on non-local interfaces without explicit operator
+  intent
 
 ## Observability Requirements
 

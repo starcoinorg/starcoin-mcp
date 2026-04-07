@@ -84,6 +84,20 @@ Rules:
 
 The implementation may later add persistent connections, but phase 2 must not require them.
 
+### 5.1 Transport hardening
+
+Required deployment rules:
+
+1. backend agents must connect to the exact configured daemon socket or future pipe rather than
+   searching shared filesystem locations
+2. on POSIX, the daemon socket must live inside a private runtime directory and remain
+   current-user only
+3. a backend agent must treat a shared-writable socket directory or overly broad future pipe ACL as
+   misconfiguration
+4. stale transport cleanup must happen only after a failed connect attempt and only for a path
+   inside an owned private runtime directory
+5. cleanup logic must not follow symlinks or future Windows reparse-point equivalents
+
 ## 6. Backend Identity Model
 
 For local-socket backends, identity is configuration-backed.
