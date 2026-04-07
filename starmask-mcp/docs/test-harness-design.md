@@ -4,6 +4,10 @@
 
 This document describes the recommended harness structure for the current repository state.
 
+Repository status note: the in-tree `crates/starmask-mcp` adapter has been removed. Any harness
+sections that mention MCP shim coverage now describe historical tests or future external adapter
+coverage.
+
 It covers both:
 
 - the current `v1` extension-backed path
@@ -233,7 +237,7 @@ Use repository-stable fixtures for:
 Preferred location:
 
 ```text
-starmask-mcp/tests/fixtures/
+starmask-mcp/tests/fixtures/   # historical adapter-fixture location
 ```
 
 The canonical payload examples from:

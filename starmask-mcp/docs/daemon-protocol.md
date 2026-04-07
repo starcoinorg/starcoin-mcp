@@ -4,8 +4,10 @@
 
 This document is the authoritative client-facing daemon protocol contract for the current runtime.
 
-It matches the stable JSON-RPC methods used by `starmask-mcp` and `starmask-native-host`, where
-`DAEMON_PROTOCOL_VERSION = 1` in `starmask-types`.
+It matches the stable JSON-RPC methods used by `starmask-native-host` and any external wallet or
+MCP adapter, where `DAEMON_PROTOCOL_VERSION = 1` in `starmask-types`.
+
+Repository status note: the in-tree `crates/starmask-mcp` adapter has been removed.
 
 The daemon also implements the generic backend-agent binding described in
 `docs/wallet-backend-local-socket-binding.md`. Those backend methods use

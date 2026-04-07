@@ -5,6 +5,10 @@
 This document is the authoritative `v1` core API design for the current extension-backed
 implementation.
 
+Repository status note: the in-tree `crates/starmask-mcp` adapter has been removed. Core API
+boundaries remain current for `starmaskd`, `starmask-native-host`, and any future external
+adapter.
+
 Future generic backend evolution is tracked in `docs/unified-wallet-coordinator-evolution.md`.
 
 ## 1. Purpose

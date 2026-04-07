@@ -2,7 +2,12 @@
 
 ## Purpose
 
-This document defines the deployment and runtime model for `starcoin-node-mcp`, the chain-facing Starcoin MCP server.
+This document defines the deployment and runtime model for `starcoin-node-mcp`, the chain-facing
+Starcoin node integration layer.
+
+Repository status note: the in-tree `starcoin-node-mcp-server` adapter has been removed. The
+current workspace ships libraries plus `starcoin-node-cli`; server-specific sections below remain
+as design guidance for a future external adapter.
 
 The scope of this document is:
 
@@ -102,16 +107,18 @@ This is a future profile and is out of scope for the first release.
 
 The first implementation is a single Rust process and should realize this deployment model with one Tokio runtime.
 
-Recommended Rust runtime shape:
+Recommended Rust runtime shape for the current workspace plus any future external adapter:
 
-- `starcoin-node-mcp-server` owns one Tokio runtime for stdio MCP transport, RPC IO, cache access, and watch polling
+- `starcoin-node-cli` owns the current Tokio runtime for RPC IO and watch polling
 - one process-global `Arc<AppContext>` should hold normalized config, endpoint capabilities, shared RPC clients, in-memory caches, and concurrency guards
-- startup probes should complete before the `rmcp` server begins serving tools
+- startup probes should complete before CLI command handling or any future MCP transport begins serving requests
 - `watch_transaction` should use `tokio::time::interval` and `tokio::time::timeout` rather than ad hoc sleep loops
 - bounded `tokio::sync::Semaphore` guards should protect watch loops and other expensive request classes from unbounded fan-out
 - tool cancellation should follow the Rust async task boundary so abandoned host requests do not leave orphaned watch loops running indefinitely
 
-For embedded integrations, another Rust binary may own the Tokio runtime and tracing initialization, as long as it reuses the same `AppContext` bootstrap flow and `starcoin-node-mcp-server` adapter instead of reimplementing MCP handler wiring.
+For embedded integrations, another Rust binary may own the Tokio runtime and tracing
+initialization, as long as it reuses the same `AppContext` bootstrap flow instead of
+reimplementing core or RPC logic.
 
 The first release should not require a separate Rust daemon or any cross-process coordinator for chain-side state.
 

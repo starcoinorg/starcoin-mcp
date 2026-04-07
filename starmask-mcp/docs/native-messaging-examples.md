@@ -4,6 +4,9 @@
 
 These examples are canonical for the current `v1` extension-backed Native Messaging contract.
 
+Repository status note: the in-tree `crates/starmask-mcp` adapter has been removed. These examples
+still apply to the remaining daemon/native-host side of the stack.
+
 They should be kept consistent with:
 
 - `docs/native-messaging-contract.md`

@@ -5,6 +5,11 @@
 This document is the authoritative `v1` security model for the current extension-backed
 implementation.
 
+Repository status note: the in-tree `crates/starmask-mcp` adapter has been removed. References to
+`starmask-mcp` in this document describe the historical MCP transport role or a possible future
+external adapter; the current shipped Rust binaries are `starmaskd`, `starmask-native-host`, and
+related daemon-side components.
+
 Future multi-backend security evolution is tracked separately in:
 
 - `docs/unified-wallet-coordinator-evolution.md`

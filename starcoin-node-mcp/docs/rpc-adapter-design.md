@@ -4,6 +4,10 @@
 
 This document defines how `starcoin-node-mcp` should map the Starcoin RPC surface into a stable MCP tool interface.
 
+Repository status note: the workspace no longer ships an in-tree MCP adapter crate. The adapter
+boundary described here remains the intended contract between shared Rust libraries and any future
+external MCP transport.
+
 The adapter layer exists to keep:
 
 - raw RPC method names
@@ -51,7 +55,7 @@ In the Rust implementation, this adapter layer should be expressed through expli
 
 Recommended Rust ownership model:
 
-- the MCP server crate should depend on typed adapter traits, not raw RPC method names
+- the CLI or any future MCP adapter should depend on typed adapter traits, not raw RPC method names
 - the adapter crate should own endpoint probing, RPC client setup, and VM-specific branching
 - domain services should depend on typed adapter traits exposed as `Send + Sync` Rust interfaces
 - RPC-native views should be converted into stable domain structs through `TryFrom` or dedicated mapper functions before host-facing serialization
@@ -59,7 +63,7 @@ Recommended Rust ownership model:
 The goal is to keep Rust ownership aligned with the design boundary:
 
 - `starcoin-node-mcp-server`
-  - MCP transport and DTO binding
+  - historical MCP transport boundary; not currently shipped in-tree
 - `starcoin-node-mcp-core`
   - policy and orchestration
 - `starcoin-node-mcp-rpc`

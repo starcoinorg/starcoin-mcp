@@ -5,6 +5,9 @@
 This document defines the minimum approval UI behavior for the current `v1` Starmask extension
 flow.
 
+Repository status note: the in-tree `crates/starmask-mcp` adapter has been removed. The approval
+UI requirements remain relevant to the extension-backed flow itself.
+
 It is intentionally extension-specific. If future phases add local unlock prompts or local-account
 approval surfaces, they should be specified in separate documents or clearly versioned follow-on
 sections rather than redefining this `v1` extension UI contract.

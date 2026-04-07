@@ -2,11 +2,12 @@
 
 ## Status
 
-This document is the authoritative `v1` adapter design for the current MCP surface in this
-repository.
+This document is the authoritative design reference for the `v1` adapter that the repository used
+to ship in-tree.
 
-It tracks the current tool set and daemon-client contract. Planned multi-backend expansion is
-tracked in `docs/unified-wallet-coordinator-evolution.md`.
+The `crates/starmask-mcp` adapter has been removed from the workspace. The material here now tracks
+the historical tool set and daemon-client contract, plus possible future external adapter work.
+Planned multi-backend expansion is tracked in `docs/unified-wallet-coordinator-evolution.md`.
 
 ## 1. Purpose
 
@@ -147,8 +148,8 @@ Recommended public facade:
 
 - `DaemonClient`
 - `LocalDaemonClient`
-- `StarmaskMcpServer<C>`
-- `serve_stdio(client)`
+- a future `StarmaskMcpServer<C>`-style adapter type
+- a future `serve_stdio(client)` helper
 - `default_socket_path()`
 
 ## 11. Logging

@@ -2,7 +2,10 @@
 
 ## Status
 
-This note tracks coverage for the current `v1` `starmask-mcp` adapter layer only.
+This note tracks coverage for the historical `v1` `starmask-mcp` adapter layer.
+
+Repository status note: `crates/starmask-mcp` has been removed from the workspace, so this matrix
+is now archival reference material rather than current in-tree coverage.
 
 It is intentionally narrower than the full project acceptance matrix in
 `docs/testing-and-acceptance.md`.
@@ -26,7 +29,8 @@ Detailed real-environment steps live in:
 
 ## Adapter Automated Coverage
 
-Current local automated coverage in `crates/starmask-mcp/tests/`:
+Historical local automated coverage lived in `crates/starmask-mcp/tests/` before that adapter was
+removed:
 
 | Flow | Status | Evidence |
 | --- | --- | --- |

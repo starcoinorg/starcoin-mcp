@@ -4,6 +4,10 @@
 
 This document defines acceptance criteria for the current `v1` extension-backed implementation.
 
+Repository status note: the in-tree `crates/starmask-mcp` adapter has been removed. Any acceptance
+criteria that mention the MCP adapter now describe historical coverage or a future external
+adapter.
+
 Future multi-backend expansion has additional requirements, but those are not part of the current
 release contract unless explicitly called out below.
 

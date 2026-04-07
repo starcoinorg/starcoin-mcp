@@ -5,6 +5,9 @@
 This document translates the current `v1` extension-backed design into Rust implementation
 constraints.
 
+Repository status note: the in-tree `crates/starmask-mcp` adapter has been removed. Sections that
+describe the adapter crate now serve as design guidance for any future external MCP transport.
+
 It does not yet define the generic multi-backend rollout. That architecture work is tracked in
 `docs/unified-wallet-coordinator-evolution.md` and should only graduate into this document when the
 underlying contracts and phases are accepted.
@@ -152,8 +155,8 @@ Recommended library-facing surface:
 
 - `DaemonClient`
 - `LocalDaemonClient`
-- `StarmaskMcpServer<C>`
-- `serve_stdio(client)`
+- a future `StarmaskMcpServer<C>`-style adapter type
+- a future `serve_stdio(client)` helper
 - `default_socket_path()`
 
 ### `starmask-native-host`
