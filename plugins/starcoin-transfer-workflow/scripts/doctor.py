@@ -11,6 +11,14 @@ import stat
 import sys
 from pathlib import Path
 
+from runtime_layout import (
+    DEFAULT_WALLET_RUNTIME_DIR,
+    resolve_wallet_runtime_dir,
+    resolve_workspace_root,
+    wallet_runtime_metadata_path,
+    wallet_runtime_socket_path,
+)
+
 try:
     import tomllib
 except ModuleNotFoundError:  # pragma: no cover
@@ -18,19 +26,21 @@ except ModuleNotFoundError:  # pragma: no cover
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-WORKSPACE_ROOT = Path(
-    os.environ.get(
-        "STARCOIN_TRANSFER_WORKSPACE_ROOT",
-        os.environ.get("STARCOIN_MCP_WORKSPACE_ROOT", str(PLUGIN_ROOT.parent.parent)),
-    )
-).resolve()
+
+
+WORKSPACE_ROOT = resolve_workspace_root(
+    PLUGIN_ROOT,
+    (
+        "starcoin-node-mcp/crates/starcoin-node-cli/Cargo.toml",
+        "starmask-mcp/crates/starmaskd/Cargo.toml",
+    ),
+)
 MARKETPLACE_PATH = WORKSPACE_ROOT / ".agents" / "plugins" / "marketplace.json"
 PLUGIN_MANIFEST_PATH = PLUGIN_ROOT / ".codex-plugin" / "plugin.json"
 NODE_CLIENT_SCRIPT_PATH = PLUGIN_ROOT / "scripts" / "node_cli_client.py"
 WALLET_CLIENT_SCRIPT_PATH = PLUGIN_ROOT / "scripts" / "starmaskd_client.py"
 NODE_EXAMPLE_PATH = PLUGIN_ROOT / "examples" / "node-cli.example.toml"
 WALLET_EXAMPLE_PATH = PLUGIN_ROOT / "examples" / "starmaskd-local-account.example.toml"
-DEFAULT_WALLET_RUNTIME_DIR = WORKSPACE_ROOT / ".runtime" / "wallet-runtime"
 
 DEFAULT_NODE_MANIFEST = (
     WORKSPACE_ROOT
@@ -64,32 +74,28 @@ def resolve_binary(env_name: str, binary_name: str) -> str | None:
 
 def platform_paths() -> tuple[Path, Path, Path, Path]:
     system = platform.system()
+    runtime_root = Path.home() / ".runtime"
     if system == "Darwin":
-        root = Path.home() / "Library" / "Application Support" / "StarcoinMCP"
         return (
-            root / "node-cli.toml",
-            root / "node-mcp.toml",
-            root / "config.toml",
-            root / "run" / "starmaskd.sock",
+            runtime_root / "node-cli.toml",
+            runtime_root / "node-mcp.toml",
+            runtime_root / "config.toml",
+            wallet_runtime_socket_path(DEFAULT_WALLET_RUNTIME_DIR),
         )
     if system == "Linux":
         config_home = Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config"))
-        state_home = Path(os.environ.get("XDG_STATE_HOME", Path.home() / ".local" / "state"))
-        runtime_dir = Path(os.environ.get("XDG_RUNTIME_DIR", state_home / "starcoin-mcp"))
         return (
             config_home / "starcoin-mcp" / "node-cli.toml",
             config_home / "starcoin-mcp" / "node-mcp.toml",
             config_home / "starcoin-mcp" / "config.toml",
-            runtime_dir / "starcoin-mcp" / "starmaskd.sock"
-            if runtime_dir.name != "starcoin-mcp"
-            else runtime_dir / "starmaskd.sock",
+            wallet_runtime_socket_path(DEFAULT_WALLET_RUNTIME_DIR),
         )
     root = Path.home() / "AppData" / "Roaming" / "StarcoinMCP"
     return (
         root / "node-cli.toml",
         root / "node-mcp.toml",
         root / "config.toml",
-        root / "starmaskd.sock",
+        wallet_runtime_socket_path(DEFAULT_WALLET_RUNTIME_DIR),
     )
 
 
@@ -202,18 +208,13 @@ def looks_like_placeholder_hash(expected_genesis_hash: object) -> bool:
 
 
 def resolve_runtime_metadata(runtime_dir_arg: str | None) -> tuple[Path, Path, dict | None]:
-    runtime_dir = Path(
-        os.environ.get(
-            "STARMASK_WALLET_RUNTIME_DIR",
-            runtime_dir_arg or str(DEFAULT_WALLET_RUNTIME_DIR),
-        )
-    ).expanduser()
-    metadata_path = runtime_dir / "wallet-runtime.json"
+    runtime_dir = resolve_wallet_runtime_dir(runtime_dir_arg)
+    metadata_path = wallet_runtime_metadata_path(runtime_dir)
     return runtime_dir, metadata_path, parse_json(metadata_path)
 
 
 def resolve_daemon_socket_path(
-    runtime_dir_arg: str | None, platform_socket_path: Path
+    runtime_dir_arg: str | None, default_socket_path: Path
 ) -> tuple[Path, Path, dict | None]:
     runtime_dir, metadata_path, metadata = resolve_runtime_metadata(runtime_dir_arg)
     if metadata is not None and metadata.get("daemon_socket_path"):
@@ -223,7 +224,10 @@ def resolve_daemon_socket_path(
     )
     if daemon_socket_override:
         return Path(daemon_socket_override).expanduser(), metadata_path, metadata
-    return platform_socket_path, metadata_path, metadata
+    socket_path = wallet_runtime_socket_path(runtime_dir)
+    if runtime_dir == DEFAULT_WALLET_RUNTIME_DIR:
+        socket_path = default_socket_path
+    return socket_path, metadata_path, metadata
 
 
 def main() -> int:

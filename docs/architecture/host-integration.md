@@ -106,10 +106,16 @@ If the wallet request is approved:
    Pass both `signed_txn_bcs_hex` and the previously prepared `chain_context` so the node-side server can reject chain drift before txpool contact.
    If node-side policy requires prior simulation, make sure the exact raw transaction had already been prepared or simulated through the same node-side server instance before submission.
 3. if the chain-side call is rejected locally with `rate_limited`, back off and retry the same submission step without changing the signed bytes
-4. if `submission_state = accepted`, optionally call `starcoin-node-mcp.watch_transaction`
+4. if `submission_state = accepted`, call `starcoin-node-mcp.watch_transaction` or rely on the blocking submit convenience path with the same `min_confirmed_blocks` target
 5. if `submission_state = unknown`, reconcile by `txn_hash` through `get_transaction` or `watch_transaction` before any retry
 6. if the chain-side error is `transaction_expired` or `sequence_number_stale`, restart from Phase B with fresh preparation and then request fresh wallet approval
 7. if reconciliation remains unresolved after timeout, persist the unresolved submission state and surface it to the user instead of blind re-submission
+
+Recommended transfer confirmation policy:
+
+- default to `min_confirmed_blocks = 2`
+- interpret that as the inclusion block plus at least 1 additional observed block
+- treat `status_summary.confirmed = true` with top-level `confirmed = false` as an intermediate "included but not yet deep enough" state
 
 ### 3. Message Signing Flow
 

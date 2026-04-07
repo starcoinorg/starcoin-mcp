@@ -3,15 +3,15 @@ use serde_json::{Value, json};
 use starcoin_node_mcp_core::AppContext;
 use starcoin_node_mcp_test_support::{
     mock_abi_methods_not_found, mock_block_lookup_probe, mock_json_rpc_result,
-    mock_json_rpc_result_with_params, mock_method_not_found, mock_probe_metadata,
-    mock_submit_probe_invalid_params, mock_transaction_event_methods_not_found,
-    mock_transaction_info_methods_not_found, mock_transaction_lookup_probe,
-    mock_txpool_sequence_probe, mock_view_methods_not_found, runtime_config,
+    mock_method_not_found, mock_probe_metadata, mock_submit_probe_invalid_params,
+    mock_transaction_event_methods_not_found, mock_transaction_info_methods_not_found,
+    mock_transaction_lookup_probe, mock_txpool_sequence_probe, mock_view_methods_not_found,
+    runtime_config, sample_node_info,
 };
 use starcoin_node_mcp_types::{
     GetAccountOverviewInput, GetTransactionInput, ListResourcesInput, Mode, PrepareTransferInput,
     SharedErrorCode, SimulateRawTransactionInput, SimulationStatus, SubmissionState,
-    SubmitSignedTransactionInput, VmProfile,
+    SubmitSignedTransactionInput, VmProfile, WatchTransactionInput,
 };
 use starcoin_vm2_crypto::ed25519::genesis_key_pair;
 use starcoin_vm2_vm_types::transaction::RawUserTransaction;
@@ -86,6 +86,7 @@ async fn submit_policy_requires_local_simulation_attestation() {
             prepared_chain_context: prepared.chain_context.clone(),
             blocking: false,
             timeout_seconds: None,
+            min_confirmed_blocks: None,
         })
         .await
         .expect_err("submit should be rejected before txpool when simulation is required");
@@ -111,6 +112,7 @@ async fn submit_policy_requires_local_simulation_attestation() {
             prepared_chain_context: prepared.chain_context,
             blocking: false,
             timeout_seconds: None,
+            min_confirmed_blocks: None,
         })
         .await
         .expect("submit should succeed after simulation");
@@ -178,40 +180,7 @@ async fn account_overview_uses_primary_store_balance_when_resource_page_excludes
     let server = MockServer::start();
     mock_read_only_bootstrap(&server);
     mock_json_rpc_result(&server, "state.get_account_state", Value::Null);
-    mock_json_rpc_result_with_params(
-        &server,
-        "state.list_resource",
-        json!(["0x00000000000000000000000000000000", {
-            "decode": true,
-            "start_index": 0u64,
-            "max_size": 1u64
-        }]),
-        json!({ "resources": {} }),
-    );
-    mock_json_rpc_result_with_params(
-        &server,
-        "state.list_resource",
-        json!(["0x00000000000000000000000000000000", {
-            "decode": true,
-            "state_root": null,
-            "start_index": 0u64,
-            "max_size": 1u64,
-            "resource_types": null
-        }]),
-        json!({ "resources": {} }),
-    );
-    mock_json_rpc_result_with_params(
-        &server,
-        "state.list_resource",
-        json!(["0x1", {
-            "decode": true,
-            "state_root": null,
-            "start_index": 0u64,
-            "max_size": 2u64,
-            "resource_types": null
-        }]),
-        json!({ "resources": {} }),
-    );
+    mock_json_rpc_result(&server, "state.list_resource", json!({ "resources": {} }));
     mock_json_rpc_result(
         &server,
         "state2.list_resource",
@@ -274,6 +243,156 @@ async fn account_overview_uses_primary_store_balance_when_resource_page_excludes
         overview.accepted_tokens,
         vec!["0x00000000000000000000000000000001::starcoin_coin::STC".to_owned()]
     );
+}
+
+#[tokio::test]
+async fn watch_transaction_times_out_when_confirmation_depth_is_not_reached() {
+    let server = MockServer::start();
+    mock_probe_metadata_with_head(&server, 42);
+    mock_block_lookup_probe(&server, Value::Null);
+    mock_method_not_found(&server, "chain.get_blocks_by_number");
+    mock_json_rpc_result(&server, "chain.get_transaction2", Value::Null);
+    mock_json_rpc_result(
+        &server,
+        "chain.get_transaction_info2",
+        json!({
+            "block_number": 42,
+            "status": "Executed",
+            "gas_used": "7",
+        }),
+    );
+    mock_json_rpc_result(&server, "chain.get_events_by_txn_hash2", json!([]));
+    mock_method_not_found(&server, "chain.get_events");
+    mock_method_not_found(&server, "state.get_account_state");
+    mock_method_not_found(&server, "state.list_resource");
+    mock_method_not_found(&server, "state.list_code");
+    mock_abi_methods_not_found(&server);
+    mock_view_methods_not_found(&server);
+
+    let app = AppContext::bootstrap(runtime_config(
+        &server,
+        Mode::ReadOnly,
+        VmProfile::Auto,
+        true,
+    ))
+    .await
+    .expect("watch app should bootstrap");
+
+    let watch = app
+        .watch_transaction(WatchTransactionInput {
+            txn_hash: "0x1".to_owned(),
+            timeout_seconds: Some(0),
+            poll_interval_seconds: Some(0),
+            min_confirmed_blocks: Some(2),
+        })
+        .await
+        .expect("watch should return a bounded timeout result");
+
+    assert!(watch.found);
+    assert!(!watch.confirmed);
+    assert_eq!(watch.effective_min_confirmed_blocks, 2);
+    assert_eq!(watch.confirmed_blocks, Some(1));
+    assert_eq!(watch.inclusion_block_number, Some(42));
+    assert!(watch.status_summary.confirmed);
+}
+
+#[tokio::test]
+async fn blocking_submit_uses_watch_confirmation_depth_defaults() {
+    let server = MockServer::start();
+    mock_probe_metadata_with_head(&server, 43);
+    mock_block_lookup_probe(&server, Value::Null);
+    mock_json_rpc_result(&server, "chain.get_blocks_by_number", json!([]));
+    mock_json_rpc_result(&server, "chain.get_transaction2", Value::Null);
+    mock_json_rpc_result(
+        &server,
+        "chain.get_transaction_info2",
+        json!({
+            "block_number": 42,
+            "status": "Executed",
+            "gas_used": "7",
+        }),
+    );
+    mock_json_rpc_result(&server, "chain.get_events_by_txn_hash2", json!([]));
+    mock_method_not_found(&server, "chain.get_events");
+    mock_abi_methods_not_found(&server);
+    mock_view_methods_not_found(&server);
+    mock_json_rpc_result(&server, "txpool.gas_price", json!("1"));
+    mock_json_rpc_result(&server, "txpool.next_sequence_number2", json!("0"));
+    mock_json_rpc_result(&server, "state.list_resource", json!({ "resources": {} }));
+    mock_method_not_found(&server, "state.list_code");
+    mock_submit_probe_invalid_params(&server, "txpool.submit_hex_transaction2");
+    mock_json_rpc_result(
+        &server,
+        "contract2.dry_run_raw",
+        json!({ "status": "Executed" }),
+    );
+    mock_json_rpc_result(
+        &server,
+        "state.get_account_state",
+        json!({ "sequence_number": "0" }),
+    );
+    mock_json_rpc_result(
+        &server,
+        "txpool.submit_hex_transaction2",
+        json!("0xaccepted"),
+    );
+
+    let app = AppContext::bootstrap(runtime_config(
+        &server,
+        Mode::Transaction,
+        VmProfile::Auto,
+        true,
+    ))
+    .await
+    .expect("transaction app should bootstrap");
+    let prepared = app
+        .prepare_transfer(PrepareTransferInput {
+            sender: "0x1".to_owned(),
+            sender_public_key: None,
+            receiver: "0x2".to_owned(),
+            amount: "1".to_owned(),
+            token_code: None,
+            sequence_number: None,
+            max_gas_amount: None,
+            gas_unit_price: None,
+            expiration_time_secs: None,
+            gas_token: None,
+        })
+        .await
+        .expect("prepare should succeed");
+    let raw_txn: RawUserTransaction = bcs_ext::from_bytes(
+        &hex::decode(&prepared.raw_txn_bcs_hex).expect("raw hex should decode"),
+    )
+    .expect("raw transaction should decode");
+    let (private_key, public_key) = genesis_key_pair();
+    let signed_txn = raw_txn
+        .sign(&private_key, public_key)
+        .expect("transaction should sign")
+        .into_inner();
+    let signed_txn_bcs_hex = format!(
+        "0x{}",
+        hex::encode(bcs_ext::to_bytes(&signed_txn).expect("signed txn should encode"))
+    );
+
+    let submission = app
+        .submit_signed_transaction(SubmitSignedTransactionInput {
+            signed_txn_bcs_hex,
+            prepared_chain_context: prepared.chain_context,
+            blocking: true,
+            timeout_seconds: Some(0),
+            min_confirmed_blocks: None,
+        })
+        .await
+        .expect("blocking submit should succeed");
+
+    let watch = submission
+        .watch_result
+        .expect("blocking submit should include watch_result");
+    assert_eq!(submission.submission_state, SubmissionState::Accepted);
+    assert!(watch.confirmed);
+    assert_eq!(watch.effective_min_confirmed_blocks, 2);
+    assert_eq!(watch.confirmed_blocks, Some(2));
+    assert_eq!(watch.inclusion_block_number, Some(42));
 }
 
 #[tokio::test]
@@ -534,6 +653,25 @@ async fn prepare_transfer_rejects_past_expiration_and_normalizes_nested_dry_run_
 fn mock_read_only_bootstrap(server: &MockServer) {
     mock_probe_metadata(server);
     mock_read_only_query_surface(server);
+}
+
+fn mock_probe_metadata_with_head(server: &MockServer, head_block_number: u64) {
+    mock_json_rpc_result(server, "node.status", json!(true));
+    mock_json_rpc_result(
+        server,
+        "chain.info",
+        json!({
+            "chain_id": 254,
+            "genesis_hash": "0x1",
+            "head": {
+                "number": head_block_number,
+                "block_hash": "0x2",
+                "state_root": "0x3",
+                "timestamp": 100,
+            }
+        }),
+    );
+    mock_json_rpc_result(server, "node.info", sample_node_info());
 }
 
 fn mock_read_only_query_surface(server: &MockServer) {

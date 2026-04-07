@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import signal
@@ -14,14 +13,19 @@ import time
 from pathlib import Path
 from typing import Any
 
+from runtime_layout import (
+    RUNTIME_METADATA_NAME,
+    resolve_workspace_root,
+    wallet_runtime_socket_path,
+)
+
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
-WORKSPACE_ROOT = Path(
-    os.environ.get(
-        "STARCOIN_TRANSFER_WORKSPACE_ROOT",
-        os.environ.get("STARCOIN_MCP_WORKSPACE_ROOT", str(PLUGIN_ROOT.parent.parent)),
-    )
-).resolve()
+
+
+WORKSPACE_ROOT = resolve_workspace_root(
+    PLUGIN_ROOT, ("starmask-mcp/crates/starmaskd/Cargo.toml",)
+)
 STARMASKD_MANIFEST = (
     WORKSPACE_ROOT / "starmask-mcp" / "crates" / "starmaskd" / "Cargo.toml"
 )
@@ -32,7 +36,6 @@ LOCAL_AGENT_MANIFEST = (
     / "starmask-local-account-agent"
     / "Cargo.toml"
 )
-RUNTIME_METADATA_NAME = "wallet-runtime.json"
 
 
 def resolve_binary(env_name: str, binary_name: str) -> str | None:
@@ -75,7 +78,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--runtime-dir",
-        default=str(WORKSPACE_ROOT / ".runtime" / "wallet-runtime"),
+        default=str(Path.home() / ".runtime" / "wallet-runtime"),
         help="Directory for generated config, pid files, and logs.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -83,7 +86,7 @@ def parse_args() -> argparse.Namespace:
     up = subparsers.add_parser("up", help="Start starmaskd and local-account-agent.")
     up.add_argument(
         "--wallet-dir",
-        default=str(WORKSPACE_ROOT / ".runtime" / "devwallet"),
+        default=str(Path.home() / ".runtime" / "devwallet"),
         help="Standalone local account vault directory used by local-account-agent.",
     )
     up.add_argument(
@@ -115,13 +118,6 @@ def parse_args() -> argparse.Namespace:
     down.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
     return parser.parse_args()
-
-
-def choose_socket_path(runtime_dir: Path) -> Path:
-    digest = hashlib.sha1(str(runtime_dir).encode("utf-8")).hexdigest()[:8]
-    socket_dir = Path("/tmp") / "starcoin-mcp"
-    socket_dir.mkdir(parents=True, exist_ok=True)
-    return socket_dir / f"wallet-runtime-{digest}.sock"
 
 
 def ensure_private_wallet_dir(wallet_dir: Path) -> None:
@@ -294,7 +290,7 @@ def load_status(runtime_dir: Path) -> dict[str, Any]:
     paths = runtime_paths(runtime_dir)
     metadata = read_json(paths["metadata_path"]) or {}
     socket_path = Path(
-        metadata.get("daemon_socket_path", str(choose_socket_path(runtime_dir)))
+        metadata.get("daemon_socket_path", str(wallet_runtime_socket_path(runtime_dir)))
     )
     starmaskd_pid = read_pid(paths["starmaskd_pid_path"])
     agent_pid = read_pid(paths["agent_pid_path"])
@@ -408,7 +404,7 @@ def main() -> int:
 
     paths["run_dir"].mkdir(parents=True, exist_ok=True)
     paths["logs_dir"].mkdir(parents=True, exist_ok=True)
-    socket_path = choose_socket_path(runtime_dir)
+    socket_path = wallet_runtime_socket_path(runtime_dir)
     remove_if_exists(socket_path)
 
     wallet_config = build_wallet_config(

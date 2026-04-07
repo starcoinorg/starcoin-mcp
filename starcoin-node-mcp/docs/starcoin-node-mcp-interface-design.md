@@ -218,13 +218,19 @@ Get a transaction and its execution context by transaction hash.
 
 ##### Purpose
 
-Poll a transaction until terminal status or timeout.
+Poll a transaction until the requested confirmation depth or timeout.
 
 ##### Input
 
 - `txn_hash`
 - `timeout_seconds`
 - `poll_interval_seconds`
+- `min_confirmed_blocks`: optional, default `2`; effective minimum is `1` (smaller values are clamped)
+
+`min_confirmed_blocks` counts the inclusion block itself. The default value `2` therefore means:
+
+- the inclusion block
+- plus at least 1 additional block observed on top of it
 
 ##### Output
 
@@ -233,9 +239,16 @@ Poll a transaction until terminal status or timeout.
 - `confirmed`
 - `effective_timeout_seconds`
 - `effective_poll_interval_seconds`
+- `effective_min_confirmed_blocks`
+- `confirmed_blocks`
+- `inclusion_block_number`
 - `transaction_info`
 - `events`
 - `status_summary`
+
+`confirmed` means the requested confirmation depth was satisfied. `status_summary.confirmed`
+continues to mean the transaction has chain-side transaction info, which is the inclusion signal
+before depth policy is applied.
 
 ### 6.3 Events
 
@@ -525,6 +538,7 @@ Submit an already signed transaction.
 - `prepared_chain_context`: the `chain_context` returned by the preparation result that produced the signed transaction
 - `blocking`: boolean, default `false`
 - `timeout_seconds`: optional when `blocking = true`
+- `min_confirmed_blocks`: optional when `blocking = true`, default `2`; effective minimum is `1` (smaller values are clamped)
 
 When `allow_submit_without_prior_simulation = false`, the implementation should require a local chain-side preparation or simulation record for the raw transaction and fail closed otherwise.
 
@@ -544,6 +558,9 @@ When `allow_submit_without_prior_simulation = false`, the implementation should 
   - `reconcile_by_txn_hash`
   - `reprepare_then_resign`
 - `watch_result`: optional
+
+When `blocking = true`, any built-in wait should reuse `watch_transaction` semantics and return the
+same confirmation-depth metadata through `watch_result`.
 
 ## 7. Result Semantics
 
@@ -593,6 +610,7 @@ Whenever the caller supplies a query size or time budget that is clamped by loca
 Rules:
 
 - `watch_transaction` should return `effective_timeout_seconds` and `effective_poll_interval_seconds`
+- `watch_transaction` should also return `effective_min_confirmed_blocks`
 - list-like query tools should return `effective_count`, `effective_limit`, `effective_max_size`, or similar applied-limit metadata when caller-provided values were clamped
 - `rate_limited` should mean the local process rejected the request before outbound RPC side effects, so the host may retry later with backoff
 - `payload_too_large` should mean the request was rejected before decode or endpoint contact and requires a smaller payload or an explicit config change
@@ -600,6 +618,13 @@ Rules:
 ### 7.5 Submission Results
 
 Submission tools should compute and return `txn_hash` even before the endpoint confirms acceptance.
+
+When a blocking submission includes a watch result, that nested result should be interpreted the
+same way as a direct `watch_transaction` call:
+
+- `status_summary.confirmed` means the transaction has been included on-chain
+- top-level `confirmed` means the requested `min_confirmed_blocks` threshold was reached
+- `confirmed_blocks` means `head_block_number - inclusion_block_number + 1`
 
 Recommended interpretation:
 
