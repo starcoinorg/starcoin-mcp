@@ -22,8 +22,8 @@ It is the first concrete transport binding of:
 Phase-2 local backends use:
 
 - JSON-RPC 2.0
-- Unix domain socket on macOS and Linux
-- named pipe on Windows
+- Unix domain socket on macOS and Linux in the current implementation
+- named pipe on Windows as a future design target
 - the same local daemon listener model as the current daemon protocol
 
 Roles:
@@ -63,7 +63,7 @@ Phase-2 decisions:
 2. no additional wire-level backend-contract version field is introduced in phase 2
 3. the first published generic backend contract is therefore identified by daemon protocol `v2`
 4. `starmaskd` may support both extension-backed `v1` methods and generic `v2` methods on the same
-   socket or pipe during migration
+   socket during migration, with a future named-pipe equivalent on Windows
 
 This keeps the first rollout simpler:
 

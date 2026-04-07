@@ -248,6 +248,17 @@ Runtime rules:
    `backend_kind`
 5. the current `local-account-agent` implementation supports only `prompt_mode = "tty_prompt"`
 
+### Supervisor and TUI implications
+
+For an operator-facing supervisor or TUI, the startup contract becomes:
+
+1. enumerate enabled `local_account_dir` backends from the selected config file
+2. start one `local-account-agent --config <path> --backend-id <id>` per enabled backend
+3. use stable `backend_id` as the expected `wallet_instance_id`
+4. do not start helper processes for `starmask_extension` backends; surface manifest and
+   connection state instead
+5. treat missing backend registration as a degraded or failed startup state, not as success
+
 ## 13. Performance and Operations Notes
 
 Configuration should help keep the system bounded.

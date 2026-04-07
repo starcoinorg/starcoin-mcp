@@ -107,6 +107,30 @@ Recommended public facade:
 - any future host adapter should expose its own `serve_stdio(app)`-style helper without changing
   core or RPC crates
 
+## Operator TUI Packaging
+
+The planned runtime supervision TUI is not a host adapter and should not be packaged as one.
+
+First-pass packaging rule:
+
+- implement the TUI as a separate operator-facing binary, ideally in its own top-level subproject
+- supervise existing binaries such as `starmaskd`, `local-account-agent`, and an optional
+  node-side service as child processes
+- keep `starcoin-node-cli` short-lived and on-demand rather than turning it into a background
+  daemon
+
+Why this is the preferred first implementation:
+
+1. it preserves the current wallet restart and recovery semantics owned by `starmaskd`
+2. it avoids inventing a combined chain-plus-wallet in-process trust domain
+3. it reuses already implemented CLIs and process boundaries
+4. it aligns with the existing repository-local supervisor behavior in
+   `plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py`
+
+If a later TUI iteration embeds libraries directly, that choice must be documented as a separate
+design decision because it changes operational boundaries even if the signing trust boundary
+remains intact.
+
 ## Non-Goal
 
 The repository should not ship one monolithic combined library that merges wallet and node

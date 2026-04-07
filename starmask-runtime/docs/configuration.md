@@ -17,6 +17,12 @@ Detailed multi-backend entry rules remain defined separately in:
 - `docs/unified-wallet-coordinator-evolution.md`
 - `docs/wallet-backend-configuration.md`
 
+Current implementation note:
+
+- `starmaskd` currently serves Unix-domain sockets only
+- Windows path examples below remain design-target guidance, not a claim that the current daemon
+  already supports Windows named pipes
+
 ## 1. Purpose
 
 This document defines the configuration surface for:
@@ -100,6 +106,8 @@ extension backend.
   - fallback: `$HOME/.config/starmask-runtime/config.toml`
 
 ### 5.3 Windows
+
+Design target only for now:
 
 - daemon pipe:
   - `\\\\.\\pipe\\starmask-runtime-starmaskd`
@@ -209,6 +217,21 @@ Suggested environment variable names currently supported by `starmaskd`:
 - daemon socket or pipe override
 - expected channel name
 - log level override
+
+## 10.1 Supervisor and TUI Startup Contract
+
+An operator-facing supervisor or TUI may reuse this configuration directly.
+
+Rules:
+
+1. load exactly one `starmaskd` config file
+2. start `starmaskd` once for that config
+3. start one `local-account-agent` per enabled `local_account_dir` backend
+4. never start `starmask-native-host` directly; Chrome owns that lifecycle
+5. treat extension-backed backends as manifest-plus-connection diagnostics rather than TUI-owned
+   child processes
+6. consider the wallet side ready only after daemon health succeeds and expected local backends
+   register
 
 ## 11. Safe Bounds
 

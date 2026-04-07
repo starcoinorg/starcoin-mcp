@@ -38,8 +38,8 @@ The daemon protocol must provide:
 
 The daemon protocol uses JSON-RPC 2.0 over:
 
-- Unix domain socket on macOS and Linux
-- named pipe on Windows
+- Unix domain socket on macOS and Linux in the current implementation
+- named pipe on Windows as a future design target
 
 The daemon must reject non-local access.
 

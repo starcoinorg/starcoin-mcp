@@ -1,143 +1,103 @@
-# Starmask Runtime Design Closure Plan
+# Repository Architecture Closure Plan
 
 ## Purpose
 
-This document defines how `starmask-runtime` design work should be completed before implementation starts.
+This document defines what must be true before coding the next cross-project orchestration feature:
+an operator-facing runtime supervision TUI.
 
-The goal is to prevent a partial implementation from hard-coding assumptions that are still unsettled at the protocol, recovery, or security layer.
+Status note:
 
-## Design Completion Standard
+- this repository already contains real implementations for `starcoin-node-cli`, `starmaskd`, and
+  `local-account-agent`
+- this is no longer a pre-implementation closure plan for the old in-tree `starmask-runtime`
+  adapter
+- the remaining architecture gap is cross-project runtime supervision, not missing core wallet or
+  chain semantics
 
-`starmask-runtime` design is considered ready for implementation only when all of the following are true:
+## Closed Facts
 
-1. Every runtime component has a documented responsibility and lifecycle.
-2. Every cross-process boundary has a versioned protocol contract.
-3. Every asynchronous request has a closed lifecycle from creation to terminal cleanup.
-4. Every restart and disconnect path has a documented recovery rule.
-5. Every security-sensitive action has a clear approval and trust-boundary rule.
-6. Every required local artifact, path, and configuration item is documented.
-7. The first implementation scope is explicitly frozen.
+The following repository facts are now treated as closed inputs to the TUI design:
+
+1. The repository does not currently ship in-tree stdio adapters for `starcoin-node` or
+   `starmask-runtime`.
+2. The current chain-side executable is `starcoin-node-cli`, and it is intentionally short-lived.
+3. The current wallet-side runtime is `starmaskd` plus backend helper processes.
+4. `local_account_dir` is real code, not a future-only design branch.
+5. Extension-backed wallets remain supported, but Chrome owns `starmask-native-host` lifecycle.
+6. The current wallet runtime is Unix-only; Windows support remains future design work.
+7. A TUI may supervise processes, but it must not become a signer, a chain adapter, or a merged
+   trust domain.
 
 ## Required Document Set
 
-The following documents should exist before implementation starts:
+The following document set must stay aligned before TUI coding begins:
 
-1. `docs/architecture/host-integration.md`
-2. `docs/architecture/deployment-model.md`
-3. `starmask-runtime/docs/starmask-interface-design.md`
-4. `starmask-runtime/docs/security-model.md`
-5. `starmask-runtime/docs/daemon-protocol.md`
-6. `starmask-runtime/docs/native-messaging-contract.md`
-7. `starmask-runtime/docs/persistence-and-recovery.md`
+1. `docs/architecture/overview.md`
+2. `docs/architecture/host-integration.md`
+3. `docs/architecture/deployment-model.md`
+4. `docs/architecture/library-packaging.md`
+5. `docs/architecture/runtime-supervision-tui.md`
+6. `starcoin-node/docs/deployment-model.md`
+7. `starcoin-node/docs/configuration.md`
 8. `starmask-runtime/docs/configuration.md`
-9. `starmask-runtime/docs/approval-ui-spec.md`
-10. `starmask-runtime/docs/testing-and-acceptance.md`
-11. `starmask-runtime/docs/rust-implementation-strategy.md`
-12. `starmask-runtime/docs/rust-core-api-design.md`
-13. `starmask-runtime/docs/sqlite-schema-and-migrations.md`
-14. `starmask-runtime/docs/stdio-adapter-design.md`
-15. `starmask-runtime/docs/native-messaging-examples.md`
-16. `starmask-runtime/docs/test-harness-design.md`
+9. `starmask-runtime/docs/wallet-backend-configuration.md`
 
-## Design Order
+## TUI Closure Checklist
 
-The documents should be completed in this order:
+The TUI design is ready for coding only when all of the following are explicit:
 
-1. repository-level orchestration and deployment
-2. security model
-3. daemon protocol
-4. native messaging and extension contract
-5. persistence and recovery
-6. configuration and installation detail
-7. Rust implementation strategy
-8. core Rust API design
-9. SQLite schema and migration design
-10. stdio adapter design
-11. native messaging examples
-12. approval UI specification
-13. testing and acceptance criteria
-14. test harness design
+1. The TUI launches `starmaskd` exactly once per selected runtime profile.
+2. The TUI launches one `local-account-agent` per enabled `local_account_dir` backend and never
+   guesses backend identity.
+3. The TUI never tries to keep `starmask-native-host` running outside Chrome ownership.
+4. The TUI treats node-side service management as optional and distinct from `starcoin-node-cli`.
+5. The TUI uses readiness checks that match current process reality:
+   - daemon socket plus daemon health for `starmaskd`
+   - wallet-instance registration for local agents
+   - RPC health for any managed node-side service
+6. The TUI has a clear ownership rule for logs, pid metadata, and process re-attachment after a
+   crash or restart.
+7. The TUI reuses existing config paths and config validation rules instead of inventing parallel
+   chain and wallet configuration semantics.
+8. The TUI keeps current trust boundaries intact:
+   - signing still happens only in the selected wallet backend
+   - chain submission still happens through `starcoin-node`
+   - the TUI never handles passwords or private keys as application state
 
-This order keeps later documents constrained by earlier ones instead of re-opening top-level assumptions.
+## Current Architecture Drift That Needed Closing
 
-## Closed-Loop Flow Requirement
+The previous top-level document set had four material mismatches with the current repository:
 
-Each design flow must be closed from start to finish.
+1. it still described in-tree `starmask-runtime` and `starcoin-node` stdio binaries as if they
+   were present
+2. it treated the wallet side as extension-only and ignored the implemented `local_account_dir`
+   path
+3. it implied `starcoin-node` was still a server-shaped deployment even though the current code is
+   centered on `starcoin-node-cli`
+4. it described Windows wallet-runtime transport as first-implementation behavior even though the
+   current daemon is Unix-only
 
-At minimum, the repository must define complete flows for:
+These mismatches are now considered closed by the updated document set.
 
-1. wallet online discovery
-2. account discovery
-3. public key retrieval
-4. transaction signing
-5. message signing
-6. request cancellation
-7. request expiry
-8. wallet disconnect before presentation
-9. wallet disconnect after presentation
-10. daemon restart with non-terminal requests
-11. host restart with persisted `request_id`
-12. extension version mismatch
-13. native host manifest missing or invalid
+## Coding-Ready Decision
 
-A flow is incomplete if it documents only the happy path and does not explain:
+The repository is ready to start TUI implementation when the first pass stays within this scope:
 
-- who initiates the action
-- which process owns the state transition
-- what persistent state changes
-- what error code is returned on failure
-- how the caller recovers
+- start, stop, and observe `starmaskd`
+- start, stop, and observe enabled `local_account_dir` backends
+- show extension-backend manifest and connection health without supervising Chrome-owned processes
+- optionally start and observe one node-side service
+- reuse `starcoin-node-cli` as an on-demand command rather than a daemon
 
-## First-Release Security Decisions
+Out of scope for the first TUI pass:
 
-The first-release design is now closed on the following decisions:
-
-1. `wallet_list_accounts` does not require an interactive approval gate.
-2. `wallet_instance_id` is required whenever routing is ambiguous.
-3. signed results use bounded multi-read retention.
-4. message-signing and transaction-signing requests share one canonical request table.
-5. after `request.presented`, only the same `wallet_instance_id` may resume the request.
-6. the host may receive only structured status and result metadata; the extension remains the source of truth for rendered approval content.
-7. blind signing is blocked by policy and unsupported payloads must be rejected.
-
-## First Implementation Scope Freeze
-
-The first implementation should remain intentionally narrow.
-
-In scope:
-
-- one local user session
-- one Chrome-based wallet family
-- one daemon instance per OS user
-- explicit approval for every signing request
-- transaction signing
-- message signing
-- polling-based host interaction
-
-Out of scope for the first implementation:
-
-- remote wallet access
-- background auto-signing
-- cross-device approval
-- multiple browser families
-- push callbacks into MCP hosts
-- policy exceptions for low-risk signing
-
-## Review Checklist
-
-Before implementation begins, review the design with the following checklist:
-
-- Are all process boundaries documented?
-- Are all request states shared and consistent across docs?
-- Are all result objects reflected in shared schemas?
-- Are all terminal states explicit?
-- Are all retry rules idempotent?
-- Are all security decisions owned by the extension instead of the host?
-- Are all local-only assumptions written down?
-- Are all install-time artifacts discoverable and diagnosable?
+- reintroducing in-tree MCP adapters
+- embedding `starmaskd` or `starcoin-node-cli` as in-process libraries by default
+- browser automation
+- Windows wallet-runtime support
+- TUI-managed signing flows or chain-call orchestration
 
 ## Closure Status
 
-The required implementation-readiness document set now exists.
-
-At this point, remaining pre-code work should focus on review and targeted refinements, not missing architectural layers.
+With the updated top-level and lower-level documents, the repository is now at the point where the
+runtime supervision TUI can move from architecture work into implementation.

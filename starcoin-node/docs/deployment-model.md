@@ -122,6 +122,23 @@ reimplementing core or RPC logic.
 
 The first release should not require a separate Rust daemon or any cross-process coordinator for chain-side state.
 
+## Operator TUI Integration
+
+An operator-facing supervisor or TUI may participate in deployment, but only as a process manager.
+
+Rules:
+
+1. the TUI may optionally launch one local node-side service that produces the RPC endpoint later
+   consumed by `starcoin-node-cli`
+2. the TUI must not treat `starcoin-node-cli` itself as a long-lived background daemon
+3. node-side service management is optional because remote RPC endpoints remain valid deployments
+4. TUI readiness checks should target the same endpoint URL that `starcoin-node-cli` later reads
+   from `node-cli.toml`
+5. the TUI should use the same startup-probe logic conceptually:
+   - endpoint reachability
+   - chain identity
+   - capability availability
+
 ## Startup Model
 
 The normal startup sequence is:

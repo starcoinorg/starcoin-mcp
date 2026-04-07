@@ -8,6 +8,12 @@ The `crates/starmask-runtime` adapter has been removed from the workspace. This 
 design guidance for any future external adapter and should not be read as a statement that the
 current repository still contains that binary.
 
+Current implementation note:
+
+- the current wallet daemon runtime is Unix-only
+- browser-backed approval remains real, but `local_account_dir` plus `local-account-agent` is also
+  current implementation rather than future-only design
+
 Current scope is:
 
 - `starmask-runtime`
@@ -111,7 +117,8 @@ flowchart LR
 ### 4.2 `starmaskd`
 
 - launch mode: long-lived user daemon
-- transport to clients: Unix domain socket on macOS/Linux, named pipe on Windows
+- transport to clients: Unix domain socket on macOS/Linux in the current implementation; named
+  pipe on Windows remains a design target
 - lifetime: user session scoped
 
 ### 4.3 `starmask-native-host`
