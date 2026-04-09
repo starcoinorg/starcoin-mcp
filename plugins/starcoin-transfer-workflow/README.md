@@ -54,6 +54,8 @@ ships a plugin-managed adapter entrypoint.
   - adapter that calls `starcoin-node-cli`
 - `scripts/transfer_controller.py`
   - typed host-side transfer controller
+- `scripts/transfer_host.py`
+  - host-side preflight, risk labeling, preview, and audit helpers
 - `scripts/wallet_runtime.py`
   - foreground wallet-side supervisor for `starmaskd + local-account-agent`
 - `scripts/run_transfer_test.py`
@@ -184,19 +186,25 @@ The supervisor writes `wallet-runtime.json` under `$HOME/.runtime/wallet-runtime
 
 The converged Plan B flow is:
 
-1. `wallet.listInstances` through `scripts/starmaskd_client.py`
-2. `wallet.listAccounts` through `scripts/starmaskd_client.py`
-3. optional `wallet.getPublicKey`
-4. `prepare_transfer` through `starcoin-node-cli`
-5. host-side confirmation
-6. `request.createSignTransaction` through `starmaskd`
-7. CLI or wallet approval
-8. `request.getStatus`
-9. `submit_signed_transaction` through `starcoin-node-cli`
-10. `watch_transaction` through `starcoin-node-cli` until the requested confirmation depth is met
+1. Codex resolves the user transfer intent into network, sender, receiver, token, amount, and wallet instance
+2. `wallet.listInstances` through `scripts/starmaskd_client.py`
+3. `wallet.listAccounts` through `scripts/starmaskd_client.py`
+4. `chain_status` and `node_health` through `scripts/node_cli_client.py`
+5. optional `wallet.getPublicKey`
+6. `prepare_transfer` through `starcoin-node-cli`
+7. `get_account_overview` for sender and receiver through `starcoin-node-cli`
+8. host-side preflight preview and risk labels
+9. host-side confirmation
+10. `request.createSignTransaction` through `starmaskd`
+11. CLI or wallet approval plus `request.getStatus`
+12. `submit_signed_transaction` and `watch_transaction` through `starcoin-node-cli` until the requested confirmation depth is met
+13. local JSONL audit record for preview, approval lifecycle, and submit result
 
 If the local runtime is not ready, the right recovery is to stop and run `doctor.py`, not to fall
 back to direct `starcoin` CLI transfer commands.
+
+The scripts assume Codex has already resolved the intent. Natural-language extraction and precise
+follow-up questions remain a skill-level responsibility, not a Python parser feature.
 
 ## CLI Transfer Test
 
@@ -215,7 +223,8 @@ python3 ./scripts/run_transfer_test.py \
   --amount 1 \
   --amount-unit stc \
   --vm-profile vm2_only \
-  --min-confirmed-blocks 3
+  --min-confirmed-blocks 3 \
+  --audit-log-path <repo-root>/.runtime/transfer-audit.jsonl
 ```
 
 ### Reuse A Running Wallet Supervisor
@@ -241,9 +250,11 @@ In one-shot mode, `run_transfer_test.py` does this:
 3. starts `starmaskd`
 4. starts `local-account-agent`
 5. talks directly to `starmaskd` for wallet discovery, request creation, and status polling
-6. calls `starcoin-node-cli` for `prepare_transfer`, `submit_signed_transaction`, and follow-up `watch_transaction`
-7. shows a host-side confirmation card before wallet signing
-8. waits for the local wallet CLI approval card in the same terminal
+6. calls `starcoin-node-cli` for `prepare_transfer`, `node_health`, `get_account_overview`, `submit_signed_transaction`, and follow-up `watch_transaction`
+7. shows a host-side preflight preview card plus risk labels before wallet signing
+8. blocks immediately if the preview finds a blocking risk such as RPC unavailability or insufficient balance
+9. waits for the local wallet CLI approval card in the same terminal
+10. appends JSONL audit records under the active runtime directory unless `--audit-log-path` overrides it
 
 In supervisor-reuse mode, steps 3 and 4 are skipped. The script reads
 `$HOME/.runtime/wallet-runtime/wallet-runtime.json`, reuses the daemon socket and wallet instance, and
@@ -274,6 +285,19 @@ The transfer script maps that one higher-level setting onto both `submit_signed_
 
 If submission is accepted but final confirmation is still missing, the script reports that as an
 intermediate state and exits non-zero instead of treating it as a completed successful transfer.
+
+`run_transfer_test.py` now also runs a host-side preflight step before wallet signing:
+
+- `node_health` validates that the RPC path is currently usable
+- `get_account_overview` provides sender balance, token visibility, and `next_sequence_number_hint`
+- the preview compares the latest `chain_status` with the prepared `chain_context`
+- fee estimates come from `prepare_transfer.raw_txn` plus `simulation.gas_used`
+- blocking risks stop the flow before `request.createSignTransaction`
+
+By default the audit file is written to:
+
+- `<runtime-dir>/audit/transfer-audit.jsonl` for one-shot runs
+- `<wallet-runtime-dir>/audit/transfer-audit.jsonl` for supervisor-reuse runs
 
 ## Notes
 

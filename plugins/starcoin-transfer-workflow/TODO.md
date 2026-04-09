@@ -41,10 +41,13 @@
 
 - [ ] Strengthen the transfer host contract so the `starcoin-node-cli` + `starmaskd` path is treated as the only valid transfer execution path. If the local runtime is unavailable, the host should stop and send the user to `scripts/doctor.py` instead of falling back to direct `starcoin` CLI commands for prepare, submit, watch, balance, or transaction-status steps.
 - [ ] Reduce CLI-biased setup language in `README.md` so the `starcoin` examples are clearly scoped to wallet bootstrap and local funding, not the normal host-side transfer flow that Codex should execute.
+- [x] Add a host-side preflight preview that queries RPC health, sender / receiver account state, fee estimates, and nonce hints before wallet signing.
+  - `scripts/transfer_host.py` now derives risk labels from `node_health`, `get_account_overview`, and prepared transaction metadata, and `scripts/run_transfer_test.py` blocks on blocking risks before creating a signing request.
 - [ ] Add a first-class amount-normalization story for transfers. `prepare_transfer.amount` is currently a raw integer string, which leaves human-readable amounts as ad hoc host logic.
 - [ ] Improve common STC ergonomics explicitly. When the token is omitted or `0x1::STC::STC`, the workflow should support or at least clearly document 9-decimal normalization so standard STC transfers do not stall on avoidable precision confirmation.
 - [ ] Decide the general decimals strategy for non-STC assets. Candidates: a token-metadata query tool, an explicit `amount_unit` or `decimals` input on the script and skill surface, or a separate normalization helper that returns the canonical raw amount plus display metadata.
-- [ ] Show both the raw on-chain integer amount and the human-readable amount in transfer confirmations whenever normalization happened, so the user can verify what is actually being signed.
+- [x] Show both the raw on-chain integer amount and the human-readable amount in transfer confirmations whenever normalization happened, so the user can verify what is actually being signed.
+  - The preflight preview now always shows both `Amount` and `Raw Amount`.
 - [ ] Make submit failure handling more deterministic in the host workflow. `submission_unknown` should route to reconcile-by-hash or watch-by-hash behavior, while `transaction_expired`, `sequence_number_stale`, and `invalid_chain_context` should route to reprepare-and-resign guidance instead of generic failure text.
 - [ ] Tighten the submitted-but-unconfirmed state in docs and host UX. If the submit call was accepted but the watch step is missing, timed out, or failed, the workflow should surface that as an intermediate state rather than a silent success or opaque error.
 - [ ] Add coverage in `scripts/run_transfer_test.py` or adjacent acceptance tests for human-readable STC amounts, `submission_unknown` recovery, and reprepare-resign flows after stale sequence or expiration failures.
@@ -72,7 +75,8 @@
 - [ ] Treat local password handling as sensitive memory in the new prompt path: avoid logging prompt contents, redact crash output, and zeroize password buffers where practical after unlock/signing completes.
 - [ ] Expose lock-state and unlock-cache posture more clearly in the TUI, including a visible locked/unlocked indicator and an explicit relock action where the local backend can support it safely.
 - [ ] Extend `scripts/doctor.py` and runtime preflight checks to validate wallet `chain_id` against node-side chain expectations when both configs are present, and to surface insecure or surprising local-account runtime choices earlier.
-- [ ] Add a minimal local audit trail for operators that records request id, payload hash, backend id, timestamps, and terminal decision without logging plaintext passwords, private keys, or full signed payloads.
+- [x] Add a minimal local audit trail for operators that records request id, payload hash, backend id, timestamps, and terminal decision without logging plaintext passwords, private keys, or full signed payloads.
+  - `scripts/run_transfer_test.py` now writes JSONL audit records by default under the active runtime's `audit/` directory and supports `--audit-log-path`.
 - [ ] Add acceptance coverage for the new local prompt surface: approve, reject, password cancel, daemon restart recovery, stale terminal cleanup, and side-by-side validation that `tty_prompt` still works.
 - [ ] Update the plugin README and wallet backend docs so `tty_prompt` becomes the conservative path, `desktop_prompt` becomes the integrated TUI path, and the runtime-manager story explains that `starmaskd` remains a coordinator rather than a signer.
 - [ ] Evaluate a later phase for embedding `starmaskd` directly inside the TUI process only after the child-process runtime-manager path is stable and shutdown semantics are explicit.

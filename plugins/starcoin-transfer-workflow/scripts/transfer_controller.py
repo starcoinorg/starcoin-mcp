@@ -6,6 +6,14 @@ import time
 from dataclasses import dataclass
 from typing import Any, Callable, Protocol
 
+from transfer_host import (
+    TransferPreflightReport,
+    analyze_preflight,
+    build_preflight_rows,
+    build_risk_rows,
+    has_blocking_risks,
+)
+
 
 VM1_STC_TOKEN_CODE = "0x1::STC::STC"
 # Default STC transfers follow the vm_profile=auto runtime, which prefers VM2.
@@ -288,6 +296,28 @@ class TransferController:
             prepare_result=prepare_result,
         )
 
+    def collect_preflight_report(self, session: TransferSession) -> TransferPreflightReport:
+        chain_status = self.node_client.call_tool("chain_status")
+        node_health = self.node_client.call_tool("node_health")
+        sender_overview = self.node_client.call_tool(
+            "get_account_overview",
+            {
+                "address": session.sender,
+                "include_resources": True,
+            },
+        )
+        receiver_overview = self.node_client.call_tool(
+            "get_account_overview",
+            {"address": session.receiver},
+        )
+        return analyze_preflight(
+            session,
+            chain_status=chain_status,
+            node_health=node_health,
+            sender_overview=sender_overview,
+            receiver_overview=receiver_overview,
+        )
+
     def confirmation_rows(
         self,
         session: TransferSession,
@@ -341,6 +371,27 @@ class TransferController:
             )
         )
         return rows
+
+    def preflight_rows(
+        self,
+        session: TransferSession,
+        report: TransferPreflightReport,
+        *,
+        min_confirmed_blocks: int | None = None,
+    ) -> list[tuple[str, str]]:
+        return build_preflight_rows(
+            session,
+            report,
+            confirmation_depth=describe_confirmation_depth(
+                normalize_min_confirmed_blocks(min_confirmed_blocks)
+            ),
+        )
+
+    def risk_rows(self, report: TransferPreflightReport) -> list[tuple[str, str]]:
+        return build_risk_rows(report)
+
+    def has_blocking_risks(self, report: TransferPreflightReport) -> bool:
+        return has_blocking_risks(report)
 
     def create_sign_request(
         self,

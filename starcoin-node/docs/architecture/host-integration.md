@@ -57,6 +57,9 @@ Recommended tool calls:
 - `starmask-runtime.wallet_list_accounts`
 - `starmask-runtime.wallet_get_public_key`
 
+If any field is missing or ambiguous, the host should ask a narrow follow-up question or list the
+available wallet candidates rather than starting preparation from partial intent.
+
 If `wallet_get_public_key` is unavailable for the selected account, the host may continue, but it
 must expect `prepare_transfer` to return `simulation_status = skipped_missing_public_key`.
 
@@ -87,6 +90,32 @@ The host must retain at least these fields from the preparation result:
 
 If preparation fails with `invalid_chain_context`, `simulation_failed`, or `rpc_unavailable`, the
 host must not create a wallet signing request from stale or partial data.
+
+### Phase B.5: Preflight, Risk, And Preview
+
+Before requesting wallet signing, the host should run a read-only preflight pass around the
+prepared transaction.
+
+Recommended tool calls:
+
+- `starcoin-node.chain_status`
+- `starcoin-node.node_health`
+- `starcoin-node.get_account_overview` for the sender
+- `starcoin-node.get_account_overview` for the receiver
+
+The host should derive or check:
+
+- sender balance for the selected token
+- gas-token balance when it differs from the transferred token
+- prepared sequence number versus `next_sequence_number_hint`
+- fee estimate from `prepare_transfer.raw_txn` and `prepare_transfer.simulation.gas_used`
+- latest chain identity versus `prepare_transfer.chain_context`
+
+The host should then:
+
+- generate structured risk labels
+- show a transaction preview with network, sender, receiver, token, amount, raw amount, nonce, fee estimate, balance, and simulation outcome
+- stop before wallet signing if any blocking risk is present
 
 ### Phase C: Request Wallet Signing
 
@@ -185,6 +214,21 @@ Recommended transfer confirmation policy:
 - default to `min_confirmed_blocks = 2`
 - interpret that as the inclusion block plus at least 1 additional observed block
 - treat `status_summary.confirmed = true` with top-level `confirmed = false` as "included but not yet deep enough"
+
+## Local Audit Guidance
+
+The host should write a minimal local audit trail for transfer execution.
+
+Recommended fields:
+
+- request id
+- payload hash
+- backend or wallet instance id
+- timestamps for preview, request creation, request terminal status, and submission
+- terminal decision or final submit state
+
+The audit trail must not log plaintext passwords, private keys, raw signed payloads, or full signed
+transaction bytes.
 
 ## Retry And Recovery Rules
 
