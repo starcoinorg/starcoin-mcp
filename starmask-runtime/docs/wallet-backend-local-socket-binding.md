@@ -88,6 +88,10 @@ The implementation may later add persistent connections, but phase 2 must not re
 
 Required deployment rules:
 
+These are product-grade closure requirements for backend-agent transports. They define the required
+deployment posture and must not be read as a claim that every current helper binary already
+performs every validation step automatically.
+
 1. backend agents must connect to the exact configured daemon socket or future pipe rather than
    searching shared filesystem locations
 2. on POSIX, the daemon socket must live inside a private runtime directory and remain

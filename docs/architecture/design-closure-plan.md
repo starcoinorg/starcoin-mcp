@@ -41,6 +41,14 @@ The following document set must stay aligned before TUI coding begins:
 7. `starcoin-node/docs/configuration.md`
 8. `starmask-runtime/docs/configuration.md`
 9. `starmask-runtime/docs/wallet-backend-configuration.md`
+10. `starmask-runtime/docs/starmask-interface-design.md`
+11. `starmask-runtime/docs/security-model.md`
+12. `starmask-runtime/docs/daemon-protocol.md`
+13. `starmask-runtime/docs/native-messaging-contract.md`
+14. `starmask-runtime/docs/persistence-and-recovery.md`
+15. `starmask-runtime/docs/approval-ui-spec.md`
+16. `starmask-runtime/docs/testing-and-acceptance.md`
+17. `starmask-runtime/docs/rust-implementation-strategy.md`
 
 ## TUI Closure Checklist
 

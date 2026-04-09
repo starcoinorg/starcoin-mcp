@@ -93,15 +93,15 @@ This is the canonical cross-project transaction flow.
 
 #### Phase A: Wallet discovery
 
-1. Call `wallet_list_instances`
-2. Call `wallet_list_accounts`
+1. Call `wallet.listInstances`
+2. Call `wallet.listAccounts`
 3. If multiple wallet instances can satisfy the request, explicitly select `wallet_instance_id`
 4. If simulation is desired before signing and no public key is known yet, call
-   `wallet_get_public_key`
+   `wallet.getPublicKey`
 
 #### Phase B: Unsigned transaction preparation
 
-1. Call one of:
+1. Run one chain-side `starcoin-node-cli` command:
    - `prepare_transfer`
    - `prepare_contract_call`
    - `prepare_publish_package`
@@ -114,19 +114,19 @@ This is the canonical cross-project transaction flow.
 If preparation returned `simulation_status = skipped_missing_public_key`:
 
 1. obtain the sender public key from the wallet side
-2. rerun `prepare_transfer` or call `simulate_raw_transaction`
+2. rerun `prepare_transfer` or run the chain-side `simulate_raw_transaction` command
 3. continue only with the fresh preparation result
 
 #### Phase D: Wallet approval
 
-1. Call `wallet_request_sign_transaction`
+1. Call `request.createSignTransaction`
 2. Include:
    - `client_request_id`
    - `wallet_instance_id` when selection is explicit
    - `account_address`
    - `chain_id`
    - `raw_txn_bcs_hex`
-3. Poll `wallet_get_request_status`
+3. Poll `request.getStatus`
 4. Continue until a terminal lifecycle state is reached
 
 The host must treat the approval surface as backend-owned:
@@ -141,8 +141,8 @@ If the wallet request is approved:
 1. read `signed_txn_bcs_hex`
 2. retain the exact `chain_context` returned by the preparation result that produced the signed
    bytes
-3. call `submit_signed_transaction`
-4. if `submission_state = accepted`, optionally follow with `watch_transaction`
+3. run the chain-side `submit_signed_transaction` command
+4. if `submission_state = accepted`, optionally follow with the chain-side `watch_transaction`
 5. if `submission_state = unknown`, reconcile by `txn_hash` before any retry
 6. if the chain-side error is `transaction_expired` or `sequence_number_stale`, restart from
    preparation and request a fresh signature
@@ -160,11 +160,11 @@ Use only `starmask-runtime`.
 
 Typical sequence:
 
-1. `wallet_list_instances`
-2. `wallet_list_accounts`
+1. `wallet.listInstances`
+2. `wallet.listAccounts`
 3. select `wallet_instance_id` if needed
-4. `wallet_sign_message`
-5. poll `wallet_get_request_status`
+4. `request.createSignMessage`
+5. poll `request.getStatus`
 6. retrieve `signature` after approval
 
 ### 4. Recovery Flow
@@ -174,7 +174,7 @@ The host should treat wallet approval as asynchronous and failure-prone.
 If the host is interrupted:
 
 - persist `request_id`
-- resume by calling `wallet_get_request_status`
+- resume by calling `request.getStatus`
 
 If the wallet helper process restarts:
 

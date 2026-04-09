@@ -1,9 +1,9 @@
-# Starcoin MCP Runtime Deployment Model
+# Starcoin Agentic Wallet Runtime Deployment Model
 
 ## Purpose
 
 This document defines the repository-level deployment and runtime model for the current
-`starcoin-mcp` workspace.
+`starcoin-mcp` workspace and its operator-facing Starcoin Agentic Wallet runtime.
 
 Status note:
 

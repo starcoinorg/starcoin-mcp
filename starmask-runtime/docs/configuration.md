@@ -233,6 +233,15 @@ Rules:
 6. consider the wallet side ready only after daemon health succeeds and expected local backends
    register
 
+Implementation note:
+
+- poll for socket-file creation first
+- confirm that the socket accepts a local connection before treating the daemon as reachable
+- call daemon health methods such as `system.ping` or `system.getInfo`
+- wait until expected local backends appear in daemon status before declaring the wallet side ready
+- reuse the retry-and-timeout shape from `starmaskd/tests/support/mod.rs` as a reference, but keep
+  production timeouts, logging, and failure reporting explicit in the supervising process
+
 ## 10.2 Product-Grade Deployment Hardening
 
 Configuration is not product-ready unless the surrounding filesystem and launcher behavior are also

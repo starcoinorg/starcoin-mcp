@@ -186,6 +186,10 @@ Required properties:
 
 Required deployment rules:
 
+These rules are product-grade closure requirements for the local transport boundary. They define
+the required end state for production deployments and TUI supervision rather than asserting that
+every current binary already enforces each check automatically.
+
 1. the daemon listener must live inside a private per-user runtime directory
 2. on POSIX, the socket parent directory must be locked to the current user and the socket itself
    must also be current-user only

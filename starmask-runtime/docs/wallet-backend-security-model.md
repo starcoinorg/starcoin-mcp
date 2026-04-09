@@ -157,6 +157,10 @@ The local backend transport must preserve:
 
 Product-grade deployment rules:
 
+These rules define the required production posture for backend-to-daemon transport discovery. The
+current local-development implementation still allows some convenience shortcuts, so this section
+should be read as the required end state for hardened deployments and TUI closure.
+
 1. backend agents must connect to the exact configured daemon socket or pipe rather than scanning
    public locations in production deployments
 2. backend launchers and TUIs must not place passwords or other unlock material on argv

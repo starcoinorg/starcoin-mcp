@@ -92,6 +92,11 @@ The bridge remains security-sensitive even though it does not sign.
 
 Required deployment rules:
 
+These are product-grade closure requirements for the bridge boundary. The current implementation
+already depends on exact Native Messaging manifests plus daemon-side extension ID checks, but this
+list is the required end state rather than a claim that every item is already enforced inside
+`starmask-native-host` today.
+
 1. each channel must use its own manifest name and exact `allowed_origins` allowlist
 2. wildcard origins must not be used
 3. the manifest file must be owner-writable only and installed only in the OS-recognized Native

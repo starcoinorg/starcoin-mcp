@@ -45,6 +45,10 @@ The daemon must reject non-local access.
 
 Product-grade transport hardening rules:
 
+These rules are production-closure requirements for the runtime and any operator-facing TUI. They
+describe the required end state and must not be read as a claim that every current development
+binary already enforces each item automatically.
+
 1. the daemon socket must live in a private per-user runtime directory
 2. on POSIX, the socket parent directory must be current-user only and the socket itself must be
    current-user only
