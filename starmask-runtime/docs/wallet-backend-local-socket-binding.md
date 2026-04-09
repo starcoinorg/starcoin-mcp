@@ -22,8 +22,8 @@ It is the first concrete transport binding of:
 Phase-2 local backends use:
 
 - JSON-RPC 2.0
-- Unix domain socket on macOS and Linux
-- named pipe on Windows
+- Unix domain socket on macOS and Linux in the current implementation
+- named pipe on Windows as a future design target
 - the same local daemon listener model as the current daemon protocol
 
 Roles:
@@ -63,7 +63,7 @@ Phase-2 decisions:
 2. no additional wire-level backend-contract version field is introduced in phase 2
 3. the first published generic backend contract is therefore identified by daemon protocol `v2`
 4. `starmaskd` may support both extension-backed `v1` methods and generic `v2` methods on the same
-   socket or pipe during migration
+   socket during migration, with a future named-pipe equivalent on Windows
 
 This keeps the first rollout simpler:
 
@@ -83,6 +83,24 @@ Rules:
 4. the connection closes
 
 The implementation may later add persistent connections, but phase 2 must not require them.
+
+### 5.1 Transport hardening
+
+Required deployment rules:
+
+These are product-grade closure requirements for backend-agent transports. They define the required
+deployment posture and must not be read as a claim that every current helper binary already
+performs every validation step automatically.
+
+1. backend agents must connect to the exact configured daemon socket or future pipe rather than
+   searching shared filesystem locations
+2. on POSIX, the daemon socket must live inside a private runtime directory and remain
+   current-user only
+3. a backend agent must treat a shared-writable socket directory or overly broad future pipe ACL as
+   misconfiguration
+4. stale transport cleanup must happen only after a failed connect attempt and only for a path
+   inside an owned private runtime directory
+5. cleanup logic must not follow symlinks or future Windows reparse-point equivalents
 
 ## 6. Backend Identity Model
 

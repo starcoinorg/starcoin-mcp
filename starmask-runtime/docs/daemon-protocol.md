@@ -38,10 +38,29 @@ The daemon protocol must provide:
 
 The daemon protocol uses JSON-RPC 2.0 over:
 
-- Unix domain socket on macOS and Linux
-- named pipe on Windows
+- Unix domain socket on macOS and Linux in the current implementation
+- named pipe on Windows as a future design target
 
 The daemon must reject non-local access.
+
+Product-grade transport hardening rules:
+
+These rules are production-closure requirements for the runtime and any operator-facing TUI. They
+describe the required end state and must not be read as a claim that every current development
+binary already enforces each item automatically.
+
+1. the daemon socket must live in a private per-user runtime directory
+2. on POSIX, the socket parent directory must be current-user only and the socket itself must be
+   current-user only
+3. clients should use the exact configured socket path rather than scanning shared filesystem
+   locations in production deployments
+4. stale socket cleanup may happen only after a failed connect attempt and only for a socket path
+   inside an owned runtime directory
+5. cleanup logic must not follow symlinks or future Windows reparse-point equivalents while
+   removing stale transport artifacts
+6. future Windows named-pipe support must use owner-only ACLs and must not broaden the local trust
+   boundary
+7. adjacent database, pid, and log artifacts must follow the same current-user-only policy
 
 The current implementation may use one request per local connection:
 

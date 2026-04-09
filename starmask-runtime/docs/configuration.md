@@ -17,6 +17,12 @@ Detailed multi-backend entry rules remain defined separately in:
 - `docs/unified-wallet-coordinator-evolution.md`
 - `docs/wallet-backend-configuration.md`
 
+Current implementation note:
+
+- `starmaskd` currently serves Unix-domain sockets only
+- Windows path examples below remain design-target guidance, not a claim that the current daemon
+  already supports Windows named pipes
+
 ## 1. Purpose
 
 This document defines the configuration surface for:
@@ -100,6 +106,8 @@ extension backend.
   - fallback: `$HOME/.config/starmask-runtime/config.toml`
 
 ### 5.3 Windows
+
+Design target only for now:
 
 - daemon pipe:
   - `\\\\.\\pipe\\starmask-runtime-starmaskd`
@@ -209,6 +217,54 @@ Suggested environment variable names currently supported by `starmaskd`:
 - daemon socket or pipe override
 - expected channel name
 - log level override
+
+## 10.1 Supervisor and TUI Startup Contract
+
+An operator-facing supervisor or TUI may reuse this configuration directly.
+
+Rules:
+
+1. load exactly one `starmaskd` config file
+2. start `starmaskd` once for that config
+3. start one `local-account-agent` per enabled `local_account_dir` backend
+4. never start `starmask-native-host` directly; Chrome owns that lifecycle
+5. treat extension-backed backends as manifest-plus-connection diagnostics rather than TUI-owned
+   child processes
+6. consider the wallet side ready only after daemon health succeeds and expected local backends
+   register
+
+Implementation note:
+
+- poll for socket-file creation first
+- confirm that the socket accepts a local connection before treating the daemon as reachable
+- call daemon health methods such as `system.ping` or `system.getInfo`
+- wait until expected local backends appear in daemon status before declaring the wallet side ready
+- reuse the retry-and-timeout shape from `starmaskd/tests/support/mod.rs` as a reference, but keep
+  production timeouts, logging, and failure reporting explicit in the supervising process
+
+## 10.2 Product-Grade Deployment Hardening
+
+Configuration is not product-ready unless the surrounding filesystem and launcher behavior are also
+constrained.
+
+Required rules:
+
+1. `socket_path` must resolve inside a private per-user runtime directory rather than a shared
+   writable directory
+2. on POSIX, the socket parent directory must be current-user only and the socket itself must be
+   current-user only
+3. if a stale socket is cleaned up, cleanup must happen only after a failed connect attempt and
+   only for a path inside an owned runtime directory
+4. cleanup logic must not follow symlinks or future Windows reparse-point equivalents when removing
+   stale transport artifacts
+5. `database_path`, log files, pid files, copied diagnostics, and crash artifacts must be
+   owner-writable only
+6. channel-specific deployments must use separate sockets or pipes, databases, manifests, and
+   runtime-state directories
+7. supervisors should launch `starmaskd` and `local-account-agent` by absolute path and must not
+   pass secrets on argv
+8. future Windows named-pipe support must use owner-only ACLs rather than broad identities such as
+   `Everyone` or `Authenticated Users`
 
 ## 11. Safe Bounds
 

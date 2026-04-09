@@ -122,6 +122,26 @@ reimplementing core or RPC logic.
 
 The first release should not require a separate Rust daemon or any cross-process coordinator for chain-side state.
 
+## Operator TUI Integration
+
+An operator-facing supervisor or TUI may participate in deployment, but only as a process manager.
+
+Rules:
+
+1. the TUI may optionally launch one local node-side service that produces the RPC endpoint later
+   consumed by `starcoin-node-cli`
+2. the TUI must not treat `starcoin-node-cli` itself as a long-lived background daemon
+3. node-side service management is optional because remote RPC endpoints remain valid deployments
+4. TUI readiness checks should target the same endpoint URL that `starcoin-node-cli` later reads
+   from `node-cli.toml`
+5. the TUI should use the same startup-probe logic conceptually:
+   - endpoint reachability
+   - chain identity
+   - capability availability
+6. when the TUI launches a local node-side service, that service should bind to loopback by default
+7. admin or debug RPC surfaces should not be exposed on the same endpoint consumed by
+   `starcoin-node-cli`
+
 ## Startup Model
 
 The normal startup sequence is:
@@ -213,16 +233,21 @@ The deployment model requires the following recovery behavior:
 
 ## Local and Remote Transport Requirements
 
-The first implementation should support:
+The current `starcoin-node-cli` implementation should support:
 
-- local IPC, HTTP, or WebSocket endpoints for development and colocated deployments
-- remote HTTPS or secure WebSocket endpoints for hosted nodes
+- local loopback HTTP endpoints for colocated deployments
+- remote HTTPS endpoints for hosted nodes
 - optional remote endpoint allowlisting or certificate-pinning configuration for transaction mode
+
+Future external adapters may add other transports later, but they must preserve the same chain-pin,
+credential-redaction, and non-signer trust boundaries.
 
 The first release should avoid:
 
 - unauthenticated public-network transaction endpoints by default
 - automatic downgrade from secure remote transport to insecure remote transport
+- local node-side services that silently listen on non-local interfaces without explicit operator
+  intent
 
 ## Observability Requirements
 

@@ -86,6 +86,30 @@ Rust implementation guidance:
 4. fail closed on malformed frames
 5. if Windows needs a binary-mode stdio shim, isolate it in a tiny platform-specific module
 
+## Native-Host Deployment Hardening
+
+The bridge remains security-sensitive even though it does not sign.
+
+Required deployment rules:
+
+These are product-grade closure requirements for the bridge boundary. The current implementation
+already depends on exact Native Messaging manifests plus daemon-side extension ID checks, but this
+list is the required end state rather than a claim that every item is already enforced inside
+`starmask-native-host` today.
+
+1. each channel must use its own manifest name and exact `allowed_origins` allowlist
+2. wildcard origins must not be used
+3. the manifest file must be owner-writable only and installed only in the OS-recognized Native
+   Messaging manifest locations
+4. the manifest `path` must be absolute
+5. the native-host binary and its parent directories must not be writable by other OS users
+6. the native host must validate the caller origin it receives from Chrome against configured
+   channel policy before normal request handling begins
+7. operators and TUIs must not pre-launch or daemonize `starmask-native-host`; Chrome owns that
+   lifecycle
+8. secrets must not be passed on argv, and stderr diagnostics must continue to avoid leaking
+   sensitive daemon payloads
+
 ## Protocol Version
 
 Initial native-bridge protocol version:

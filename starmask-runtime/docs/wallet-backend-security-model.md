@@ -133,6 +133,13 @@ Required checks:
 
 Windows implementations must enforce the equivalent current-user-only ACL policy.
 
+Operational deployment rules:
+
+1. backend-agent logs, pid files, and copied diagnostics must not be written into the account
+   directory itself unless those files follow the same owner-only policy
+2. password prompts, temporary exports, or crash artifacts must not create world-readable copies of
+   local-account secrets
+
 ## 9. Local Transport Security
 
 The local backend transport must preserve:
@@ -142,8 +149,23 @@ The local backend transport must preserve:
 3. no network listener
 4. explicit configured backend identity
 5. no secrets in wire payloads
+6. daemon socket or pipe discovery from shared configuration rather than from untrusted host input
+7. refusal to use a daemon transport path or future pipe ACL that is broader than current-user
+   scope
 
 `starmaskd` must reject backend registration for unknown or disabled backend IDs.
+
+Product-grade deployment rules:
+
+These rules define the required production posture for backend-to-daemon transport discovery. The
+current local-development implementation still allows some convenience shortcuts, so this section
+should be read as the required end state for hardened deployments and TUI closure.
+
+1. backend agents must connect to the exact configured daemon socket or pipe rather than scanning
+   public locations in production deployments
+2. backend launchers and TUIs must not place passwords or other unlock material on argv
+3. stale-socket cleanup, when present, must follow the same owned-private-directory rule as the
+   daemon-side transport
 
 ## 10. Logging and Result Redaction
 

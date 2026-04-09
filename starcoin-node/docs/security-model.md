@@ -80,6 +80,10 @@ The first implementation should explicitly defend against:
 6. drift between the chain context used during preparation and the endpoint used during submission
 7. misuse of raw RPC methods that bypass MCP capability gating
 8. oversized query, watch, or publish-package requests that would otherwise exhaust local process resources
+9. a supervisor or TUI that accidentally exposes a managed node-side service beyond the intended
+   local boundary
+10. accidental exposure of endpoint credentials through argv, world-readable config, or
+    diagnostics
 
 The first implementation does not attempt to defend against:
 
@@ -141,6 +145,23 @@ Rules:
 3. endpoint TLS or authentication settings must come from configuration, not from host tool inputs
 4. host-visible results must never echo secrets such as bearer tokens or full auth headers
 5. remote transaction mode should support endpoint allowlisting or certificate pinning where deployments require stronger trust than DNS and CA validation alone
+
+## Deployment Hardening Rules
+
+The chain-side safety model also depends on process and filesystem deployment.
+
+Required rules:
+
+1. config files, logs, caches, pid files, and copied diagnostics must be owner-writable only
+2. endpoint credentials must not be placed on argv in product deployments
+3. supervisors and TUIs should launch managed node-side services through absolute executable paths
+   with minimized inherited environment
+4. managed local node-side services should bind to loopback by default
+5. admin or debug RPC surfaces must be disabled or isolated from the endpoint consumed by
+   `starcoin-node-cli`
+6. if a node-side service is intentionally exposed beyond the local machine, deployments should
+   combine TLS, authentication, and allowlisting or certificate pinning rather than relying on
+   reachability alone
 
 ## Resource Exhaustion and Overload Safety
 

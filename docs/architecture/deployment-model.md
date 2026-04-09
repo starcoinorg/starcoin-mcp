@@ -1,242 +1,314 @@
-# Starcoin MCP Deployment Model
+# Starcoin Agentic Wallet Runtime Deployment Model
 
 ## Purpose
 
-This document defines the deployment and runtime model for the local wallet-facing Starcoin MCP stack.
+This document defines the repository-level deployment and runtime model for the current
+`starcoin-mcp` workspace and its operator-facing Starcoin Agentic Wallet runtime.
+
+Status note:
+
+- the repository no longer ships in-tree stdio adapters for `starcoin-node` or
+  `starmask-runtime`
+- the current chain-side executable is `starcoin-node-cli`
+- the current wallet-side runtime is `starmaskd` plus backend-specific helper processes
+- the current wallet runtime is Unix-only because `starmaskd` serves only Unix-domain sockets
 
 The scope of this document is:
 
-- `starmask-runtime`
+- `starcoin-node-cli`
 - `starmaskd`
+- `local-account-agent`
 - `starmask-native-host`
-- `Starmask` Chrome extension
-- the local MCP host, such as Claude Code or Codex
+- Starmask Chrome extension
+- one configured Starcoin RPC endpoint
+- an optional operator-facing runtime supervision TUI
 
 ## Design Goal
 
-The deployment model must preserve the signing trust boundary:
+The deployment model must preserve the chain and wallet trust boundaries while making local
+runtime supervision explicit.
 
-- the MCP host can request signing
-- the daemon can broker signing
-- only the extension can approve and sign
+Repository-level rules:
+
+- chain-facing logic stays in `starcoin-node`
+- wallet-facing lifecycle stays in `starmask-runtime`
+- any TUI or supervisor may manage processes, but must not become a signer or a chain adapter
 
 ## Runtime Topology
 
+### Current Repository Realization
+
 ```mermaid
 flowchart LR
-    H["MCP Host"] --> M["starmask-runtime (stdio)"]
-    M --> D["starmaskd (local daemon)"]
-    D --> N["starmask-native-host"]
+    O["Operator or Local Host"] --> T["Runtime Supervision TUI (optional)"]
+    O --> C["starcoin-node-cli"]
+    O --> D["starmaskd"]
+    D --> L["local-account-agent (0..n)"]
+    D --> N["starmask-native-host (Chrome-owned)"]
     N --> E["Starmask Chrome Extension"]
+    C --> R["Starcoin RPC Endpoint"]
+    T --> D
+    T --> L
+    T -. optional .-> S["Local Node Service"]
+    S --> R
 ```
 
-## Deployment Profiles
+### Logical Host-Adapter Boundary
 
-### Local Single-User Profile
+```mermaid
+flowchart LR
+    H["Local Host or External Adapter"] --> W["starmask-runtime (logical boundary)"]
+    H --> C["starcoin-node (logical boundary)"]
+    W --> D["starmaskd"]
+    C --> R["Starcoin RPC Endpoint"]
+```
 
-This is the only supported profile for the first implementation.
+The second diagram remains the logical boundary that higher-level host-integration documents refer
+to, even though the repository currently realizes that boundary through `starcoin-node-cli`,
+daemon RPC, and backend agents rather than in-tree stdio binaries.
 
-Properties:
+## Current Startable Artifacts
 
-- all processes run under one OS user
-- the daemon listens only on a user-scoped local transport
-- the wallet extension runs in a browser profile controlled by the same OS user
-- the MCP host is local to the same machine
+The current repository contains these operator-relevant binaries:
 
-### Unsupported Profiles
-
-The following profiles are out of scope:
-
-- shared multi-user daemon
-- remote daemon access
-- remote browser or remote extension access
-- network-exposed signing broker
-
-## Installed Artifacts
-
-The local installation consists of:
-
-1. `starmask-runtime`
+1. `starcoin-node-cli`
 2. `starmaskd`
-3. `starmask-native-host`
-4. `Starmask` Chrome extension
-5. optional `starmaskctl`
+3. `local-account-agent`
+4. `starmask-native-host`
+5. `starmaskctl`
+
+Important distinctions:
+
+- `starcoin-node-cli` is a short-lived command runner, not a long-lived daemon
+- `starmaskd` is the long-lived wallet coordinator
+- one `local-account-agent` process is required for each enabled `local_account_dir` backend
+- `starmask-native-host` is launched on demand by Chrome and is not a daemon the supervisor should
+  keep alive on its own
 
 ## Process Responsibilities
 
-### MCP Host
+### `starcoin-node-cli`
 
-- launches `starmask-runtime`
-- invokes MCP tools
-- persists `request_id` when necessary
-- never talks directly to the extension
-
-### `starmask-runtime`
-
-- speaks MCP over stdio
-- validates request shape
-- forwards RPC to the daemon
-- has no long-lived signing state
+- loads `starcoin-node` config and performs startup probes
+- executes one chain-facing command per invocation
+- prepares, simulates, submits, and watches transactions
+- never signs and never owns wallet lifecycle
 
 ### `starmaskd`
 
-- persists request and wallet state
-- owns the canonical request lifecycle
-- enforces TTL and local policy
-- survives MCP host restarts
+- owns canonical wallet request lifecycle and persistence
+- tracks backend registrations and wallet availability
+- routes requests to either extension-backed or local-account backends
+- survives host and helper-process restarts
+
+### `local-account-agent`
+
+- connects one configured `local_account_dir` backend to `starmaskd`
+- handles local approval and password entry inside the backend process
+- signs only after backend-local approval
 
 ### `starmask-native-host`
 
-- is launched by Chrome through Native Messaging
-- forwards extension messages to the daemon
-- should be stateless beyond connection-scoped transport state
+- is a Native Messaging bridge launched by Chrome
+- forwards extension traffic to `starmaskd`
+- should stay connection-scoped and stateless beyond bridge transport state
 
-### `Starmask` Extension
+### Starmask Chrome extension
 
-- holds wallet state and signing authority
-- renders approval UI
-- performs transaction decoding and message rendering
-- returns signed results or rejection
+- owns browser-backed wallet state and approval UI
+- signs only after browser approval
+
+### Runtime Supervision TUI
+
+- selects runtime profiles and start/stop actions
+- launches `starmaskd`
+- launches one `local-account-agent` per enabled `local_account_dir` backend
+- optionally launches one local node-side service
+- surfaces health, logs, and diagnostics
+- never signs and never replaces `starcoin-node-cli`
+
+## Deployment Profiles
+
+### Wallet-Only Profile
+
+This is the minimum current operator profile.
+
+Properties:
+
+- `starmaskd` is running
+- local-account backends may be launched and supervised
+- extension-backed backends rely on Chrome to launch `starmask-native-host`
+- chain access may target an already-running local or remote RPC endpoint
+
+### Wallet Plus Managed Local Node Profile
+
+This is an optional convenience profile for local development.
+
+Properties:
+
+- the wallet profile above is active
+- the TUI or another supervisor launches one local node-side service
+- `starcoin-node-cli` later targets that local RPC endpoint through `node-cli.toml`
+
+### Wallet Plus Remote Node Profile
+
+This is also valid and often simpler.
+
+Properties:
+
+- wallet processes are local
+- no local node-side service is launched
+- `starcoin-node-cli` targets a configured remote RPC endpoint
 
 ## Startup Model
 
-The normal startup sequence is:
+The normal current startup sequence is:
 
-1. the user installs the local binaries and the browser extension
-2. the user-level daemon is started
-3. the native messaging manifest is registered
-4. the browser extension connects to the native host
-5. the native host connects to the daemon
-6. the extension registers its `wallet_instance_id`
-7. the MCP host starts `starmask-runtime` when needed
-8. `starmask-runtime` connects to the daemon on demand
+1. the operator selects a wallet config and an optional node profile
+2. `starmaskd` starts and creates its runtime directories, socket, and database
+3. for each enabled `local_account_dir` backend, one `local-account-agent` starts with
+   `--config <path> --backend-id <id>`
+4. extension-backed backends are not started directly; the supervisor checks manifest and
+   connection status and waits for Chrome to launch `starmask-native-host`
+5. if a managed local node profile is enabled, the supervisor launches the configured node-side
+   service and waits for RPC health
+6. host-side tools run `starcoin-node-cli` on demand and talk to the wallet side through an
+   external adapter or direct daemon client, depending on the host integration
 
-The design assumes that wallet connectivity may come before or after the MCP host starts.
+The supervisor should treat wallet and node startup as related but still separate tracks:
 
-## Steady-State Model
+- wallet startup is mandatory for signing flows
+- node startup is optional because `starcoin-node-cli` also supports remote endpoints
 
-In steady state:
+## Readiness Rules
 
-- `starmaskd` stays alive across many MCP tool calls
-- `starmask-runtime` may be short-lived
-- the extension may disconnect and reconnect without losing canonical request state
-- the native host may be restarted by Chrome without changing logical wallet identity
+The deployment model requires the following readiness checks:
 
-## Canonical Runtime Paths
+### Wallet
 
-### Path 1: Wallet-First
+1. `starmaskd` is ready only after its Unix socket accepts a connection and daemon health calls
+   succeed
+2. a `local_account_dir` backend is ready only after its `wallet_instance_id` appears in daemon
+   status
+3. an extension backend is ready only after Chrome has connected through `starmask-native-host`
 
-1. browser is already open
-2. extension is already connected
-3. daemon already knows the wallet instance
-4. MCP host later starts `starmask-runtime`
-5. requests can be delivered immediately
+### Node
 
-### Path 2: Host-First
-
-1. MCP host starts `starmask-runtime`
-2. daemon is reachable but no extension is connected yet
-3. host may still query wallet status
-4. in the first release, signing request creation fails fast until a connected unlocked wallet instance is available
-5. once the extension connects, the host may retry request creation with the same `client_request_id`
-
-### Path 3: Browser Restart
-
-1. daemon remains alive
-2. browser and extension disconnect
-3. non-terminal requests remain persisted in the daemon
-4. when the extension reconnects, the daemon re-evaluates which requests are re-deliverable
+1. a managed node-side service is ready only after its configured RPC endpoint answers health
+   probes
+2. readiness should use the same endpoint URL that `starcoin-node-cli` later reads from
+   `node-cli.toml`
+3. `starcoin-node-cli` itself should remain on-demand and should not be treated as a background
+   daemon
 
 ## Shutdown Model
 
-### MCP Host Exit
+### Wallet Shutdown
 
-- `starmask-runtime` may exit immediately
-- the daemon keeps all non-terminal requests
-- the host can later resume by polling the same `request_id`
+Recommended stop order:
 
-### Browser Exit
+1. stop `local-account-agent` children first
+2. stop `starmaskd`
+3. do not try to keep `starmask-native-host` alive after Chrome disconnects
 
-- the extension disconnects
-- native host exits
-- the daemon marks the wallet instance disconnected
-- non-terminal requests remain subject to recovery policy
+### Node Shutdown
 
-### Daemon Exit
-
-- all active transports are dropped
-- persisted requests must survive
-- after restart, the daemon reloads non-terminal state before accepting new claims
+- stop the managed node-side service only if the supervisor started it
+- do not affect remote endpoints or shared local services the supervisor does not own
 
 ## Recovery Rules
 
-The deployment model requires the following recovery behavior:
+The deployment model requires:
 
-1. daemon restart does not lose persisted requests
-2. extension reconnect does not create a new logical wallet identity unless local storage was reset
-3. host restart does not require re-creating an existing request
-4. transport loss alone does not imply rejection
+1. a TUI restart must be able to rediscover or adopt the processes it previously started
+2. daemon restart must preserve wallet request state according to `starmaskd` recovery rules
+3. backend-agent restart must preserve backend identity through stable `backend_id`
+4. node-side process loss must degrade only chain access, not wallet persistence
+5. browser disconnect must not be treated as request rejection
 
-## Local Transport Requirements
+## Platform and Transport Notes
 
-The first implementation should use:
+Current implementation facts:
 
-- Unix domain socket on macOS and Linux
-- named pipe on Windows
+- `starmaskd` currently supports Unix-domain sockets only
+- macOS and Linux are the active wallet-runtime targets for the first TUI pass
+- Windows named pipes remain a design target for a later wallet-runtime phase
+- `starcoin-node-cli` consumes HTTP or HTTPS RPC endpoints and does not impose a local daemon
 
-The transport must:
+## Product-Grade Deployment Hardening
 
-- be scoped to the current OS user
-- reject non-local access
-- support request-response RPC and event delivery
+The deployment model is not product-ready unless the operating-system packaging and runtime layout
+preserve the same trust boundaries as the protocol design.
 
-## Identity and Routing
+### Local IPC hardening
 
-The deployment model distinguishes:
+Required rules:
 
-- process identity
-- wallet identity
-- account identity
+1. wallet socket paths must live in a per-user runtime directory, not directly in a shared writable
+   directory such as `/tmp`
+2. on POSIX, the socket parent directory must be locked to the current user, and the socket itself
+   must also be current-user only
+3. stale socket cleanup may happen only after a failed connect attempt and only for a socket path
+   inside an owned private runtime directory
+4. cleanup logic must not follow symlinks, hardlink tricks, or future Windows reparse-point
+   equivalents when removing stale transport artifacts
+5. future Windows named pipes must use a channel-scoped pipe name and an ACL restricted to the
+   launching user or service SID rather than broad identities such as `Everyone`
 
-They must not be collapsed into one concept.
+### Files, logs, and state hardening
 
-Rules:
+Required rules:
 
-1. `wallet_instance_id` identifies one extension-local wallet instance
-2. browser reconnect must preserve `wallet_instance_id` where possible
-3. account addresses may appear in more than one wallet instance
-4. request routing is performed by `starmaskd`, not by the MCP host transport layer
+1. config files, databases, logs, pid files, TUI state, and crash artifacts must be owner-writable
+   only
+2. development, staging, and production channels must use separate sockets or pipes, databases,
+   manifests, and state directories
+3. runtime processes should run as an unprivileged user unless a deployment has a documented reason
+   to do otherwise
+4. log rotation and crash-dump collection must preserve redaction and restrictive file permissions
 
-## Installation-Time Constraints
+### Process launch hygiene
 
-The deployment model depends on:
+Required rules:
 
-1. a valid Native Messaging host manifest
-2. an exact allowlist of extension IDs per release channel
-3. compatible protocol versions across:
-   - `starmask-runtime`
-   - `starmaskd`
-   - `starmask-native-host`
-   - `Starmask` extension
+1. supervisors should launch `starmaskd`, `local-account-agent`, and any managed node-side service
+   through absolute executable paths or pinned package-managed entrypoints
+2. production deployments should not depend on ambient `PATH` lookup for security-sensitive child
+   processes
+3. secrets must not be passed on argv
+4. inherited environment variables should be minimized so child processes do not receive unrelated
+   credentials or tokens by accident
+
+### Managed node-side service hardening
+
+If a TUI or supervisor manages a local node-side service, it must also enforce:
+
+1. loopback bind by default for the current HTTP or HTTPS RPC deployment model
+2. explicit operator opt-in before exposing the RPC listener beyond the local machine
+3. TLS, authentication, or equivalent network controls when exposure beyond the local machine is
+   intentional
+4. admin or debug RPC surfaces disabled, removed, or isolated from the endpoint consumed by
+   `starcoin-node-cli`
+5. RPC credentials stored in protected configuration or environment injection rather than command
+   lines
 
 ## Observability Requirements
 
-The deployment model requires:
+The runtime model requires:
 
-- daemon logs
-- native host bridge logs
-- extension connection status
-- diagnostic command output from `starmaskctl doctor`
+- per-process logs for `starmaskd`, each local-account agent, and any managed node-side service
+- daemon diagnostics through `starmaskctl doctor`
+- clear wallet-instance registration state
+- clear distinction between:
+  - daemon ready but no wallet backend connected
+  - wallet connected but locked
+  - node endpoint unavailable
+  - node endpoint available but chain pins invalid
 
-The first implementation should prefer simple local diagnostics over remote telemetry.
+## Related Documents
 
-## Implementation Gates
-
-The deployment model is considered ready only when the following follow-up documents exist:
-
-1. `starmask-runtime/docs/daemon-protocol.md`
-2. `starmask-runtime/docs/native-messaging-contract.md`
-3. `starmask-runtime/docs/persistence-and-recovery.md`
-4. `starmask-runtime/docs/configuration.md`
-
-This document defines where components live and how they relate. It does not define exact wire messages or database layout.
+- `docs/architecture/host-integration.md`
+- `docs/architecture/runtime-supervision-tui.md`
+- `starcoin-node/docs/deployment-model.md`
+- `starmask-runtime/docs/configuration.md`
+- `starmask-runtime/docs/wallet-backend-configuration.md`
