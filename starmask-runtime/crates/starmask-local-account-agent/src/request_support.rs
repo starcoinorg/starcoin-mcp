@@ -7,8 +7,8 @@ use starcoin_types::{
     account_address::AccountAddress, sign_message::SigningMessage, transaction::RawUserTransaction,
 };
 use starmask_types::{
-    BackendAccount, MessageFormat, PulledRequest, RejectReasonCode, RequestKind, RequestResult,
-    WalletCapability,
+    BackendAccount, Curve, MessageFormat, PulledRequest, RejectReasonCode, RequestKind,
+    RequestResult, WalletCapability,
 };
 
 #[derive(Clone, Debug)]
@@ -72,7 +72,52 @@ pub(crate) fn fulfill_request(
     match request.kind {
         RequestKind::SignTransaction => sign_transaction(manager, request, account_address),
         RequestKind::SignMessage => sign_message(manager, request, account_address),
+        RequestKind::CreateAccount => Err(RequestRejection {
+            reason_code: RejectReasonCode::UnsupportedOperation,
+            message: Some(
+                "CreateAccount requests must use the dedicated create-account flow".to_owned(),
+            ),
+        }),
     }
+}
+
+pub(crate) fn create_account(
+    manager: &AccountManager,
+    password: &str,
+) -> std::result::Result<RequestResult, RequestRejection> {
+    if password.is_empty() {
+        return Err(RequestRejection {
+            reason_code: RejectReasonCode::BackendPolicyBlocked,
+            message: Some("Account password cannot be empty".to_owned()),
+        });
+    }
+    let account = manager
+        .create_account(password)
+        .map_err(|error| RequestRejection {
+            reason_code: RejectReasonCode::BackendUnavailable,
+            message: Some(format!("Failed to create local account: {error}")),
+        })?;
+    let account_info = manager
+        .account_info(*account.address())
+        .map_err(|error| RequestRejection {
+            reason_code: RejectReasonCode::BackendUnavailable,
+            message: Some(format!("Failed to load created account: {error}")),
+        })?
+        .ok_or_else(|| RequestRejection {
+            reason_code: RejectReasonCode::BackendUnavailable,
+            message: Some("Created account was not visible after creation".to_owned()),
+        })?;
+
+    Ok(RequestResult::CreatedAccount {
+        address: account_info.address.to_string(),
+        public_key: format!(
+            "0x{}",
+            hex::encode(account_info.public_key.public_key_bytes())
+        ),
+        curve: Curve::Ed25519,
+        is_default: account_info.is_default,
+        is_locked: account_info.is_locked,
+    })
 }
 
 fn sign_transaction(

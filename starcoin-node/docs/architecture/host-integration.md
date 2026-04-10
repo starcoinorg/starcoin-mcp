@@ -86,10 +86,12 @@ The host must retain at least these fields from the preparation result:
 - `chain_context`
 - `simulation_status`
 - `simulation`
+- `execution_facts`
 - `next_action`
 
-If preparation fails with `invalid_chain_context`, `simulation_failed`, or `rpc_unavailable`, the
-host must not create a wallet signing request from stale or partial data.
+If preparation fails with `invalid_address`, `invalid_asset`, `invalid_amount`,
+`invalid_chain_context`, `simulation_failed`, or `rpc_unavailable`, the host must not create a
+wallet signing request from stale or partial data.
 
 ### Phase B.5: Preflight, Risk, And Preview
 
@@ -108,7 +110,7 @@ The host should derive or check:
 - sender balance for the selected token
 - gas-token balance when it differs from the transferred token
 - prepared sequence number versus `next_sequence_number_hint`
-- fee estimate from `prepare_transfer.raw_txn` and `prepare_transfer.simulation.gas_used`
+- fee estimate from `prepare_transfer.execution_facts` and `prepare_transfer.simulation.gas_used`
 - latest chain identity versus `prepare_transfer.chain_context`
 
 The host should then:

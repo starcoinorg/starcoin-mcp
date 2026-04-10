@@ -30,6 +30,15 @@ pub struct CreateSignMessageCommand {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreateAccountCommand {
+    pub client_request_id: ClientRequestId,
+    pub wallet_instance_id: WalletInstanceId,
+    pub display_hint: Option<String>,
+    pub client_context: Option<String>,
+    pub ttl_seconds: Option<DurationSeconds>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegisterExtensionCommand {
     pub wallet_instance_id: WalletInstanceId,
     pub extension_id: String,
@@ -126,6 +135,7 @@ pub enum CoordinatorCommand {
         address: String,
         wallet_instance_id: Option<WalletInstanceId>,
     },
+    CreateAccount(CreateAccountCommand),
     CreateSignTransaction(CreateSignTransactionCommand),
     CreateSignMessage(CreateSignMessageCommand),
     GetRequestStatus {

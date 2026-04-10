@@ -25,7 +25,8 @@ use uuid::Uuid;
 use crate::{
     client::{DaemonRpc, LocalDaemonClient, daemon_protocol_version},
     request_support::{
-        RequestRejection, account_info_to_backend_account, fulfill_request, parse_account_address,
+        RequestRejection, account_info_to_backend_account, create_account, fulfill_request,
+        parse_account_address,
     },
     tty_prompt::{ApprovalPrompt, TtyApprovalPrompt},
 };
@@ -190,11 +191,15 @@ impl LocalAccountAgent {
                 WalletCapability::GetPublicKey,
                 WalletCapability::SignMessage,
                 WalletCapability::SignTransaction,
+                WalletCapability::CreateAccount,
             ]
         } else if accounts.iter().any(|account| account.public_key.is_some()) {
-            vec![WalletCapability::GetPublicKey]
+            vec![
+                WalletCapability::GetPublicKey,
+                WalletCapability::CreateAccount,
+            ]
         } else {
-            Vec::new()
+            vec![WalletCapability::CreateAccount]
         };
 
         Ok(Snapshot {
@@ -214,6 +219,9 @@ impl LocalAccountAgent {
     }
 
     fn handle_request(&mut self, request: PulledRequest, snapshot: &Snapshot) -> Result<()> {
+        if request.kind == starmask_types::RequestKind::CreateAccount {
+            return self.handle_create_account_request(request, snapshot);
+        }
         let account_address = parse_account_address(&request.account_address)?;
         let active_presentation_id = request.presentation_id.as_ref();
         let account_info = match self.load_signing_account_info(account_address) {
@@ -281,6 +289,55 @@ impl LocalAccountAgent {
         }
     }
 
+    fn handle_create_account_request(
+        &mut self,
+        request: PulledRequest,
+        snapshot: &Snapshot,
+    ) -> Result<()> {
+        let presentation_id = request
+            .presentation_id
+            .clone()
+            .unwrap_or_else(new_presentation_id);
+        self.client
+            .request_presented(starmask_types::RequestPresentedParams {
+                protocol_version: daemon_protocol_version(),
+                wallet_instance_id: self.wallet_instance_id.clone(),
+                request_id: request.request_id.clone(),
+                delivery_lease_id: request.delivery_lease_id.clone(),
+                presentation_id: presentation_id.clone(),
+            })?;
+        self.push_presented_request(request.request_id.clone())?;
+
+        let result = (|| {
+            let approval = self
+                .prompt
+                .prompt_for_create_account(&request, &snapshot.capabilities)?;
+            if !approval.approved() {
+                return Err(RequestRejection {
+                    reason_code: RejectReasonCode::RequestRejected,
+                    message: Some("User rejected the account-creation request".to_owned()),
+                });
+            }
+            let password = approval.password().ok_or_else(|| RequestRejection {
+                reason_code: RejectReasonCode::BackendPolicyBlocked,
+                message: Some("Account creation requires a password".to_owned()),
+            })?;
+            create_account(&self.manager, password)
+        })();
+
+        self.pop_presented_request(&request.request_id)?;
+
+        match result {
+            Ok(result) => self.resolve_request(&request, &presentation_id, result),
+            Err(rejection) => self.reject_request(
+                &request,
+                Some(&presentation_id),
+                rejection.reason_code,
+                rejection.message,
+            ),
+        }
+    }
+
     fn load_signing_account_info(
         &self,
         account_address: starcoin_types::account_address::AccountAddress,
@@ -324,6 +381,11 @@ impl LocalAccountAgent {
                 result_kind: ResultKind::SignedTransaction,
                 signed_txn_bcs_hex: Some(signed_txn_bcs_hex),
                 signature: None,
+                created_account_address: None,
+                created_account_public_key: None,
+                created_account_curve: None,
+                created_account_is_default: None,
+                created_account_is_locked: None,
             },
             RequestResult::SignedMessage { signature } => RequestResolveParams {
                 protocol_version: daemon_protocol_version(),
@@ -333,6 +395,31 @@ impl LocalAccountAgent {
                 result_kind: ResultKind::SignedMessage,
                 signed_txn_bcs_hex: None,
                 signature: Some(signature),
+                created_account_address: None,
+                created_account_public_key: None,
+                created_account_curve: None,
+                created_account_is_default: None,
+                created_account_is_locked: None,
+            },
+            RequestResult::CreatedAccount {
+                address,
+                public_key,
+                curve,
+                is_default,
+                is_locked,
+            } => RequestResolveParams {
+                protocol_version: daemon_protocol_version(),
+                wallet_instance_id: self.wallet_instance_id.clone(),
+                request_id: request.request_id.clone(),
+                presentation_id: presentation_id.clone(),
+                result_kind: ResultKind::CreatedAccount,
+                signed_txn_bcs_hex: None,
+                signature: None,
+                created_account_address: Some(address),
+                created_account_public_key: Some(public_key),
+                created_account_curve: Some(curve),
+                created_account_is_default: Some(is_default),
+                created_account_is_locked: Some(is_locked),
             },
         };
         self.client.request_resolve(params)?;
@@ -643,6 +730,14 @@ mod tests {
         ) -> std::result::Result<PromptApproval, RequestRejection> {
             self.response.lock().unwrap().clone()
         }
+
+        fn prompt_for_create_account(
+            &self,
+            _request: &PulledRequest,
+            _capabilities: &[WalletCapability],
+        ) -> std::result::Result<PromptApproval, RequestRejection> {
+            self.response.lock().unwrap().clone()
+        }
     }
 
     struct TestHarness {
@@ -744,6 +839,26 @@ mod tests {
                 message_format: None,
             }
         }
+
+        fn create_account_request(&self) -> PulledRequest {
+            PulledRequest {
+                request_id: RequestId::new("req-create-account").unwrap(),
+                client_request_id: ClientRequestId::new("client-create-account").unwrap(),
+                kind: RequestKind::CreateAccount,
+                account_address: String::new(),
+                payload_hash: PayloadHash::new("payload-create-account").unwrap(),
+                display_hint: Some("Create account".to_owned()),
+                client_context: Some("phase2-test".to_owned()),
+                resume_required: false,
+                delivery_lease_id: Some(DeliveryLeaseId::new("lease-create-account").unwrap()),
+                lease_expires_at: None,
+                presentation_id: None,
+                presentation_expires_at: None,
+                raw_txn_bcs_hex: None,
+                message: None,
+                message_format: None,
+            }
+        }
     }
 
     fn test_config(
@@ -795,6 +910,7 @@ mod tests {
                 WalletCapability::GetPublicKey,
                 WalletCapability::SignMessage,
                 WalletCapability::SignTransaction,
+                WalletCapability::CreateAccount,
             ]
         );
         assert_eq!(snapshot.accounts.len(), 1);
@@ -843,6 +959,29 @@ mod tests {
         let signed_message = SignedMessage::from_str(&signature).unwrap();
         signed_message.check_signature().unwrap();
         signed_message.check_account(ChainId::test(), None).unwrap();
+    }
+
+    #[test]
+    fn handle_request_resolves_created_account_for_local_backend() {
+        let mut harness = TestHarness::new(false, StubPrompt::approve(Some("new-account")));
+        let request = harness.create_account_request();
+        let snapshot = harness.snapshot();
+
+        harness.agent.handle_request(request, &snapshot).unwrap();
+
+        let state = harness.client.snapshot();
+        assert_eq!(state.presented.len(), 1);
+        assert_eq!(state.resolved.len(), 1);
+        assert!(state.rejected.is_empty());
+        assert_eq!(state.resolved[0].result_kind, ResultKind::CreatedAccount);
+        assert!(state.resolved[0].created_account_address.is_some());
+        assert!(state.resolved[0].created_account_public_key.is_some());
+        assert_eq!(
+            state.resolved[0].created_account_curve,
+            Some(starmask_types::Curve::Ed25519)
+        );
+        assert_eq!(state.resolved[0].created_account_is_default, Some(false));
+        assert_eq!(state.resolved[0].created_account_is_locked, Some(true));
     }
 
     #[test]
@@ -1016,7 +1155,13 @@ mod tests {
         let snapshot = agent.snapshot().unwrap();
 
         assert_eq!(snapshot.lock_state, LockState::Unknown);
-        assert_eq!(snapshot.capabilities, vec![WalletCapability::GetPublicKey]);
+        assert_eq!(
+            snapshot.capabilities,
+            vec![
+                WalletCapability::GetPublicKey,
+                WalletCapability::CreateAccount
+            ]
+        );
         assert_eq!(snapshot.accounts.len(), 1);
         assert!(snapshot.accounts[0].is_read_only);
 

@@ -5,7 +5,7 @@ use crate::{
     ids::{
         ClientRequestId, DeliveryLeaseId, PayloadHash, PresentationId, RequestId, WalletInstanceId,
     },
-    lifecycle::{LockState, MessageFormat, RejectReasonCode, RequestKind, ResultKind},
+    lifecycle::{Curve, LockState, MessageFormat, RejectReasonCode, RequestKind, ResultKind},
     time::TimestampMs,
 };
 
@@ -77,6 +77,16 @@ pub enum NativeBridgeRequest {
         signed_txn_bcs_hex: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         signature: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        created_account_address: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        created_account_public_key: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        created_account_curve: Option<Curve>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        created_account_is_default: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        created_account_is_locked: Option<bool>,
     },
     #[serde(rename = "request.reject")]
     RequestReject {

@@ -113,14 +113,15 @@ the transfer intent first, then use the scripts for deterministic execution.
   - `transaction_summary`
   - `simulation_status`
   - `simulation`
+  - `execution_facts`
   - `next_action`
-- If preparation fails with `simulation_failed`, `invalid_chain_context`, or `rpc_unavailable`, stop and explain the failure instead of creating a signing request.
+- If preparation fails with `invalid_address`, `invalid_asset`, `invalid_amount`, `simulation_failed`, `invalid_chain_context`, or `rpc_unavailable`, stop and explain the failure instead of creating a signing request.
 
 ### 5. Run Host Preflight
 
 - Query `get_account_overview` for the sender before signing so the host can see balance and `next_sequence_number_hint`.
 - Query `get_account_overview` for the receiver so the host can see whether the account already exists on-chain.
-- Derive fee estimates from `prepare_transfer.raw_txn` and `prepare_transfer.simulation.gas_used` when simulation succeeded.
+- Derive nonce, gas, and fee estimates from `prepare_transfer.execution_facts`.
 - Compare the latest `chain_status` with `prepare_transfer.chain_context`.
 - Generate risk labels for at least:
   - RPC unavailable or degraded

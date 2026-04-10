@@ -211,7 +211,7 @@ Resolution rules:
 
 ### Idempotency rule
 
-Both request-creation methods require:
+All request-creation methods require:
 
 - `client_request_id`
 
@@ -220,6 +220,32 @@ The daemon must enforce:
 1. replaying the same `client_request_id` with the same payload returns the original request
 2. replaying the same `client_request_id` with a different payload fails with
    `idempotency_key_conflict`
+
+### `request.createAccount`
+
+Params:
+
+- `client_request_id`
+- `wallet_instance_id`
+- `display_hint`: optional
+- `client_context`: optional
+- `ttl_seconds`: optional
+
+Result:
+
+- `request_id`
+- `client_request_id`
+- `kind`
+- `status`
+- `wallet_instance_id`
+- `created_at`
+- `expires_at`
+
+Routing rules:
+
+1. `wallet_instance_id` is required
+2. the selected backend must advertise `create_account`
+3. any password prompt stays inside the wallet-side approval surface
 
 ### `request.createSignTransaction`
 
@@ -289,6 +315,17 @@ Result:
 - `error_code`
 - `error_message`
 - `result`
+
+`result` currently supports:
+
+- `signed_transaction`
+- `signed_message`
+- `created_account`
+  - `address`
+  - `public_key`
+  - `curve`
+  - `is_default`
+  - `is_locked`
 
 ### `request.cancel`
 
@@ -383,15 +420,18 @@ These methods drive the extension-side approval lifecycle and are further constr
 
 ## 10. Routing and Failure Rules
 
-1. if `wallet_instance_id` is supplied, only that instance may satisfy the request
-2. if `wallet_instance_id` is omitted and exactly one wallet instance exposes the account, the
-   daemon may auto-route
-3. if multiple wallet instances match, the daemon must fail with `wallet_selection_required`
-4. if the target wallet is offline, the daemon returns `wallet_unavailable`
-5. if the target wallet is locked and cannot perform backend-local unlock for the requested signing
+1. `request.createAccount` must name `wallet_instance_id` explicitly
+2. if `wallet_instance_id` is supplied, only that instance may satisfy the request
+3. if `wallet_instance_id` is omitted and exactly one wallet instance exposes the account, the
+   daemon may auto-route for account-bound signing requests
+4. if multiple wallet instances match, the daemon must fail with `wallet_selection_required`
+5. if the target wallet is offline, the daemon returns `wallet_unavailable`
+6. if the target wallet is locked and cannot perform backend-local unlock for the requested signing
    flow, the daemon returns `wallet_locked`
-6. if the target wallet is locked but advertises backend-local `unlock` capability, the daemon may
+7. if the target wallet is locked but advertises backend-local `unlock` capability, the daemon may
    still create the signing request and the backend performs approval and password entry locally
+8. `request.createAccount` requires backend capability `create_account` and does not introduce any
+   password-bearing daemon parameter
 
 ## 11. Error Codes
 
@@ -414,6 +454,7 @@ Transport failures remain transport failures and must not be projected as fake r
 This client-facing `v1` surface still does not define:
 
 - `request.createUnlock`
+- synchronous `wallet.createAccount`
 - any password-bearing daemon method
 - backend-kind metadata in `wallet.status` or `wallet.listInstances`
 

@@ -210,6 +210,7 @@ The host-side workflow now has two layers:
   - if any field is missing, ask one precise follow-up question or list concrete wallet candidates
 - script-level deterministic execution
   - prepare the transaction
+  - consume typed `execution_facts` from preparation output instead of scraping transaction-view JSON for nonce and gas details
   - query `node_health` and `get_account_overview`
   - derive nonce, balance, fee estimate, and chain-context checks
   - generate risk labels and a transaction preview before wallet signing

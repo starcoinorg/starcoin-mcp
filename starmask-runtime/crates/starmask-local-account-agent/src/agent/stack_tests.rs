@@ -71,6 +71,14 @@ impl ApprovalPrompt for StubPrompt {
     ) -> std::result::Result<PromptApproval, RequestRejection> {
         Ok(self.response.clone())
     }
+
+    fn prompt_for_create_account(
+        &self,
+        _request: &PulledRequest,
+        _capabilities: &[WalletCapability],
+    ) -> std::result::Result<PromptApproval, RequestRejection> {
+        Ok(self.response.clone())
+    }
 }
 
 struct RealStackHarness {

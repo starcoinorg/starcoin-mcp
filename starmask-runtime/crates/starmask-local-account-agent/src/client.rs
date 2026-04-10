@@ -245,6 +245,7 @@ mod tests {
                     WalletCapability::GetPublicKey,
                     WalletCapability::SignMessage,
                     WalletCapability::SignTransaction,
+                    WalletCapability::CreateAccount,
                 ],
                 backend_metadata: serde_json::json!({"account_provider_kind": "local"}),
                 accounts: Vec::new(),
@@ -265,7 +266,7 @@ mod tests {
                 "approval_surface": "tty_prompt",
                 "instance_label": "Local Main",
                 "lock_state": "locked",
-                "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction"],
+                "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction", "create_account"],
                 "backend_metadata": {"account_provider_kind": "local"},
                 "accounts": [],
             })

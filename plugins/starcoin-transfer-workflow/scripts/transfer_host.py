@@ -77,6 +77,12 @@ def coerce_int(value: Any) -> int | None:
     return None
 
 
+def prefer_int(primary: int | None, fallback: int | None) -> int | None:
+    if primary is not None:
+        return primary
+    return fallback
+
+
 def extract_nested_int(value: Any, *paths: tuple[str, ...]) -> int | None:
     for path in paths:
         current = value
@@ -197,13 +203,26 @@ def format_raw_units(value: int | None) -> str:
     return f"{value} raw units"
 
 
+def execution_facts(session: TransferSession) -> dict[str, Any]:
+    value = session.prepare_result.get("execution_facts")
+    return value if isinstance(value, dict) else {}
+
+
 def selected_token_code(session: TransferSession) -> str:
+    facts = execution_facts(session)
+    transfer_token_code = facts.get("transfer_token_code")
+    if isinstance(transfer_token_code, str) and transfer_token_code.strip():
+        return normalize_token_code(transfer_token_code)
     transaction_summary = session.prepare_result.get("transaction_summary") or {}
     token_code = transaction_summary.get("token_code") or session.amount.token_code
     return normalize_token_code(str(token_code))
 
 
 def selected_gas_token_code(session: TransferSession) -> str:
+    facts = execution_facts(session)
+    gas_token = facts.get("gas_token_code")
+    if isinstance(gas_token, str) and gas_token.strip():
+        return normalize_token_code(gas_token)
     raw_txn = session.prepare_result.get("raw_txn") or {}
     gas_token = extract_nested_str(
         raw_txn,
@@ -240,35 +259,45 @@ def analyze_preflight(
     raw_amount = int(session.amount.raw_amount)
     token_code = selected_token_code(session)
     gas_token_code = selected_gas_token_code(session)
+    facts = execution_facts(session)
     raw_txn = session.prepare_result.get("raw_txn") or {}
     simulation = session.prepare_result.get("simulation") or {}
     sender_visible = sender_visible_in_wallet(session.wallet_accounts, session.sender)
-    prepared_sequence_number = extract_nested_int(
-        raw_txn,
-        ("sequence_number",),
-        ("sequenceNumber",),
+    prepared_sequence_number = prefer_int(
+        coerce_int(facts.get("sequence_number")),
+        extract_nested_int(
+            raw_txn,
+            ("sequence_number",),
+            ("sequenceNumber",),
+        ),
     )
     next_sequence_number_hint = coerce_int(sender_overview.get("next_sequence_number_hint"))
-    gas_unit_price = extract_nested_int(
-        raw_txn,
-        ("gas_unit_price",),
-        ("gasUnitPrice",),
+    gas_unit_price = prefer_int(
+        coerce_int(facts.get("gas_unit_price")),
+        extract_nested_int(
+            raw_txn,
+            ("gas_unit_price",),
+            ("gasUnitPrice",),
+        ),
     )
-    max_gas_amount = extract_nested_int(
-        raw_txn,
-        ("max_gas_amount",),
-        ("maxGasAmount",),
+    max_gas_amount = prefer_int(
+        coerce_int(facts.get("max_gas_amount")),
+        extract_nested_int(
+            raw_txn,
+            ("max_gas_amount",),
+            ("maxGasAmount",),
+        ),
     )
     simulation_gas_used = extract_nested_int(
         simulation,
         ("gas_used",),
         ("gasUsed",),
     )
-    estimated_network_fee = None
-    if gas_unit_price is not None and simulation_gas_used is not None:
+    estimated_network_fee = coerce_int(facts.get("estimated_network_fee"))
+    if estimated_network_fee is None and gas_unit_price is not None and simulation_gas_used is not None:
         estimated_network_fee = gas_unit_price * simulation_gas_used
-    max_network_fee = None
-    if gas_unit_price is not None and max_gas_amount is not None:
+    max_network_fee = coerce_int(facts.get("estimated_max_network_fee"))
+    if max_network_fee is None and gas_unit_price is not None and max_gas_amount is not None:
         max_network_fee = gas_unit_price * max_gas_amount
 
     balances = sender_overview.get("balances") or []

@@ -135,8 +135,20 @@ Example funding from the dev node side:
 starcoin -n dev -d <repo-root>/.runtime/devstack dev get-coin <sender-address>
 ```
 
-Those `starcoin` CLI examples are only for wallet bootstrap and local funding. The transfer flow
-itself should use the script-driven `starmaskd` + `starcoin-node-cli` path.
+If the wallet runtime is already up, bootstrap can also stay inside the daemon request flow:
+
+```bash
+python3 ./scripts/starmaskd_client.py --wallet-runtime-dir $HOME/.runtime/wallet-runtime \
+  call wallet_create_account <<'JSON'
+{"client_request_id":"bootstrap-account-1","wallet_instance_id":"local-main","display_hint":"Bootstrap local account","client_context":"codex"}
+JSON
+```
+
+Then poll `wallet_get_request_status` until the request reaches `approved` and read
+`result.address` from the `created_account` payload.
+
+Those `starcoin` CLI examples are still useful for local funding. The transfer flow itself should
+use the script-driven `starmaskd` + `starcoin-node-cli` path.
 
 ## Optional Environment Overrides
 
@@ -291,7 +303,7 @@ intermediate state and exits non-zero instead of treating it as a completed succ
 - `node_health` validates that the RPC path is currently usable
 - `get_account_overview` provides sender balance, token visibility, and `next_sequence_number_hint`
 - the preview compares the latest `chain_status` with the prepared `chain_context`
-- fee estimates come from `prepare_transfer.raw_txn` plus `simulation.gas_used`
+- fee and nonce context come from `prepare_transfer.execution_facts`
 - blocking risks stop the flow before `request.createSignTransaction`
 
 By default the audit file is written to:

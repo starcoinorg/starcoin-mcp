@@ -361,6 +361,26 @@ pub struct SimulationResult {
 }
 
 #[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
+pub struct PreparedExecutionFacts {
+    pub sender: String,
+    pub sequence_number: u64,
+    pub max_gas_amount: u64,
+    pub gas_unit_price: u64,
+    pub gas_token_code: String,
+    pub expiration_timestamp_secs: u64,
+    pub chain_id: u8,
+    pub estimated_max_network_fee: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_network_fee: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transfer_receiver: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transfer_amount: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub transfer_token_code: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, JsonSchema, Serialize)]
 pub struct PreparationResult {
     pub transaction_kind: TransactionKind,
     pub raw_txn_bcs_hex: String,
@@ -373,6 +393,7 @@ pub struct PreparationResult {
     pub simulation_status: SimulationStatus,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub simulation: Option<SimulationResult>,
+    pub execution_facts: PreparedExecutionFacts,
     pub next_action: NextAction,
 }
 

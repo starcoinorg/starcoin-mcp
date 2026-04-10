@@ -443,9 +443,19 @@ Prepare an unsigned transfer transaction.
 - `transaction_kind`: `transfer`
 - `simulation_status`
 - `simulation`
+- `execution_facts`
+  - resolved sender, nonce, gas settings, gas token, expiration, and fee estimates
+  - for transfers, also includes receiver, normalized transfer amount, and normalized transfer token code
 - `next_action`
   - usually `sign_transaction`
   - `get_public_key_then_simulate_or_sign` when simulation could not run because the public key was not provided
+
+Preparation must reject malformed transfer inputs with specific validation errors instead of
+overloading generic payload failures:
+
+- `invalid_address`
+- `invalid_asset`
+- `invalid_amount`
 
 #### `prepare_contract_call`
 
@@ -580,6 +590,7 @@ All preparation tools should return:
 - `gas_unit_price_source`
 - `simulation_status`
 - simulation output when available
+- `execution_facts`, which should expose the typed execution values that the host needs for preview and preflight without re-parsing `raw_txn`
 - a `next_action` field indicating the expected wallet step
 
 If `sender_public_key` is unavailable during preparation:

@@ -260,6 +260,7 @@ impl WalletBackendConfig {
                 WalletCapability::GetPublicKey,
                 WalletCapability::SignMessage,
                 WalletCapability::SignTransaction,
+                WalletCapability::CreateAccount,
             ],
         }
     }

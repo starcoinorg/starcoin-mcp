@@ -67,7 +67,9 @@ The implementation must demonstrate:
 4. gas-price derivation documents and returns the selected source
 5. preparation with `sender_public_key` attempts simulation before returning
 6. preparation without `sender_public_key` returns `simulation_status = skipped_missing_public_key`
-7. `simulate_raw_transaction` is the canonical follow-up after skipped simulation
+7. preparation returns typed `execution_facts` so the host can render preview and fee context without scraping `raw_txn`
+8. malformed transfer inputs map to specific validation errors such as `invalid_address`, `invalid_asset`, and `invalid_amount`
+9. `simulate_raw_transaction` is the canonical follow-up after skipped simulation
 
 ## Submission and Reconciliation Acceptance
 

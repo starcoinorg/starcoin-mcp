@@ -10,6 +10,7 @@
     "chain_context",
     "prepared_at",
     "simulation_status",
+    "execution_facts",
     "next_action"
   ],
   "properties": {
@@ -94,6 +95,58 @@
         "object",
         "null"
       ]
+    },
+    "execution_facts": {
+      "type": "object",
+      "required": [
+        "sender",
+        "sequence_number",
+        "max_gas_amount",
+        "gas_unit_price",
+        "gas_token_code",
+        "expiration_timestamp_secs",
+        "chain_id",
+        "estimated_max_network_fee"
+      ],
+      "properties": {
+        "sender": {
+          "type": "string"
+        },
+        "sequence_number": {
+          "type": "integer"
+        },
+        "max_gas_amount": {
+          "type": "integer"
+        },
+        "gas_unit_price": {
+          "type": "integer"
+        },
+        "gas_token_code": {
+          "type": "string"
+        },
+        "expiration_timestamp_secs": {
+          "type": "integer"
+        },
+        "chain_id": {
+          "type": "integer"
+        },
+        "estimated_max_network_fee": {
+          "type": "string"
+        },
+        "estimated_network_fee": {
+          "type": "string"
+        },
+        "transfer_receiver": {
+          "type": "string"
+        },
+        "transfer_amount": {
+          "type": "string"
+        },
+        "transfer_token_code": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
     },
     "next_action": {
       "type": "string",

@@ -27,7 +27,9 @@ pub use native_bridge::{
     NATIVE_BRIDGE_MAX_INBOUND_BYTES, NATIVE_BRIDGE_MAX_OUTBOUND_BYTES,
     NATIVE_BRIDGE_PROTOCOL_VERSION, NativeBridgeAccount, NativeBridgeRequest, NativeBridgeResponse,
 };
-pub use payload::{MessagePayload, RequestPayload, RequestResult, TransactionPayload};
+pub use payload::{
+    CreateAccountPayload, MessagePayload, RequestPayload, RequestResult, TransactionPayload,
+};
 pub use records::{
     DeliveryLease, PresentationLease, RequestRecord, WalletAccountRecord, WalletInstanceRecord,
 };
@@ -50,6 +52,10 @@ mod tests {
         assert_eq!(
             RequestKind::SignMessage.expected_result_kind(),
             ResultKind::SignedMessage
+        );
+        assert_eq!(
+            RequestKind::CreateAccount.expected_result_kind(),
+            ResultKind::CreatedAccount
         );
     }
 

@@ -133,6 +133,11 @@ where
             result_kind,
             signed_txn_bcs_hex,
             signature,
+            created_account_address,
+            created_account_public_key,
+            created_account_curve,
+            created_account_is_default,
+            created_account_is_locked,
             ..
         } => client
             .request_resolve(RequestResolveParams {
@@ -143,6 +148,11 @@ where
                 result_kind,
                 signed_txn_bcs_hex,
                 signature,
+                created_account_address,
+                created_account_public_key,
+                created_account_curve,
+                created_account_is_default,
+                created_account_is_locked,
             })
             .map(|_| NativeBridgeResponse::ExtensionAck {
                 reply_to: reply_to.clone(),
@@ -434,6 +444,11 @@ mod tests {
                 result_kind: ResultKind::SignedMessage,
                 signed_txn_bcs_hex: None,
                 signature: Some("0xsig".to_owned()),
+                created_account_address: None,
+                created_account_public_key: None,
+                created_account_curve: None,
+                created_account_is_default: None,
+                created_account_is_locked: None,
             },
         );
 
@@ -454,6 +469,11 @@ mod tests {
                 result_kind: ResultKind::SignedMessage,
                 signed_txn_bcs_hex: None,
                 signature: Some("0xsig".to_owned()),
+                created_account_address: None,
+                created_account_public_key: None,
+                created_account_curve: None,
+                created_account_is_default: None,
+                created_account_is_locked: None,
             }
         );
     }

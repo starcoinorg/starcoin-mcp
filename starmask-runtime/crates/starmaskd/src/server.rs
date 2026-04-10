@@ -16,23 +16,24 @@ use tracing::{debug, warn};
 use starmask_core::{
     CoordinatorCommand, CoordinatorResponse,
     commands::{
-        CreateSignMessageCommand, CreateSignTransactionCommand, HeartbeatBackendCommand,
-        HeartbeatExtensionCommand, MarkRequestPresentedCommand, RegisterBackendCommand,
-        RejectRequestCommand, ResolveRequestCommand, UpdateBackendAccountsCommand,
-        UpdateExtensionAccountsCommand,
+        CreateAccountCommand, CreateSignMessageCommand, CreateSignTransactionCommand,
+        HeartbeatBackendCommand, HeartbeatExtensionCommand, MarkRequestPresentedCommand,
+        RegisterBackendCommand, RejectRequestCommand, ResolveRequestCommand,
+        UpdateBackendAccountsCommand, UpdateExtensionAccountsCommand,
     },
 };
 use starmask_types::{
     AckResult, BackendHeartbeatParams, BackendRegisterParams, BackendRegisteredResult,
-    BackendUpdateAccountsParams, CancelRequestParams, Channel, CreateSignMessageParams,
-    CreateSignTransactionParams, DAEMON_PROTOCOL_VERSION, ExtensionHeartbeatParams,
-    ExtensionRegisterParams, ExtensionRegisteredResult, ExtensionUpdateAccountsParams,
-    GENERIC_BACKEND_PROTOCOL_VERSION, GetRequestStatusParams, JsonRpcErrorResponse, JsonRpcRequest,
-    JsonRpcResponse, JsonRpcSuccess, NativeBridgeAccount, RequestHasAvailableParams,
-    RequestPresentedParams, RequestPullNextParams, RequestRejectParams, RequestResolveParams,
-    RequestResult, ResultKind, SharedError, SharedErrorCode, SystemGetInfoParams, SystemPingParams,
-    TimestampMs, WalletAccountRecord, WalletCapability, WalletGetPublicKeyParams,
-    WalletListAccountsParams, WalletListInstancesParams, WalletStatusParams,
+    BackendUpdateAccountsParams, CancelRequestParams, Channel, CreateAccountParams,
+    CreateSignMessageParams, CreateSignTransactionParams, DAEMON_PROTOCOL_VERSION,
+    ExtensionHeartbeatParams, ExtensionRegisterParams, ExtensionRegisteredResult,
+    ExtensionUpdateAccountsParams, GENERIC_BACKEND_PROTOCOL_VERSION, GetRequestStatusParams,
+    JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse, JsonRpcSuccess, NativeBridgeAccount,
+    RequestHasAvailableParams, RequestPresentedParams, RequestPullNextParams, RequestRejectParams,
+    RequestResolveParams, RequestResult, ResultKind, SharedError, SharedErrorCode,
+    SystemGetInfoParams, SystemPingParams, TimestampMs, WalletAccountRecord, WalletCapability,
+    WalletGetPublicKeyParams, WalletListAccountsParams, WalletListInstancesParams,
+    WalletStatusParams,
 };
 
 use crate::{
@@ -223,6 +224,25 @@ async fn dispatch_request(
                     .await,
                 |response| match response {
                     CoordinatorResponse::WalletPublicKey(result) => Ok(result),
+                    other => Err(unexpected_response(other)),
+                },
+            )?)
+            .map_err(|error| error_response(None, error))?
+        }
+        "request.createAccount" => {
+            let params = decode_protocol::<CreateAccountParams>(&id, &request.params)?;
+            serde_json::to_value(expect_response(
+                handle
+                    .dispatch(CoordinatorCommand::CreateAccount(CreateAccountCommand {
+                        client_request_id: params.client_request_id,
+                        wallet_instance_id: params.wallet_instance_id,
+                        display_hint: params.display_hint,
+                        client_context: params.client_context,
+                        ttl_seconds: params.ttl_seconds,
+                    }))
+                    .await,
+                |response| match response {
+                    CoordinatorResponse::RequestCreated(result) => Ok(result),
                     other => Err(unexpected_response(other)),
                 },
             )?)
@@ -800,6 +820,7 @@ impl_has_protocol_version!(
     BackendRegisterParams,
     BackendUpdateAccountsParams,
     CancelRequestParams,
+    CreateAccountParams,
     CreateSignMessageParams,
     CreateSignTransactionParams,
     ExtensionHeartbeatParams,
@@ -885,6 +906,25 @@ fn request_result_from_params(params: &RequestResolveParams) -> Result<RequestRe
                 .context("signature is required for signed_message")?;
             Ok(RequestResult::SignedMessage { signature })
         }
+        ResultKind::CreatedAccount => Ok(RequestResult::CreatedAccount {
+            address: params
+                .created_account_address
+                .clone()
+                .context("created_account_address is required for created_account")?,
+            public_key: params
+                .created_account_public_key
+                .clone()
+                .context("created_account_public_key is required for created_account")?,
+            curve: params
+                .created_account_curve
+                .context("created_account_curve is required for created_account")?,
+            is_default: params
+                .created_account_is_default
+                .context("created_account_is_default is required for created_account")?,
+            is_locked: params
+                .created_account_is_locked
+                .context("created_account_is_locked is required for created_account")?,
+        }),
         ResultKind::None => anyhow::bail!("result_kind none is not valid for request.resolve"),
     }
 }

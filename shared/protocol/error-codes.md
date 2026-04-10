@@ -49,6 +49,12 @@ Subprojects may define additional project-local errors, but shared errors should
   - The backing RPC service is unavailable or unhealthy.
 - `invalid_chain_context`
   - The requested operation conflicts with the active network or chain configuration.
+- `invalid_address`
+  - A caller-supplied address is malformed for the requested operation.
+- `invalid_asset`
+  - A caller-supplied asset or token identifier is malformed or unsupported for the requested operation.
+- `invalid_amount`
+  - A caller-supplied amount cannot be normalized into the required on-chain quantity.
 - `submission_unknown`
   - The signed transaction may or may not have reached the submission endpoint; the caller must reconcile by transaction hash before retrying.
 - `simulation_failed`
