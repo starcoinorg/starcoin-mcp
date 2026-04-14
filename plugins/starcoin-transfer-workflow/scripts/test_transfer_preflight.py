@@ -318,6 +318,38 @@ class TransferPreflightTests(unittest.TestCase):
         self.assertNotIn("raw_txn_bcs_hex", records[0])
         self.assertNotIn("signed_txn_bcs_hex", records[1])
 
+    def test_audit_logger_requires_raw_txn_bcs_hex(self) -> None:
+        report = TransferPreflightReport(
+            chain_status={},
+            node_health={},
+            sender_overview={},
+            receiver_overview={},
+            token_code="0x1::starcoin_coin::STC",
+            gas_token_code="0x1::starcoin_coin::STC",
+            sender_visible_in_wallet=True,
+            prepared_sequence_number=7,
+            next_sequence_number_hint=7,
+            gas_unit_price=2,
+            max_gas_amount=1000,
+            simulation_gas_used=321,
+            estimated_network_fee=642,
+            max_network_fee=2000,
+            sender_token_balance=2_000_000_000,
+            sender_gas_balance=2_000_000_000,
+            sender_post_transfer_balance=1_000_000_000,
+            risk_labels=(),
+        )
+        session = sample_session()
+        session.prepare_result.pop("raw_txn_bcs_hex", None)
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "audit.jsonl"
+            logger = TransferAuditLogger(log_path)
+            with self.assertRaisesRegex(
+                ValueError, "prepare_result is missing raw_txn_bcs_hex"
+            ):
+                logger.record_preflight(session, report)
+
 
 if __name__ == "__main__":
     unittest.main()
