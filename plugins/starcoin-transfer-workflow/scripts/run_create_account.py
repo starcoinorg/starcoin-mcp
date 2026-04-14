@@ -64,6 +64,12 @@ def parse_args() -> argparse.Namespace:
         help="Polling interval for wallet_get_request_status.",
     )
     parser.add_argument(
+        "--request-timeout-seconds",
+        type=float,
+        default=None,
+        help="Optional timeout for waiting on a terminal wallet request status.",
+    )
+    parser.add_argument(
         "--audit-log-path",
         default=None,
         help="Optional JSONL path for local account-creation audit records.",
@@ -155,9 +161,11 @@ def wait_for_terminal_request(
     *,
     request_id: str,
     poll_interval_seconds: float = 1.0,
+    timeout_seconds: float | None = None,
     on_status_change: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
     last_status = None
+    deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
     while True:
         status = wallet_client.call_tool(
             "wallet_get_request_status",
@@ -169,6 +177,13 @@ def wait_for_terminal_request(
         last_status = current
         if current in TERMINAL_REQUEST_STATUSES:
             return status
+        if deadline is not None and time.monotonic() >= deadline:
+            if on_status_change is not None and last_status != "timeout":
+                on_status_change("timeout")
+            raise TimeoutError(
+                f"request {request_id} did not reach a terminal status within "
+                f"{timeout_seconds}s; last status={current}"
+            )
         time.sleep(poll_interval_seconds)
 
 
@@ -228,12 +243,20 @@ def main() -> int:
     )
     print("Use the wallet approval surface to approve or reject the account creation request.")
     print(f"Audit log: {audit_logger.path}")
-    status = wait_for_terminal_request(
-        wallet_client,
-        request_id=str(request["request_id"]),
-        poll_interval_seconds=args.poll_interval_seconds,
-        on_status_change=lambda current: print(f"wallet_get_request_status -> {current}"),
-    )
+    try:
+        status = wait_for_terminal_request(
+            wallet_client,
+            request_id=str(request["request_id"]),
+            poll_interval_seconds=args.poll_interval_seconds,
+            timeout_seconds=args.request_timeout_seconds,
+            on_status_change=lambda current: print(f"wallet_get_request_status -> {current}"),
+        )
+    except TimeoutError as exc:
+        status = {
+            "status": "timeout",
+            "error_code": "request_timeout",
+            "error_message": str(exc),
+        }
     audit_logger.record_create_account_request_terminal(
         wallet_instance_id=wallet_instance_id,
         request_id=str(request["request_id"]),
@@ -283,6 +306,6 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except KeyboardInterrupt:
+    except KeyboardInterrupt as exc:
         print("\nInterrupted.", file=sys.stderr)
-        raise SystemExit(130)
+        raise SystemExit(130) from exc
