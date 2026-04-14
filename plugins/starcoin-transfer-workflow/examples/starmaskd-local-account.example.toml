@@ -4,6 +4,7 @@
 #
 # Replace the placeholder home-directory paths before starting starmaskd or local-account-agent.
 # For Starcoin local wallets, account_dir should point at an account vault directory such as:
+#   ~/.starcoin-agents/local-accounts/default
 #   ~/.starcoin/main/account_vaults
 # or a dedicated local vault that you created with:
 #   starcoin --connect ws://127.0.0.1:9870 --local-account-dir <dir> account create -p <password>
@@ -36,14 +37,14 @@ result_retention_seconds = 600
 # Required: at least one enabled wallet backend must be configured.
 [[wallet_backends]]
 # Required. Must be unique across all configured backends.
-backend_id = "local-main"
+backend_id = "local-default"
 # Required for this template. Available values: "starmask_extension", "local_account_dir".
 # "private_key_dev" exists in the enum but is reserved for a future phase.
 backend_kind = "local_account_dir"
 # Optional values: true, false. Runtime default: true.
 enabled = true
 # Required. User-facing wallet label.
-instance_label = "Local Main"
+instance_label = "Local Default Wallet"
 # Required for local_account_dir. Enum values: "browser_ui", "tty_prompt",
 # "desktop_prompt", "none". In the current local_account_dir flow, this must
 # match prompt_mode and effectively needs to be "tty_prompt".

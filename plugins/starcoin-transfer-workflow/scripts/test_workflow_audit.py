@@ -15,7 +15,7 @@ class WorkflowAuditTests(unittest.TestCase):
             log_path = Path(temp_dir) / "audit.jsonl"
             logger = WorkflowAuditLogger(log_path)
             logger.record_create_account_request_created(
-                wallet_instance_id="local-main",
+                wallet_instance_id="local-default",
                 request={
                     "request_id": "req-1",
                     "client_request_id": "create-account-1",
@@ -26,7 +26,7 @@ class WorkflowAuditTests(unittest.TestCase):
                 display_hint="Create local account",
             )
             logger.record_create_account_request_terminal(
-                wallet_instance_id="local-main",
+                wallet_instance_id="local-default",
                 request_id="req-1",
                 status={
                     "status": "approved",

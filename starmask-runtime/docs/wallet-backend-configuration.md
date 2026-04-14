@@ -193,10 +193,10 @@ allowed_extension_ids = ["kmheclfnfmpacglnpegeohempmedhiaf"]
 native_host_name = "com.starcoin.starmask.development"
 
 [[wallet_backends]]
-backend_id = "local-main"
+backend_id = "local-default"
 backend_kind = "local_account_dir"
 enabled = true
-instance_label = "Local Main"
+instance_label = "Local Default Wallet"
 approval_surface = "tty_prompt"
 prompt_mode = "tty_prompt"
 account_dir = "/Users/alice/.starcoin/account"

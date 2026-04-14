@@ -129,7 +129,7 @@ Example input:
 {
   "client_request_id": "codex-transfer-001",
   "account_address": "0x1...",
-  "wallet_instance_id": "local-main",
+  "wallet_instance_id": "local-default",
   "chain_id": 251,
   "raw_txn_bcs_hex": "0x...",
   "tx_kind": "transfer",

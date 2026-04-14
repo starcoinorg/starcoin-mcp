@@ -12,7 +12,7 @@ class CreateAccountWorkflowTests(unittest.TestCase):
             {
                 "wallet_instances": [
                     {
-                        "wallet_instance_id": "local-main",
+                        "wallet_instance_id": "local-default",
                         "extension_connected": True,
                         "profile_hint": "local_account_dir",
                         "lock_state": "locked",
@@ -22,7 +22,7 @@ class CreateAccountWorkflowTests(unittest.TestCase):
             None,
         )
 
-        self.assertEqual(selected["wallet_instance_id"], "local-main")
+        self.assertEqual(selected["wallet_instance_id"], "local-default")
 
     def test_resolve_wallet_instance_requires_explicit_choice_when_ambiguous(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "wallet_instance_id is required"):
@@ -30,7 +30,7 @@ class CreateAccountWorkflowTests(unittest.TestCase):
                 {
                     "wallet_instances": [
                         {
-                            "wallet_instance_id": "local-main",
+                            "wallet_instance_id": "local-default",
                             "extension_connected": True,
                             "profile_hint": "local_account_dir",
                             "lock_state": "locked",
@@ -52,7 +52,7 @@ class CreateAccountWorkflowTests(unittest.TestCase):
                 {
                     "wallet_instances": [
                         {
-                            "wallet_instance_id": "local-main",
+                            "wallet_instance_id": "local-default",
                             "extension_connected": False,
                             "profile_hint": "local_account_dir",
                             "lock_state": "locked",
@@ -67,12 +67,12 @@ class CreateAccountWorkflowTests(unittest.TestCase):
             {
                 "wallet_instances": [
                     {
-                        "wallet_instance_id": "local-main",
+                        "wallet_instance_id": "local-default",
                         "accounts": [{"address": "0x1"}, {"address": "0x2"}],
                     }
                 ]
             },
-            "local-main",
+            "local-default",
         )
 
         self.assertEqual(count, 2)

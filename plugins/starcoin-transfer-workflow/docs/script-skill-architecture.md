@@ -12,7 +12,7 @@ This document is specific to `plugins/starcoin-transfer-workflow/`.
 The current transfer workflow is intentionally adapter-centric:
 
 - the plugin manifest registers `starcoin-node` and `starmask-runtime`
-- the skill tells Codex to treat those host tools as the only valid execution path
+- the skill tells the agentic host to treat those host tools as the only valid execution path
 - the Python host-side controller uses tool-style calls for every step
 
 That model works, but it makes the plugin runtime depend on two local stdio adapter binaries even
@@ -30,13 +30,13 @@ Plan B removes the plugin's direct use of those adapter binaries and replaces it
 ## 2. Target Outcome
 
 The plugin should support user-in-the-loop wallet workflows, including account creation and
-transfers, without registering any in-tree adapter binary in Codex.
+transfers, without registering any in-tree adapter binary in the host.
 
 The final runtime shape is:
 
 ```mermaid
 flowchart LR
-    H["Codex Skill + Scripts"] --> W["starmaskd JSON-RPC client"]
+    H["Agentic Host Skill + Scripts"] --> W["starmaskd JSON-RPC client"]
     H --> N["starcoin-node CLI"]
     W --> D["starmaskd"]
     D --> A["local-account-agent or extension"]
@@ -46,7 +46,7 @@ flowchart LR
 
 The design keeps the existing trust boundary:
 
-- wallet-side approval and signing remain outside Codex
+- wallet-side approval and signing remain outside the agentic host
 - chain-side preparation and submission logic remain outside the skill text
 - the host still coordinates both sides, but does not merge them into one signer-aware binary
 
@@ -55,7 +55,7 @@ The design keeps the existing trust boundary:
 Today the plugin packages:
 
 1. `.mcp.json` to launch `starcoin-node` and `starmask-runtime`
-2. one transfer skill that instructs Codex to call MCP tools in order
+2. one transfer skill that instructs the host to call MCP tools in order
 3. `transfer_controller.py`, which keeps transfer session state but still speaks through MCP-style
    tool names
 4. `run_transfer_test.py`, which used to start both adapter binaries and drive them over `tools/call`
@@ -237,7 +237,7 @@ to:
 That means:
 
 - `plugin.json` should stop requiring `mcpServers`
-- the transfer skill should stop instructing Codex to call MCP tools directly
+- the transfer skill should stop instructing the host to call MCP tools directly
 - `doctor.py` should validate script and CLI prerequisites instead of adapter launchability
 
 ## 6. Phase Plan
@@ -326,7 +326,7 @@ Phase 1 mitigation:
 
 ### Risk 2: Skill Drift During Migration
 
-If the skill is updated before the scripts and CLIs are stable, Codex may point users at a broken
+If the skill is updated before the scripts and CLIs are stable, the host may point users at a broken
 execution path.
 
 Mitigation:

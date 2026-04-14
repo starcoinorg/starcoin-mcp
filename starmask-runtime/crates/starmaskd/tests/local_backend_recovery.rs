@@ -17,7 +17,7 @@ use support::{
 fn local_backend_registration_record_survives_restart() {
     let tempdir = tempdir().unwrap();
     let database_path = tempdir.path().join("starmaskd.sqlite3");
-    let wallet_instance_id = WalletInstanceId::new("local-main").unwrap();
+    let wallet_instance_id = WalletInstanceId::new("local-default").unwrap();
 
     {
         let mut coordinator =
@@ -55,7 +55,7 @@ fn local_backend_registration_record_survives_restart() {
 fn local_backend_created_request_survives_restart_and_can_be_polled_by_id() {
     let tempdir = tempdir().unwrap();
     let database_path = tempdir.path().join("starmaskd.sqlite3");
-    let wallet_instance_id = WalletInstanceId::new("local-main").unwrap();
+    let wallet_instance_id = WalletInstanceId::new("local-default").unwrap();
 
     let request_id = {
         let mut coordinator =
@@ -100,7 +100,7 @@ fn local_backend_created_request_survives_restart_and_can_be_polled_by_id() {
 fn local_backend_dispatched_request_requeues_after_restart_and_lease_expiry() {
     let tempdir = tempdir().unwrap();
     let database_path = tempdir.path().join("starmaskd.sqlite3");
-    let wallet_instance_id = WalletInstanceId::new("local-main").unwrap();
+    let wallet_instance_id = WalletInstanceId::new("local-default").unwrap();
 
     let request_id = {
         let mut coordinator =
@@ -153,7 +153,7 @@ fn local_backend_dispatched_request_requeues_after_restart_and_lease_expiry() {
 fn local_backend_pending_request_resumes_for_same_instance_after_restart() {
     let tempdir = tempdir().unwrap();
     let database_path = tempdir.path().join("starmaskd.sqlite3");
-    let wallet_instance_id = WalletInstanceId::new("local-main").unwrap();
+    let wallet_instance_id = WalletInstanceId::new("local-default").unwrap();
     let presentation_id = PresentationId::new("presentation-local").unwrap();
 
     let request_id = {
@@ -198,7 +198,7 @@ fn local_backend_pending_request_resumes_for_same_instance_after_restart() {
 fn local_backend_pending_request_is_not_redelivered_to_other_backend_after_restart() {
     let tempdir = tempdir().unwrap();
     let database_path = tempdir.path().join("starmaskd.sqlite3");
-    let wallet_instance_id = WalletInstanceId::new("local-main").unwrap();
+    let wallet_instance_id = WalletInstanceId::new("local-default").unwrap();
     let other_wallet_instance_id = WalletInstanceId::new("local-other").unwrap();
 
     {

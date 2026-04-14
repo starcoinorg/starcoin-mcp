@@ -867,8 +867,8 @@ mod tests {
         prompt_mode: LocalPromptMode,
     ) -> LocalAccountDirBackendConfig {
         LocalAccountDirBackendConfig::new(
-            "local-main",
-            "Local Main",
+            "local-default",
+            "Local Default Wallet",
             approval_surface,
             account_dir,
             prompt_mode,

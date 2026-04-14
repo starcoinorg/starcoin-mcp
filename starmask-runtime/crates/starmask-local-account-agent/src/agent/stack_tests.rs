@@ -333,8 +333,8 @@ impl RealStackHarness {
 
 fn test_config(account_dir: PathBuf) -> LocalAccountDirBackendConfig {
     LocalAccountDirBackendConfig::new(
-        "local-main",
-        "Local Main",
+        "local-default",
+        "Local Default Wallet",
         starmask_types::ApprovalSurface::TtyPrompt,
         account_dir,
         LocalPromptMode::TtyPrompt,
@@ -384,7 +384,7 @@ async fn local_socket_stack_round_trips_sign_message_and_has_available() {
             "protocol_version": 1,
             "client_request_id": "client-stack-message",
             "account_address": harness.account_address.to_string(),
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "message": "hello",
             "format": "utf8",
         }),
@@ -401,7 +401,7 @@ async fn local_socket_stack_round_trips_sign_message_and_has_available() {
         "request.hasAvailable",
         json!(RequestHasAvailableParams {
             protocol_version: 2,
-            wallet_instance_id: WalletInstanceId::new("local-main").unwrap(),
+            wallet_instance_id: WalletInstanceId::new("local-default").unwrap(),
         }),
     )
     .await;
@@ -435,7 +435,7 @@ async fn local_socket_stack_round_trips_sign_message_and_has_available() {
         "request.hasAvailable",
         json!(RequestHasAvailableParams {
             protocol_version: 2,
-            wallet_instance_id: WalletInstanceId::new("local-main").unwrap(),
+            wallet_instance_id: WalletInstanceId::new("local-default").unwrap(),
         }),
     )
     .await;
@@ -460,7 +460,7 @@ async fn local_socket_stack_round_trips_sign_transaction() {
             "protocol_version": 1,
             "client_request_id": "client-stack-transaction",
             "account_address": harness.account_address.to_string(),
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "chain_id": 255,
             "raw_txn_bcs_hex": harness.raw_sign_transaction_hex(),
             "tx_kind": "transfer",
@@ -521,7 +521,7 @@ async fn local_socket_stack_logs_omit_sensitive_signing_material() {
             "protocol_version": 1,
             "client_request_id": "client-log-message",
             "account_address": harness.account_address.to_string(),
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "message": secret_message,
             "format": "utf8",
         }),
@@ -543,7 +543,7 @@ async fn local_socket_stack_logs_omit_sensitive_signing_material() {
             "protocol_version": 1,
             "client_request_id": "client-log-transaction",
             "account_address": harness.account_address.to_string(),
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "chain_id": 255,
             "raw_txn_bcs_hex": raw_txn_bcs_hex,
             "tx_kind": "transfer",
@@ -580,7 +580,7 @@ async fn local_backend_restart_before_presented_requeues_after_lease_expiry() {
             "protocol_version": 1,
             "client_request_id": "client-requeue",
             "account_address": harness.account_address.to_string(),
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "message": "hello",
             "format": "utf8",
         }),
@@ -639,7 +639,7 @@ async fn local_backend_restart_after_presented_resumes_same_instance() {
             "protocol_version": 1,
             "client_request_id": "client-resume",
             "account_address": harness.account_address.to_string(),
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "message": "hello",
             "format": "utf8",
         }),

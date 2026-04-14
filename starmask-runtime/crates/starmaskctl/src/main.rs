@@ -631,10 +631,10 @@ mod tests {
                 None,
             )),
             WalletBackendConfig::LocalAccountDir(LocalAccountDirBackendConfig::new(
-                "local-main",
-                "Local Main",
+                "local-default",
+                "Local Default Wallet",
                 ApprovalSurface::TtyPrompt,
-                PathBuf::from("/tmp/local-main"),
+                PathBuf::from("/tmp/local-default"),
                 LocalPromptMode::TtyPrompt,
                 251,
                 DurationSeconds::new(60),

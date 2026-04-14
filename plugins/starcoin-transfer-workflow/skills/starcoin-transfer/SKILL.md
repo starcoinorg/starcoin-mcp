@@ -1,18 +1,18 @@
 ---
 name: starcoin-transfer
-description: Use when the user wants a user-in-the-loop Starcoin wallet workflow through Codex. This skill covers address creation, transfer preparation and confirmation, and local workflow audit trails.
+description: Use when the user wants a user-in-the-loop Starcoin wallet workflow through an agentic host. This skill covers address creation, transfer preparation and confirmation, and local workflow audit trails.
 ---
 
 # Starcoin Transfer
 
-This skill turns Codex into the host-side transfer controller without depending on plugin-managed
+This skill turns an agentic host into the host-side transfer controller without depending on plugin-managed
 stdio adapters.
 
 The canonical execution path is:
 
 - wallet-side calls through `scripts/starmaskd_client.py`
 - chain-side calls through `scripts/node_cli_client.py`
-- host-side sequencing and state retention in Codex
+- host-side sequencing and state retention in the agentic host
 
 Use this skill when the user wants to transfer tokens, request a signature for a prepared transfer,
 create a fresh wallet address before transfer, or inspect the local audit trail for those flows.
@@ -26,8 +26,8 @@ script path itself has changed.
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_list_instances`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_list_accounts`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_get_public_key`
-  - `python3 ./plugins/starcoin-transfer-workflow/scripts/run_create_account.py --wallet-runtime-dir $HOME/.runtime/wallet-runtime --wallet-instance-id <wallet-instance-id>`
-  - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py --wallet-runtime-dir $HOME/.runtime/wallet-runtime call wallet_create_account`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/run_create_account.py --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime --wallet-instance-id <wallet-instance-id>`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime call wallet_create_account`
 - Chain status and reads:
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/node_cli_client.py call chain_status`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/node_cli_client.py call node_health`
@@ -36,15 +36,19 @@ script path itself has changed.
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/doctor.py`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py status`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py up --replace`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py backup`
 - End-to-end test:
-  - `python3 ./plugins/starcoin-transfer-workflow/scripts/run_transfer_test.py --rpc-url http://127.0.0.1:9850 --wallet-runtime-dir $HOME/.runtime/wallet-runtime --sender <sender> --receiver <receiver> --amount 1 --amount-unit stc --vm-profile vm2_only --min-confirmed-blocks 3`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/run_transfer_test.py --rpc-url http://127.0.0.1:9850 --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime --sender <sender> --receiver <receiver> --amount 1 --amount-unit stc --vm-profile vm2_only --min-confirmed-blocks 3`
 
 Default runtime locations for this workflow:
 
-- wallet runtime: `$HOME/.runtime/wallet-runtime`
-- wallet dir: `$HOME/.runtime/devwallet`
-- node config: `$HOME/.runtime/node-cli.toml`
-- wallet config: `$HOME/.runtime/wallet-runtime/starmaskd.toml`
+- wallet runtime: `$HOME/.starcoin-agents/wallet-runtime`
+- wallet dir: `$HOME/.starcoin-agents/local-accounts/default`
+- node config: `$HOME/.starcoin-agents/node-cli.toml`
+- wallet config: `$HOME/.starcoin-agents/wallet-runtime/starmaskd.toml`
+
+Use `wallet_runtime.py backup` to copy the local account vault. If `--backup-dir` is omitted, the
+script prompts for a destination directory.
 
 Known important parameters:
 
@@ -77,7 +81,7 @@ Known important parameters:
 
 ## Workflow
 
-The current script path does not parse free-form wallet language by itself. Codex should resolve
+The current script path does not parse free-form wallet language by itself. The agentic host should resolve
 the user's intent first, then use the scripts for deterministic execution.
 
 ### 0. Decide Which Wallet Flow Is Needed
@@ -156,7 +160,7 @@ the user's intent first, then use the scripts for deterministic execution.
 
 ### 7. Show The Transaction Preview
 
-- Summarize the prepared transaction in Codex before creating a signing request.
+- Summarize the prepared transaction in the agentic host before creating a signing request.
 - Include network, sender, receiver, token, amount, raw amount, nonce, fee estimate, balance, and simulation outcome.
 - Show the generated risk labels separately from the happy-path preview.
 - If any blocking risk is present, stop before wallet signing.
@@ -204,7 +208,7 @@ the user's intent first, then use the scripts for deterministic execution.
 
 ### 13. Write Or Inspect The Audit Record
 
-- `run_create_account.py` writes create-account audit records under `$HOME/.runtime/wallet-runtime/audit/create-account-audit.jsonl` by default.
+- `run_create_account.py` writes create-account audit records under `$HOME/.starcoin-agents/wallet-runtime/audit/create-account-audit.jsonl` by default.
 - `run_transfer_test.py` writes transfer audit records under the active runtime's `audit/transfer-audit.jsonl` by default.
 - Write a local JSONL audit record for the preflight preview, host decision, signing request lifecycle, and submit result.
 - The audit trail should include request id, payload hash, backend id, timestamps, and terminal decision.

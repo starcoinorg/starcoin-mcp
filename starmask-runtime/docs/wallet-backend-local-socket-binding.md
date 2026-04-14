@@ -151,11 +151,11 @@ Example:
   "method": "backend.register",
   "params": {
     "protocol_version": 2,
-    "wallet_instance_id": "local-main",
+    "wallet_instance_id": "local-default",
     "backend_kind": "local_account_dir",
     "transport_kind": "local_socket",
     "approval_surface": "tty_prompt",
-    "instance_label": "Local Main",
+    "instance_label": "Local Default Wallet",
     "lock_state": "locked",
     "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction"],
     "backend_metadata": {
@@ -176,7 +176,7 @@ Successful registration response:
   "result": {
     "accepted": true,
     "daemon_protocol_version": 2,
-    "wallet_instance_id": "local-main"
+    "wallet_instance_id": "local-default"
   }
 }
 ```

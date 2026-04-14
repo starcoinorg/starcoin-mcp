@@ -1098,10 +1098,10 @@ mod tests {
         let error = build_phase2_backends(
             Channel::Development,
             &[FileWalletBackendConfig {
-                backend_id: "local-main".to_owned(),
+                backend_id: "local-default".to_owned(),
                 backend_kind: BackendKind::LocalAccountDir,
                 enabled: true,
-                instance_label: "Local Main".to_owned(),
+                instance_label: "Local Default Wallet".to_owned(),
                 approval_surface: ApprovalSurface::DesktopPrompt,
                 allowed_extension_ids: None,
                 native_host_name: None,
@@ -1131,10 +1131,10 @@ mod tests {
         let error = build_phase2_backends(
             Channel::Development,
             &[FileWalletBackendConfig {
-                backend_id: "local-main".to_owned(),
+                backend_id: "local-default".to_owned(),
                 backend_kind: BackendKind::LocalAccountDir,
                 enabled: true,
-                instance_label: "Local Main".to_owned(),
+                instance_label: "Local Default Wallet".to_owned(),
                 approval_surface: ApprovalSurface::DesktopPrompt,
                 allowed_extension_ids: None,
                 native_host_name: None,
@@ -1160,10 +1160,10 @@ mod tests {
         let error = build_phase2_backends(
             Channel::Development,
             &[FileWalletBackendConfig {
-                backend_id: "local-main".to_owned(),
+                backend_id: "local-default".to_owned(),
                 backend_kind: BackendKind::LocalAccountDir,
                 enabled: true,
-                instance_label: "Local Main".to_owned(),
+                instance_label: "Local Default Wallet".to_owned(),
                 approval_surface: ApprovalSurface::TtyPrompt,
                 allowed_extension_ids: None,
                 native_host_name: None,
@@ -1197,10 +1197,10 @@ mod tests {
         let error = build_phase2_backends(
             Channel::Development,
             &[FileWalletBackendConfig {
-                backend_id: "local-main".to_owned(),
+                backend_id: "local-default".to_owned(),
                 backend_kind: BackendKind::LocalAccountDir,
                 enabled: true,
-                instance_label: "Local Main".to_owned(),
+                instance_label: "Local Default Wallet".to_owned(),
                 approval_surface: ApprovalSurface::TtyPrompt,
                 allowed_extension_ids: None,
                 native_host_name: None,
@@ -1229,10 +1229,10 @@ mod tests {
         let error = build_phase2_backends(
             Channel::Development,
             &[FileWalletBackendConfig {
-                backend_id: "local-main".to_owned(),
+                backend_id: "local-default".to_owned(),
                 backend_kind: BackendKind::LocalAccountDir,
                 enabled: true,
-                instance_label: "Local Main".to_owned(),
+                instance_label: "Local Default Wallet".to_owned(),
                 approval_surface: ApprovalSurface::TtyPrompt,
                 allowed_extension_ids: None,
                 native_host_name: None,
@@ -1261,10 +1261,10 @@ mod tests {
         let error = build_phase2_backends(
             Channel::Development,
             &[FileWalletBackendConfig {
-                backend_id: "local-main".to_owned(),
+                backend_id: "local-default".to_owned(),
                 backend_kind: BackendKind::LocalAccountDir,
                 enabled: true,
-                instance_label: "Local Main".to_owned(),
+                instance_label: "Local Default Wallet".to_owned(),
                 approval_surface: ApprovalSurface::TtyPrompt,
                 allowed_extension_ids: None,
                 native_host_name: None,

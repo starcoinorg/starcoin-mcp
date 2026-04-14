@@ -17,6 +17,7 @@ from runtime_layout import (
     platform_daemon_socket_candidates,
     platform_node_config_candidates,
     platform_wallet_config_candidates,
+    resolve_daemon_socket_override,
     resolve_existing_path,
     resolve_node_config_override,
     resolve_wallet_daemon_socket_path,
@@ -219,11 +220,17 @@ def resolve_daemon_socket_path(
     runtime_dir_arg: str | None, default_socket_path: Path
 ) -> tuple[Path, Path, dict | None]:
     runtime_dir, metadata_path, metadata = resolve_runtime_metadata(runtime_dir_arg)
-    socket_path = resolve_wallet_daemon_socket_path(
-        runtime_dir,
-        metadata=metadata,
-        default_socket_path=default_socket_path,
-    )
+    if (
+        runtime_dir_arg is None
+        and metadata is None
+        and resolve_daemon_socket_override() is None
+    ):
+        socket_path = select_socket_candidate(platform_daemon_socket_candidates())
+    else:
+        socket_path = resolve_wallet_daemon_socket_path(
+            runtime_dir,
+            metadata=metadata,
+        )
     return socket_path, metadata_path, metadata
 
 
@@ -243,7 +250,7 @@ def main() -> int:
     parser.add_argument(
         "--session-start",
         action="store_true",
-        help="Emit a compact warning for Codex SessionStart hooks and stay silent when healthy",
+        help="Emit a compact warning for agentic-host session hooks and stay silent when healthy",
     )
     args = parser.parse_args()
 
@@ -272,10 +279,12 @@ def main() -> int:
 
     results = [
         check(
-            "codex host",
+            "agentic host",
             bool(os.environ.get("CODEX_HOME")) or shutil.which("codex") is not None,
-            os.environ.get("CODEX_HOME") or shutil.which("codex") or "Codex desktop/CLI not detected",
-            "Run from the Codex desktop app or ensure the codex CLI is on PATH.",
+            os.environ.get("CODEX_HOME")
+            or shutil.which("codex")
+            or "No supported agentic host session detected",
+            "Run from your agentic host session. Codex desktop or the codex CLI is the currently supported detection target.",
         ),
         check(
             "plugin manifest",
@@ -296,7 +305,7 @@ def main() -> int:
             "plugin marketplace",
             MARKETPLACE_PATH.exists(),
             str(MARKETPLACE_PATH),
-            "Install or enable the plugin from this marketplace before asking Codex to use it.",
+            "Install or enable the plugin from this marketplace before asking an agentic host to use it.",
         ),
     ]
 
@@ -415,7 +424,7 @@ def main() -> int:
             )
         )
 
-    socket_hint = "Start starmaskd and the local-account-agent before asking Codex to sign."
+    socket_hint = "Start starmaskd and the local-account-agent before asking the host to sign."
     if stale_socket_cleanup_candidate(daemon_socket_path, daemon_detail):
         socket_hint = (
             f"Run `python3 {PLUGIN_ROOT / 'scripts' / 'doctor.py'} --cleanup-stale-socket` "
@@ -448,7 +457,7 @@ def main() -> int:
             f"Copy and edit {NODE_EXAMPLE_PATH} and {WALLET_EXAMPLE_PATH} if the default configs are missing.",
             "Install starcoin-node-cli, starmaskd, and local-account-agent on PATH if you want a global plugin that does not rely on a source checkout.",
             "Start starmaskd and the wallet backend if the daemon socket check failed.",
-            "Ask Codex to use the starcoin-transfer skill for one transfer after the checks pass.",
+            "Ask your agentic host to use the starcoin-transfer skill for one transfer after the checks pass.",
         ],
     }
 

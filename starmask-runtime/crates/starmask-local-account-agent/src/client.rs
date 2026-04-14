@@ -222,7 +222,7 @@ mod tests {
         let response = serde_json::to_vec(&JsonRpcResponse::Success(JsonRpcSuccess::new(
             "local-account-agent",
             BackendRegisteredResult {
-                wallet_instance_id: WalletInstanceId::new("local-main").unwrap(),
+                wallet_instance_id: WalletInstanceId::new("local-default").unwrap(),
                 daemon_protocol_version: GENERIC_BACKEND_PROTOCOL_VERSION,
                 accepted: true,
             },
@@ -234,11 +234,11 @@ mod tests {
         let result = client
             .backend_register(BackendRegisterParams {
                 protocol_version: GENERIC_BACKEND_PROTOCOL_VERSION,
-                wallet_instance_id: WalletInstanceId::new("local-main").unwrap(),
+                wallet_instance_id: WalletInstanceId::new("local-default").unwrap(),
                 backend_kind: BackendKind::LocalAccountDir,
                 transport_kind: TransportKind::LocalSocket,
                 approval_surface: starmask_types::ApprovalSurface::TtyPrompt,
-                instance_label: "Local Main".to_owned(),
+                instance_label: "Local Default Wallet".to_owned(),
                 lock_state: LockState::Locked,
                 capabilities: vec![
                     WalletCapability::Unlock,
@@ -260,11 +260,11 @@ mod tests {
             request.params,
             serde_json::json!({
                 "protocol_version": GENERIC_BACKEND_PROTOCOL_VERSION,
-                "wallet_instance_id": "local-main",
+                "wallet_instance_id": "local-default",
                 "backend_kind": "local_account_dir",
                 "transport_kind": "local_socket",
                 "approval_surface": "tty_prompt",
-                "instance_label": "Local Main",
+                "instance_label": "Local Default Wallet",
                 "lock_state": "locked",
                 "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction", "create_account"],
                 "backend_metadata": {"account_provider_kind": "local"},

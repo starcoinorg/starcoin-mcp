@@ -146,7 +146,7 @@ pub fn register_local_backend(
                 backend_kind: BackendKind::LocalAccountDir,
                 transport_kind: TransportKind::LocalSocket,
                 approval_surface: ApprovalSurface::TtyPrompt,
-                instance_label: "Local Main".to_owned(),
+                instance_label: "Local Default Wallet".to_owned(),
                 extension_id: String::new(),
                 extension_version: String::new(),
                 protocol_version: 2,
