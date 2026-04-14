@@ -87,14 +87,51 @@ class WalletRuntimeBackupTests(unittest.TestCase):
             self.assertTrue((destination_dir / "account.json").exists())
             self.assertEqual(
                 manifest["source_wallet_dir"],
-                str(source_wallet_dir),
+                str(source_wallet_dir.resolve()),
             )
             self.assertEqual(
                 json.loads((destination_dir / "backup-manifest.json").read_text(encoding="utf-8"))[
                     "backup_dir"
                 ],
-                str(destination_dir),
+                str(destination_dir.resolve()),
             )
+
+    def test_backup_wallet_dir_rejects_destination_inside_source(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+            source_wallet_dir = base_dir / "wallet"
+            source_wallet_dir.mkdir()
+            destination_dir = source_wallet_dir / "nested-backup"
+
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "backup destination must not be the wallet directory or a child of it",
+            ):
+                backup_wallet_dir(
+                    source_wallet_dir=source_wallet_dir,
+                    destination_dir=destination_dir,
+                    runtime_dir=base_dir / "runtime",
+                )
+
+    def test_backup_wallet_dir_preserves_symlinks(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            base_dir = Path(tmpdir)
+            source_wallet_dir = base_dir / "wallet"
+            source_wallet_dir.mkdir()
+            external_secret = base_dir / "external-secret.txt"
+            external_secret.write_text("secret", encoding="utf-8")
+            (source_wallet_dir / "linked-secret").symlink_to(external_secret)
+            destination_dir = base_dir / "backup"
+
+            backup_wallet_dir(
+                source_wallet_dir=source_wallet_dir,
+                destination_dir=destination_dir,
+                runtime_dir=base_dir / "runtime",
+            )
+
+            copied_link = destination_dir / "linked-secret"
+            self.assertTrue(copied_link.is_symlink())
+            self.assertEqual(copied_link.resolve(), external_secret.resolve())
 
 
 if __name__ == "__main__":

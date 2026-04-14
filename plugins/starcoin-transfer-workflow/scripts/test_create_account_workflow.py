@@ -65,6 +65,29 @@ class CreateAccountWorkflowTests(unittest.TestCase):
                 None,
             )
 
+    def test_resolve_wallet_instance_explicit_id_selects_from_multiple(self) -> None:
+        selected = resolve_wallet_instance(
+            {
+                "wallet_instances": [
+                    {
+                        "wallet_instance_id": "local-default",
+                        "extension_connected": True,
+                        "profile_hint": "local_account_dir",
+                        "lock_state": "locked",
+                    },
+                    {
+                        "wallet_instance_id": "extension-main",
+                        "extension_connected": True,
+                        "profile_hint": "extension",
+                        "lock_state": "unlocked",
+                    },
+                ]
+            },
+            "extension-main",
+        )
+
+        self.assertEqual(selected["wallet_instance_id"], "extension-main")
+
     def test_resolve_wallet_instance_fails_when_no_connected_wallet_exists(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "no connected wallet instances"):
             resolve_wallet_instance(
@@ -95,6 +118,21 @@ class CreateAccountWorkflowTests(unittest.TestCase):
         )
 
         self.assertEqual(count, 2)
+
+    def test_account_count_for_instance_returns_zero_when_not_found(self) -> None:
+        count = account_count_for_instance(
+            {
+                "wallet_instances": [
+                    {
+                        "wallet_instance_id": "other",
+                        "accounts": [],
+                    }
+                ]
+            },
+            "missing-id",
+        )
+
+        self.assertEqual(count, 0)
 
     def test_wait_for_terminal_request_returns_terminal_status(self) -> None:
         client = FakeWalletClient(

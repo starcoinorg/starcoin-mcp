@@ -117,9 +117,9 @@ the user's intent first, then use the scripts for deterministic execution.
 ### 4. Gather Chain And Wallet Context
 
 - If the runtime might not be ready, stop early and ask the user to run `python3 ./plugins/starcoin-transfer-workflow/scripts/doctor.py`.
-- Use `wallet_list_instances` and `wallet_list_accounts` to discover wallet candidates.
-- Use `chain_status` to inspect chain identity.
-- Use `node_health` to inspect RPC availability, peer count, and lag warnings.
+- Discover wallet candidates with `wallet_list_instances` and `wallet_list_accounts`.
+- Inspect chain identity with `chain_status`.
+- Check RPC availability, peer count, and lag warnings through `node_health`.
 - If the sender public key is not already known, call `wallet_get_public_key`.
 
 ### 5. Prepare The Transaction

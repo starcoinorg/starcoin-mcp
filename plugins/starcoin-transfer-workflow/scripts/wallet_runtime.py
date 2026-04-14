@@ -302,15 +302,33 @@ def backup_wallet_dir(
     destination_dir: Path,
     runtime_dir: Path,
 ) -> dict[str, Any]:
+    source_wallet_dir = source_wallet_dir.expanduser().resolve()
+    destination_dir = destination_dir.expanduser().resolve()
+    runtime_dir = runtime_dir.expanduser().resolve()
     if not source_wallet_dir.exists():
         raise FileNotFoundError(f"wallet_dir does not exist: {source_wallet_dir}")
     if not source_wallet_dir.is_dir():
         raise RuntimeError(f"wallet_dir is not a directory: {source_wallet_dir}")
     if destination_dir.exists():
         raise RuntimeError(f"backup destination already exists: {destination_dir}")
+    if destination_dir == source_wallet_dir or destination_dir.is_relative_to(source_wallet_dir):
+        raise RuntimeError(
+            "backup destination must not be the wallet directory or a child of it: "
+            f"{destination_dir}"
+        )
+    if source_wallet_dir.is_relative_to(destination_dir):
+        raise RuntimeError(
+            "wallet_dir must not be nested under the backup destination: "
+            f"{source_wallet_dir}"
+        )
 
     destination_dir.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(source_wallet_dir, destination_dir, copy_function=shutil.copy2)
+    shutil.copytree(
+        source_wallet_dir,
+        destination_dir,
+        copy_function=shutil.copy2,
+        symlinks=True,
+    )
     os.chmod(destination_dir, 0o700)
     manifest_path = destination_dir / "backup-manifest.json"
     manifest = {

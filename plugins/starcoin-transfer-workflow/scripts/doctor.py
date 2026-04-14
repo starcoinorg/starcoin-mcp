@@ -217,7 +217,7 @@ def resolve_runtime_metadata(runtime_dir_arg: str | None) -> tuple[Path, Path, d
 
 
 def resolve_daemon_socket_path(
-    runtime_dir_arg: str | None, default_socket_path: Path
+    runtime_dir_arg: str | None,
 ) -> tuple[Path, Path, dict | None]:
     runtime_dir, metadata_path, metadata = resolve_runtime_metadata(runtime_dir_arg)
     if (
@@ -264,7 +264,7 @@ def main() -> int:
         preferred_node_config_path, fallback_node_config_path
     )
     daemon_socket_path, runtime_metadata_path, runtime_metadata = resolve_daemon_socket_path(
-        args.runtime_dir, platform_socket_path
+        args.runtime_dir
     )
 
     node_bin = resolve_binary("STARCOIN_NODE_CLI_BIN", "starcoin-node-cli")
