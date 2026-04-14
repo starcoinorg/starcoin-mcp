@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from doctor import select_socket_candidate
+from doctor import live_rpc_checks, select_socket_candidate
 
 
 class DoctorSocketSelectionTests(unittest.TestCase):
@@ -51,6 +51,46 @@ class DoctorSocketSelectionTests(unittest.TestCase):
                     select_socket_candidate([regular_file, primary_socket]),
                     primary_socket,
                 )
+
+    def test_live_rpc_checks_match_expected_chain_identity(self) -> None:
+        def fake_json_rpc(_url: str, method: str):
+            if method == "node.info":
+                return {"net": "dev"}
+            if method == "chain.info":
+                return {"chain_id": 254, "genesis_hash": "0xabc"}
+            raise AssertionError(f"unexpected method {method}")
+
+        with patch("doctor.json_rpc", side_effect=fake_json_rpc):
+            results = live_rpc_checks(
+                "http://127.0.0.1:9850",
+                expected_chain_id=254,
+                expected_network="dev",
+                expected_genesis_hash="0xabc",
+            )
+
+        self.assertTrue(all(item["ok"] for item in results))
+
+    def test_live_rpc_checks_report_identity_mismatch(self) -> None:
+        def fake_json_rpc(_url: str, method: str):
+            if method == "node.info":
+                return {"net": "dev"}
+            if method == "chain.info":
+                return {"chain_id": 254, "genesis_hash": "0xabc"}
+            raise AssertionError(f"unexpected method {method}")
+
+        with patch("doctor.json_rpc", side_effect=fake_json_rpc):
+            results = live_rpc_checks(
+                "http://127.0.0.1:9850",
+                expected_chain_id=1,
+                expected_network="main",
+                expected_genesis_hash="0xdef",
+            )
+
+        failures = {item["name"] for item in results if not item["ok"]}
+        self.assertEqual(
+            failures,
+            {"node rpc chain id", "node rpc network", "node rpc genesis hash"},
+        )
 
 
 if __name__ == "__main__":

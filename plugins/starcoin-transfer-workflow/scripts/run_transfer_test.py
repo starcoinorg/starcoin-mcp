@@ -33,6 +33,7 @@ from transfer_controller import (
     normalize_min_confirmed_blocks,
     resolve_token_code,
 )
+from transfer_state import TransferStateStore
 from workflow_audit import WorkflowAuditLogger
 
 
@@ -169,6 +170,11 @@ def parse_args() -> argparse.Namespace:
         default=None,
         help="Optional JSONL path for local transfer audit records. Defaults under the active runtime directory.",
     )
+    parser.add_argument(
+        "--state-path",
+        default=None,
+        help="Optional JSON path for prepared-transfer and unresolved-submission state. Defaults next to the audit log.",
+    )
     return parser.parse_args()
 
 
@@ -260,6 +266,12 @@ def resolve_audit_log_path(
     return base_dir / "audit" / "transfer-audit.jsonl"
 
 
+def resolve_state_path(state_path_arg: str | None, audit_log_path: Path) -> Path:
+    if state_path_arg:
+        return Path(state_path_arg).expanduser().resolve()
+    return audit_log_path.with_name("transfer-state.json")
+
+
 def socket_reachable(path: Path) -> tuple[bool, str]:
     if not path.exists():
         return False, "socket file is missing"
@@ -338,7 +350,9 @@ def main() -> int:
         runtime_dir=runtime_dir,
         wallet_runtime_dir=wallet_runtime_dir,
     )
+    state_path = resolve_state_path(args.state_path, audit_log_path)
     audit_logger = WorkflowAuditLogger(audit_log_path)
+    state_store = TransferStateStore(state_path)
     wallet_runtime = None
     wallet_dir: Path | None = None
     wallet_instance_id = args.wallet_instance_id
@@ -533,6 +547,7 @@ require_strict_permissions = true
             chain_id=chain_id,
             network=network,
             genesis_hash=genesis_hash,
+            state_store=state_store,
         )
         try:
             session = controller.prepare_session(
@@ -564,6 +579,7 @@ require_strict_permissions = true
             print(render_card("Risk Labels", risk_rows))
         print()
         print(f"Audit records will be written to {audit_logger.path}.")
+        print(f"Transfer state will be written to {state_store.path}.")
         if controller.has_blocking_risks(preflight_report):
             audit_logger.record_host_decision(
                 session,

@@ -435,9 +435,9 @@ def analyze_preflight(
         risk_labels.append(
             TransferRiskLabel(
                 code="nonce_advanced_after_prepare",
-                severity="warn",
+                severity="block",
                 message=(
-                    f"Next sequence hint {next_sequence_number_hint} is ahead of prepared nonce {prepared_sequence_number}."
+                    f"Next sequence hint {next_sequence_number_hint} is ahead of prepared nonce {prepared_sequence_number}; prepare the transfer again before signing."
                 ),
             )
         )

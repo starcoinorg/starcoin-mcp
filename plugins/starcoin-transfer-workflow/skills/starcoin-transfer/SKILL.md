@@ -37,6 +37,7 @@ script path itself has changed.
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py status`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py up --replace`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py backup`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/workflow_audit.py summary --path $HOME/.starcoin-agents/wallet-runtime/audit/transfer-audit.jsonl`
 - End-to-end test:
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/run_transfer_test.py --rpc-url http://127.0.0.1:9850 --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime --sender <sender> --receiver <receiver> --amount 1 --amount-unit stc --vm-profile vm2_only --min-confirmed-blocks 3`
 
@@ -78,6 +79,7 @@ Known important parameters:
   - `--min-confirmed-blocks <n>`
   - `--token-code <vm-profile-matched-stc-or-explicit-token>`
   - `--audit-log-path <transfer-audit.jsonl>`
+  - `--state-path <transfer-state.json>`
 
 ## Workflow
 
@@ -157,6 +159,7 @@ the user's intent first, then use the scripts for deterministic execution.
   - sender gas balance below estimated fee
   - sequence / nonce moving ahead after preparation
   - receiver account missing on-chain
+- Treat sequence / nonce moving ahead after preparation as a blocking risk. Prepare again before signing.
 
 ### 7. Show The Transaction Preview
 
@@ -195,6 +198,7 @@ the user's intent first, then use the scripts for deterministic execution.
 - Use one confirmation-depth target for the whole transfer. The default is `min_confirmed_blocks = 2`, which means the inclusion block plus at least 1 additional observed block.
 - Pass the `chain_context` from the same preparation result that produced the signed transaction.
 - Pass the same `min_confirmed_blocks` value to both `submit_signed_transaction` and any direct `watch_transaction` follow-up.
+- Use the persisted transfer state next to the audit log to verify the prepared payload hash before submission.
 - Report `txn_hash`, `submission_state`, `next_action`, and whether immediate confirmation data is already present.
 
 ### 12. Track Confirmation
@@ -202,6 +206,7 @@ the user's intent first, then use the scripts for deterministic execution.
 - Inspect `submit_signed_transaction.next_action`.
 - If `next_action = watch_transaction`, immediately call `watch_transaction`.
 - If `next_action = reconcile_by_txn_hash`, reconcile by `txn_hash` through `watch_transaction` instead of blindly resubmitting.
+- If the persisted transfer state already has an unresolved submission for the prepared payload, reconcile that `txn_hash` before any new submit attempt.
 - If `next_action = reprepare_then_resign`, discard the old signed bytes and restart from `prepare_transfer`.
 - If `status_summary.confirmed = true` but top-level `confirmed = false`, report that the transaction is included but has not yet reached the requested confirmation depth.
 - If submission is accepted but confirmation is still unavailable, report that the transaction is submitted but not yet confirmed. Do not present that state as final success.
@@ -210,10 +215,11 @@ the user's intent first, then use the scripts for deterministic execution.
 
 - `run_create_account.py` writes create-account audit records under `$HOME/.starcoin-agents/wallet-runtime/audit/create-account-audit.jsonl` by default.
 - `run_transfer_test.py` writes transfer audit records under the active runtime's `audit/transfer-audit.jsonl` by default.
+- `run_transfer_test.py` writes transfer state under the active runtime's `audit/transfer-state.json` by default.
 - Write a local JSONL audit record for the preflight preview, host decision, signing request lifecycle, and submit result.
 - The audit trail should include request id, payload hash, backend id, timestamps, and terminal decision.
 - Do not log plaintext passwords, private keys, raw signed payloads, or full signed transaction bytes.
-- When reading an existing audit file for the user, summarize request id, payload hash, backend id, txn hash, terminal status, and timestamps. Do not dump the whole file unless the user explicitly asks.
+- When reading an existing audit file for the user, prefer `workflow_audit.py summary`; summarize request id, payload hash, backend id, txn hash, terminal status, and timestamps. Do not dump the whole file unless the user explicitly asks.
 
 ## Safety Rules
 
@@ -223,6 +229,7 @@ the user's intent first, then use the scripts for deterministic execution.
 - If the prepared transaction expires or the sequence number becomes stale, restart from `prepare_transfer`.
 - If the user provides a human-readable non-STC token amount and decimal precision is not already known, ask for clarification instead of guessing.
 - Do not treat `submission_unknown` or a missing post-submit watch result as permission to resubmit blindly.
+- When a persisted unresolved submission exists for the prepared payload, reconcile by the persisted `txn_hash` before any new submit.
 - Do not proceed to wallet signing when the preview shows a blocking risk such as RPC unavailability, insufficient balance, or chain-context mismatch.
 - If the local runtime is unavailable, stop on the runtime problem and send the user to `doctor.py` instead of switching over to the `starcoin` CLI transfer path.
 

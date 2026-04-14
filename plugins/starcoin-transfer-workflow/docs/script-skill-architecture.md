@@ -138,16 +138,20 @@ This does not fully block Plan B because:
 
 - `prepared_chain_context` is already carried by the host
 - the current transfer test config sets `allow_submit_without_prior_simulation = true`
-- the host can still enforce "no blind re-submit after `submission_unknown`"
+- the host persists prepared payload attestations next to the audit log
+- the host can enforce "no blind re-submit after `submission_unknown`" by reconciling the
+  persisted `txn_hash` before any new submit attempt
 
-But it does mean a one-shot CLI is not a perfect semantic replacement for the MCP server.
+But it does mean a one-shot CLI is not a perfect semantic replacement for a long-lived
+`starcoin-node-core` context. The script-level state protects the guided workflow, while direct
+low-level `starcoin-node-cli` calls still do not share core-owned durable attestation state.
 
 Decision:
 
 - Phase 1 accepts a one-shot CLI for node-side operations
 - the host must treat `submission_unknown` as reconcile-first and must not re-submit blindly
-- a later phase should add durable session state or a runtime-owned transfer session if strict
-  parity with in-memory attestation is required
+- a later phase should add core-owned durable session state or a runtime-owned transfer session if
+  strict parity with in-memory attestation is required
 
 ## 5. Final Design
 
@@ -270,7 +274,7 @@ Deliverables:
 Deliverables:
 
 - durable node-side attestation or session continuity across separate CLI invocations
-- durable protection against blind re-submit after prior `submission_unknown`
+- core-owned protection against blind re-submit after prior `submission_unknown`
 - stronger end-to-end acceptance coverage for the new path
 
 ## 7. Interface Sketches
@@ -322,7 +326,9 @@ Phase 1 mitigation:
 
 - keep `allow_submit_without_prior_simulation = true`
 - preserve `prepared_chain_context` in the host
-- explicitly block blind re-submit in host logic after `submission_unknown`
+- persist a prepared-payload attestation next to the transfer audit log
+- reconcile the persisted unresolved `txn_hash` before any new submit attempt after
+  `submission_unknown`
 
 ### Risk 2: Skill Drift During Migration
 

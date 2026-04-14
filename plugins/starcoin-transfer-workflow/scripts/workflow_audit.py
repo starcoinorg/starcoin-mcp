@@ -1,16 +1,39 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import fcntl
 import hashlib
 import json
+import sys
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from runtime_layout import DEFAULT_WALLET_RUNTIME_DIR
+
 if TYPE_CHECKING:
     from transfer_controller import TransferSession, TransferSubmitOutcome
     from transfer_host import TransferPreflightReport
+
+
+DEFAULT_TRANSFER_AUDIT_PATH = (
+    DEFAULT_WALLET_RUNTIME_DIR / "audit" / "transfer-audit.jsonl"
+)
+AUDIT_SUMMARY_FIELDS = (
+    "recorded_at",
+    "event",
+    "request_id",
+    "payload_sha256",
+    "backend_id",
+    "txn_hash",
+    "terminal_status",
+    "submission_state",
+    "submission_next_action",
+    "confirmed",
+    "decision",
+    "reason",
+)
 
 
 def utc_now_rfc3339() -> str:
@@ -229,3 +252,82 @@ class WorkflowAuditLogger:
 
 
 TransferAuditLogger = WorkflowAuditLogger
+
+
+def iter_audit_records(path: Path) -> list[dict[str, Any]]:
+    try:
+        lines = path.expanduser().read_text(encoding="utf-8").splitlines()
+    except FileNotFoundError:
+        return []
+    records: list[dict[str, Any]] = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            records.append(value)
+    return records
+
+
+def summarize_audit_records(path: Path, *, limit: int = 20) -> list[dict[str, Any]]:
+    records = iter_audit_records(path)
+    selected = records[-max(0, limit) :] if limit else records
+    summary: list[dict[str, Any]] = []
+    for record in selected:
+        summary.append(
+            {
+                field: record[field]
+                for field in AUDIT_SUMMARY_FIELDS
+                if field in record and record[field] is not None
+            }
+        )
+    return summary
+
+
+def format_audit_summary(records: list[dict[str, Any]]) -> str:
+    if not records:
+        return "No audit records found."
+    lines = []
+    for record in records:
+        parts = [f"{key}={value}" for key, value in record.items()]
+        lines.append(" | ".join(parts))
+    return "\n".join(lines)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Inspect Starcoin workflow audit JSONL records.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+    summary = subparsers.add_parser("summary", help="Summarize audit records without raw payloads.")
+    summary.add_argument(
+        "--path",
+        default=str(DEFAULT_TRANSFER_AUDIT_PATH),
+        help="Audit JSONL path. Defaults to the transfer audit under the wallet runtime.",
+    )
+    summary.add_argument(
+        "--limit",
+        type=int,
+        default=20,
+        help="Number of most recent records to summarize. Use 0 for all records.",
+    )
+    summary.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = parse_args()
+    if args.command != "summary":
+        raise SystemExit(f"unsupported command: {args.command}")
+    records = summarize_audit_records(Path(args.path), limit=args.limit)
+    if args.json:
+        json.dump(records, fp=sys.stdout, indent=2)
+        print()
+    else:
+        print(format_audit_summary(records))
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

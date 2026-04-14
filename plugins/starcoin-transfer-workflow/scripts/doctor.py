@@ -10,6 +10,8 @@ import socket
 import stat
 import sys
 from pathlib import Path
+from typing import Any
+from urllib.request import Request, urlopen
 
 from runtime_layout import (
     STARMASKD_MANIFEST_MARKERS,
@@ -114,6 +116,117 @@ def parse_json(path: Path) -> dict | None:
         return None
     except json.JSONDecodeError:
         return None
+
+
+def json_rpc(
+    url: str, method: str, params: list[Any] | dict[str, Any] | None = None
+) -> Any:
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params if params is not None else [],
+    }
+    request = Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urlopen(request, timeout=3) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    if "error" in body:
+        raise RuntimeError(f"{method} failed: {body['error']}")
+    return body["result"]
+
+
+def extract_chain_field(value: Any, field: str) -> Any:
+    if isinstance(value, dict):
+        if field in value:
+            return value[field]
+        peer_info = value.get("peer_info")
+        if isinstance(peer_info, dict):
+            chain_info = peer_info.get("chain_info")
+            if isinstance(chain_info, dict) and field in chain_info:
+                return chain_info[field]
+    return None
+
+
+def live_rpc_checks(
+    node_rpc: object,
+    *,
+    expected_chain_id: object,
+    expected_network: object,
+    expected_genesis_hash: object,
+) -> list[dict]:
+    if looks_like_placeholder_rpc(node_rpc):
+        return [
+            check(
+                "node rpc live",
+                False,
+                f"rpc_endpoint_url={node_rpc!r}",
+                "Set rpc_endpoint_url before running the live RPC probe.",
+            )
+        ]
+    assert isinstance(node_rpc, str)
+    try:
+        node_info = json_rpc(node_rpc, "node.info")
+        chain_info = json_rpc(node_rpc, "chain.info")
+    except Exception as exc:
+        return [
+            check(
+                "node rpc live",
+                False,
+                f"{node_rpc} ({exc})",
+                "Start the Starcoin RPC node or fix rpc_endpoint_url in node-cli.toml.",
+            )
+        ]
+
+    observed_chain_id = extract_chain_field(chain_info, "chain_id")
+    if observed_chain_id is None:
+        observed_chain_id = extract_chain_field(node_info, "chain_id")
+    observed_network = extract_chain_field(node_info, "net")
+    if observed_network is None:
+        observed_network = extract_chain_field(chain_info, "network")
+    observed_genesis_hash = extract_chain_field(chain_info, "genesis_hash")
+    if observed_genesis_hash is None:
+        observed_genesis_hash = extract_chain_field(node_info, "genesis_hash")
+
+    results = [
+        check(
+            "node rpc live",
+            True,
+            f"{node_rpc} node.info and chain.info responded",
+        )
+    ]
+    if expected_chain_id is not None:
+        results.append(
+            check(
+                "node rpc chain id",
+                str(observed_chain_id) == str(expected_chain_id),
+                f"observed={observed_chain_id!r}, expected={expected_chain_id!r}",
+                "Use the RPC endpoint that matches expected_chain_id, or update node-cli.toml after verifying the target chain.",
+            )
+        )
+    if expected_network is not None:
+        results.append(
+            check(
+                "node rpc network",
+                str(observed_network or "").lower() == str(expected_network or "").lower(),
+                f"observed={observed_network!r}, expected={expected_network!r}",
+                "Use the RPC endpoint that matches expected_network, or update node-cli.toml after verifying the target chain.",
+            )
+        )
+    if not looks_like_placeholder_hash(expected_genesis_hash):
+        results.append(
+            check(
+                "node rpc genesis hash",
+                str(observed_genesis_hash or "").lower()
+                == str(expected_genesis_hash or "").lower(),
+                f"observed={observed_genesis_hash!r}, expected={expected_genesis_hash!r}",
+                "Use the RPC endpoint that matches expected_genesis_hash, or update node-cli.toml after verifying the target chain.",
+            )
+        )
+    return results
 
 
 def socket_reachable(path: Path) -> tuple[bool, str]:
@@ -367,6 +480,9 @@ def main() -> int:
 
     node_mode = node_config.get("mode") if isinstance(node_config, dict) else None
     node_rpc = node_config.get("rpc_endpoint_url") if isinstance(node_config, dict) else None
+    expected_network = (
+        node_config.get("expected_network") if isinstance(node_config, dict) else None
+    )
     expected_genesis_hash = (
         node_config.get("expected_genesis_hash") if isinstance(node_config, dict) else None
     )
@@ -412,6 +528,15 @@ def main() -> int:
             ),
         ]
         )
+    if node_config_path.exists() and "_parse_error" not in node_config:
+        results.extend(
+            live_rpc_checks(
+                node_rpc,
+                expected_chain_id=node_config.get("expected_chain_id"),
+                expected_network=expected_network,
+                expected_genesis_hash=expected_genesis_hash,
+            )
+        )
 
     if socket_cleanup_result is not None:
         cleanup_ok, cleanup_detail = socket_cleanup_result
@@ -455,6 +580,7 @@ def main() -> int:
         "next_steps": [
             "Install or enable the plugin from the marketplace entry shown above.",
             f"Copy and edit {NODE_EXAMPLE_PATH} and {WALLET_EXAMPLE_PATH} if the default configs are missing.",
+            "Make sure the configured Starcoin RPC endpoint responds and matches the expected chain identity.",
             "Install starcoin-node-cli, starmaskd, and local-account-agent on PATH if you want a global plugin that does not rely on a source checkout.",
             "Start starmaskd and the wallet backend if the daemon socket check failed.",
             "Ask your agentic host to use the starcoin-transfer skill for one transfer after the checks pass.",

@@ -273,6 +273,22 @@ Both audit files record request ids, backend ids, timestamps, and terminal decis
 path also records the prepared payload hash and submit outcome. The audit helpers intentionally do
 not log passwords, private keys, raw signed payloads, or full signed transaction bytes.
 
+Use the summary command when inspecting audit history:
+
+```bash
+python3 ./scripts/workflow_audit.py summary \
+  --path $HOME/.starcoin-agents/wallet-runtime/audit/transfer-audit.jsonl
+```
+
+Transfer runs also keep a small JSON state file next to the transfer audit by default:
+
+- `<active-runtime>/audit/transfer-state.json`
+
+The state file records prepared payload hashes, chain context, simulation status, and unresolved
+submission hashes. It does not store raw transaction bytes or signed transaction bytes. If a prior
+submit returned `submission_unknown`, the next run reconciles the persisted `txn_hash` before any
+new submit attempt for the same prepared payload.
+
 ## CLI Transfer Test
 
 Two modes are supported.
@@ -291,7 +307,8 @@ python3 ./scripts/run_transfer_test.py \
   --amount-unit stc \
   --vm-profile vm2_only \
   --min-confirmed-blocks 3 \
-  --audit-log-path <repo-root>/.starcoin-agents/transfer-audit.jsonl
+  --audit-log-path <repo-root>/.starcoin-agents/transfer-audit.jsonl \
+  --state-path <repo-root>/.starcoin-agents/transfer-state.json
 ```
 
 ### Reuse A Running Wallet Supervisor
@@ -320,8 +337,10 @@ In one-shot mode, `run_transfer_test.py` does this:
 6. calls `starcoin-node-cli` for `prepare_transfer`, `node_health`, `get_account_overview`, `submit_signed_transaction`, and follow-up `watch_transaction`
 7. shows a host-side preflight preview card plus risk labels before wallet signing
 8. blocks immediately if the preview finds a blocking risk such as RPC unavailability or insufficient balance
-9. waits for the local wallet CLI approval card in the same terminal
-10. appends JSONL audit records under the active runtime directory unless `--audit-log-path` overrides it
+9. records a prepared payload attestation in the transfer state file
+10. waits for the local wallet CLI approval card in the same terminal
+11. reconciles persisted unresolved submissions by `txn_hash` before any retry
+12. appends JSONL audit records under the active runtime directory unless `--audit-log-path` overrides it
 
 In supervisor-reuse mode, steps 3 and 4 are skipped. The script reads
 `$HOME/.starcoin-agents/wallet-runtime/wallet-runtime.json`, reuses the daemon socket and wallet instance, and
@@ -360,11 +379,14 @@ intermediate state and exits non-zero instead of treating it as a completed succ
 - the preview compares the latest `chain_status` with the prepared `chain_context`
 - fee and nonce context come from `prepare_transfer.execution_facts`
 - blocking risks stop the flow before `request.createSignTransaction`
+- nonce movement after preparation is blocking; prepare again before signing
 
 By default the audit file is written to:
 
 - `<runtime-dir>/audit/transfer-audit.jsonl` for one-shot runs
 - `<wallet-runtime-dir>/audit/transfer-audit.jsonl` for supervisor-reuse runs
+
+By default the transfer state file is written next to that audit file as `transfer-state.json`.
 
 ## Notes
 
