@@ -29,8 +29,8 @@ Plan B removes the plugin's direct use of those adapter binaries and replaces it
 
 ## 2. Target Outcome
 
-The plugin should support user-in-the-loop transfers without registering any in-tree adapter
-binary in Codex.
+The plugin should support user-in-the-loop wallet workflows, including account creation and
+transfers, without registering any in-tree adapter binary in Codex.
 
 The final runtime shape is:
 
@@ -107,6 +107,7 @@ Decision:
 `starmask-runtime` is already a thin adapter over `starmaskd`:
 
 - account listing maps to `wallet.listAccounts`
+- account creation maps to `request.createAccount`
 - public key lookup maps to `wallet.getPublicKey`
 - signing request creation maps to `request.createSignTransaction`
 - polling maps to `request.getStatus`
@@ -166,6 +167,7 @@ Supported host-facing operations in Phase 1:
 
 - `wallet_list_instances`
 - `wallet_list_accounts`
+- `wallet_request_create_account`
 - `wallet_get_public_key`
 - `wallet_request_sign_transaction`
 - `wallet_get_request_status`
@@ -193,7 +195,7 @@ Supported commands in Phase 1:
 
 ### 5.3 Host Orchestration
 
-Keep the host-side transfer orchestration in Python and skill text.
+Keep the host-side wallet orchestration in Python and skill text.
 
 `transfer_controller.py` remains the reusable state owner for:
 
@@ -206,15 +208,17 @@ Keep the host-side transfer orchestration in Python and skill text.
 The host-side workflow now has two layers:
 
 - skill-level intent resolution
+  - choose between account creation, transfer execution, and audit inspection
   - extract network, sender, receiver, token, amount, and wallet instance from the user's request
   - if any field is missing, ask one precise follow-up question or list concrete wallet candidates
 - script-level deterministic execution
+  - create a wallet request for account bootstrap when the user needs a fresh address
   - prepare the transaction
   - consume typed `execution_facts` from preparation output instead of scraping transaction-view JSON for nonce and gas details
   - query `node_health` and `get_account_overview`
   - derive nonce, balance, fee estimate, and chain-context checks
   - generate risk labels and a transaction preview before wallet signing
-  - append a minimal JSONL audit trail with request id, payload hash, backend id, and terminal decision
+  - append a minimal JSONL audit trail with request id, backend id, timestamps, and terminal decision, plus payload hash for transfer preparation
 
 The controller still preserves the existing `call_tool(name, arguments)` shape even though the
 underlying transport is no longer MCP, but the host contract is now broader than a pure
@@ -243,6 +247,7 @@ That means:
 Deliverables:
 
 - direct Python client for `starmaskd`
+- guided account-creation script through the daemon request flow
 - standalone chain CLI reusing `starcoin-node-core`
 - updated `run_transfer_test.py` using the new clients
 - updated design and operator docs

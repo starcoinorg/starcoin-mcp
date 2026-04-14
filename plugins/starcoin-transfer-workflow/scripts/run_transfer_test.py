@@ -22,7 +22,6 @@ from runtime_layout import (
     wallet_runtime_socket_path,
 )
 from starmaskd_client import StarmaskDaemonClient
-from transfer_host import TransferAuditLogger
 from transfer_controller import (
     TransferController,
     describe_confirmation_depth,
@@ -30,6 +29,7 @@ from transfer_controller import (
     normalize_min_confirmed_blocks,
     resolve_token_code,
 )
+from workflow_audit import WorkflowAuditLogger
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -334,7 +334,7 @@ def main() -> int:
         runtime_dir=runtime_dir,
         wallet_runtime_dir=wallet_runtime_dir,
     )
-    audit_logger = TransferAuditLogger(audit_log_path)
+    audit_logger = WorkflowAuditLogger(audit_log_path)
     wallet_runtime = None
     wallet_dir: Path | None = None
     wallet_instance_id = args.wallet_instance_id

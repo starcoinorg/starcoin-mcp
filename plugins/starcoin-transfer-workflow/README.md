@@ -1,7 +1,7 @@
 # Starcoin Transfer Workflow
 
-This plugin example turns Codex into the transfer host client for a user-in-the-loop Starcoin
-transfer flow.
+This plugin example turns Codex into the host client for user-in-the-loop Starcoin wallet flows,
+including address creation, transfer execution, and local audit tracking.
 
 The current direction is Plan B:
 
@@ -52,10 +52,14 @@ ships a plugin-managed adapter entrypoint.
   - direct JSON-RPC client for `starmaskd`
 - `scripts/node_cli_client.py`
   - adapter that calls `starcoin-node-cli`
+- `scripts/run_create_account.py`
+  - one-shot account-creation flow through the direct daemon path
 - `scripts/transfer_controller.py`
   - typed host-side transfer controller
 - `scripts/transfer_host.py`
-  - host-side preflight, risk labeling, preview, and audit helpers
+  - host-side preflight, risk labeling, and preview helpers
+- `scripts/workflow_audit.py`
+  - shared JSONL audit logger for create-account and transfer workflows
 - `scripts/wallet_runtime.py`
   - foreground wallet-side supervisor for `starmaskd + local-account-agent`
 - `scripts/run_transfer_test.py`
@@ -138,14 +142,18 @@ starcoin -n dev -d <repo-root>/.runtime/devstack dev get-coin <sender-address>
 If the wallet runtime is already up, bootstrap can also stay inside the daemon request flow:
 
 ```bash
-python3 ./scripts/starmaskd_client.py --wallet-runtime-dir $HOME/.runtime/wallet-runtime \
-  call wallet_create_account <<'JSON'
-{"client_request_id":"bootstrap-account-1","wallet_instance_id":"local-main","display_hint":"Bootstrap local account","client_context":"codex"}
-JSON
+python3 ./scripts/run_create_account.py \
+  --wallet-runtime-dir $HOME/.runtime/wallet-runtime \
+  --wallet-instance-id local-main \
+  --display-hint "Bootstrap local account"
 ```
 
-Then poll `wallet_get_request_status` until the request reaches `approved` and read
-`result.address` from the `created_account` payload.
+`run_create_account.py` creates the request, polls `wallet_get_request_status`, prints the created
+address on approval, and writes an audit record under
+`$HOME/.runtime/wallet-runtime/audit/create-account-audit.jsonl` by default.
+
+For lower-level debugging, you can still call `wallet_create_account` directly through
+`starmaskd_client.py` and poll `wallet_get_request_status` yourself.
 
 Those `starcoin` CLI examples are still useful for local funding. The transfer flow itself should
 use the script-driven `starmaskd` + `starcoin-node-cli` path.
@@ -175,7 +183,7 @@ Preferred local-account flow:
 1. start the wallet supervisor in one terminal
 2. keep that terminal open for CLI approval cards
 3. run `python3 ./scripts/doctor.py`
-4. run the host-side transfer test or ask Codex to prepare a transfer
+4. run `python3 ./scripts/run_create_account.py ...`, run the host-side transfer test, or ask Codex to drive the workflow
 
 If the daemon socket path exists but the doctor reports `Connection refused`, rerun:
 
@@ -193,6 +201,25 @@ python3 ./scripts/wallet_runtime.py up \
 
 The supervisor writes `wallet-runtime.json` under `$HOME/.runtime/wallet-runtime/` by default and keeps
 `local-account-agent` attached to the current terminal so `tty_prompt` approvals still work.
+
+## Create Account Flow
+
+The converged wallet bootstrap flow is:
+
+1. Codex or the operator resolves the target `wallet_instance_id`
+2. `wallet.listInstances` through `scripts/starmaskd_client.py`
+3. `request.createAccount` through `scripts/run_create_account.py` or `scripts/starmaskd_client.py`
+4. wallet approval plus `request.getStatus`
+5. report `result.address`, `is_default`, and `is_locked`
+6. append a local JSONL audit record for request creation and the terminal decision
+
+Recommended command:
+
+```bash
+python3 ./scripts/run_create_account.py \
+  --wallet-runtime-dir $HOME/.runtime/wallet-runtime \
+  --wallet-instance-id local-main
+```
 
 ## Transfer Flow
 
@@ -217,6 +244,19 @@ back to direct `starcoin` CLI transfer commands.
 
 The scripts assume Codex has already resolved the intent. Natural-language extraction and precise
 follow-up questions remain a skill-level responsibility, not a Python parser feature.
+
+## Audit Trail
+
+The workflow now keeps separate default JSONL audit files for the two wallet-side flows:
+
+- create-account:
+  - `$HOME/.runtime/wallet-runtime/audit/create-account-audit.jsonl`
+- transfer:
+  - `<active-runtime>/audit/transfer-audit.jsonl`
+
+Both audit files record request ids, backend ids, timestamps, and terminal decisions. The transfer
+path also records the prepared payload hash and submit outcome. The audit helpers intentionally do
+not log passwords, private keys, raw signed payloads, or full signed transaction bytes.
 
 ## CLI Transfer Test
 
