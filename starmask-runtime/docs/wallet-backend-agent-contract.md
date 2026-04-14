@@ -361,6 +361,12 @@ Result payload rules:
 
 - `signed_transaction` returns `signed_txn_bcs_hex`
 - `signed_message` returns `signature`
+- `created_account` returns all of:
+  - `created_account_address`: canonical account address string
+  - `created_account_public_key`: encoded public key bytes
+  - `created_account_curve`: key curve enum such as `ed25519` or `secp256k1`
+  - `created_account_is_default`: boolean flag for the default-account marker
+  - `created_account_is_locked`: boolean flag for whether the new account is locked immediately
 - future `unlock_granted` may return `unlock_expires_at`
 
 Coordinator behavior:

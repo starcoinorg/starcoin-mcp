@@ -1108,9 +1108,17 @@ where
                         "Selected wallet instance does not support CreateAccount",
                     ));
                 }
+                if !wallet.connected {
+                    return Err(CoreError::shared(
+                        SharedErrorCode::WalletUnavailable,
+                        "Selected wallet instance is not connected",
+                    ));
+                }
                 Ok(wallet_instance_id.clone())
             }
-            _ => self.resolve_wallet_for_signing(kind, address, wallet_instance_id),
+            RequestKind::SignTransaction | RequestKind::SignMessage => {
+                self.resolve_wallet_for_signing(kind, address, wallet_instance_id)
+            }
         }
     }
 
@@ -2707,6 +2715,59 @@ mod tests {
         assert_eq!(
             error.to_string(),
             "unsupported_operation: Selected wallet instance does not support CreateAccount"
+        );
+    }
+
+    #[test]
+    fn create_account_request_requires_connected_wallet_instance() {
+        let mut coordinator = build_coordinator();
+        coordinator.config.wallet_offline_after = DurationSeconds::new(25);
+        let wallet_instance_id = WalletInstanceId::new("wallet-create-offline").unwrap();
+
+        coordinator
+            .dispatch(CoordinatorCommand::RegisterBackend(
+                RegisterBackendCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    backend_kind: BackendKind::LocalAccountDir,
+                    transport_kind: TransportKind::LocalSocket,
+                    approval_surface: ApprovalSurface::TtyPrompt,
+                    instance_label: "Local Main".to_owned(),
+                    extension_id: String::new(),
+                    extension_version: String::new(),
+                    protocol_version: 2,
+                    capabilities: vec![
+                        WalletCapability::Unlock,
+                        WalletCapability::GetPublicKey,
+                        WalletCapability::SignMessage,
+                        WalletCapability::SignTransaction,
+                        WalletCapability::CreateAccount,
+                    ],
+                    backend_metadata: serde_json::json!({}),
+                    profile_hint: None,
+                    lock_state: LockState::Unlocked,
+                    accounts: vec![wallet_account(&wallet_instance_id, "0x1", true)],
+                },
+            ))
+            .unwrap();
+
+        coordinator.clock.now = TimestampMs::from_millis(1_710_000_026_000);
+        coordinator
+            .dispatch(CoordinatorCommand::TickMaintenance)
+            .unwrap();
+
+        let error = coordinator
+            .dispatch(CoordinatorCommand::CreateAccount(CreateAccountCommand {
+                client_request_id: ClientRequestId::new("client-create-offline").unwrap(),
+                wallet_instance_id,
+                display_hint: None,
+                client_context: None,
+                ttl_seconds: None,
+            }))
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "wallet_unavailable: Selected wallet instance is not connected"
         );
     }
 

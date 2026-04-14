@@ -7,7 +7,13 @@ import unittest
 from pathlib import Path
 
 from transfer_controller import TransferAmount, TransferController, TransferSession
-from transfer_host import TransferAuditLogger, TransferPreflightReport, TransferRiskLabel
+from transfer_host import (
+    TransferAuditLogger,
+    TransferPreflightReport,
+    TransferRiskLabel,
+    balance_entry_matches_token,
+    token_codes_match,
+)
 
 
 class FakeToolClient:
@@ -160,13 +166,38 @@ class TransferPreflightTests(unittest.TestCase):
         self.assertEqual(report.estimated_network_fee, 642)
         self.assertEqual(report.max_network_fee, 2000)
         self.assertEqual(report.sender_token_balance, 2_000_000_000)
-        self.assertEqual(report.sender_post_transfer_balance, 1_000_000_000)
+        self.assertEqual(report.sender_post_transfer_balance, 999_999_358)
         self.assertFalse(controller.has_blocking_risks(report))
         self.assertIn(
             ("Estimated Fee", "642 raw units"),
             controller.preflight_rows(sample_session(), report, min_confirmed_blocks=3),
         )
         self.assertEqual(report.risk_labels, ())
+
+    def test_token_matching_only_aliases_known_stc_codes(self) -> None:
+        self.assertTrue(token_codes_match("0x1::starcoin_coin::STC", "0x1::STC::STC"))
+        self.assertTrue(
+            token_codes_match(
+                "0x1::starcoin_coin::STC",
+                "0x00000000000000000000000000000001::starcoin_coin::STC",
+            )
+        )
+        self.assertFalse(
+            token_codes_match("0x1::starcoin_coin::STC", "0x42::wrapped_token::STC")
+        )
+
+    def test_balance_suffix_fallback_is_limited_to_known_stc_store_entries(self) -> None:
+        stc_store = {
+            "name": "0x1::fungible_asset::FungibleStore",
+            "value": {"json": {"balance": 2_000_000_000, "token": "STC"}},
+        }
+
+        self.assertTrue(
+            balance_entry_matches_token(stc_store, "0x1::starcoin_coin::STC")
+        )
+        self.assertFalse(
+            balance_entry_matches_token(stc_store, "0x42::wrapped_token::STC")
+        )
 
     def test_collect_preflight_report_flags_blocking_risks(self) -> None:
         node_client = FakeToolClient(

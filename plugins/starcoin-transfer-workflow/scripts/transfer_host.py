@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
+import re
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -13,6 +15,15 @@ if TYPE_CHECKING:
 
 
 DEFAULT_GAS_TOKEN_CODE = "0x1::starcoin_coin::STC"
+VM1_STC_TOKEN_CODE = "0x1::STC::STC"
+HEX_ADDRESS_RE = re.compile(r"0x[0-9a-fA-F]+")
+CANONICAL_STC_CODES = frozenset(
+    code.lower()
+    for code in (
+        DEFAULT_GAS_TOKEN_CODE,
+        VM1_STC_TOKEN_CODE,
+    )
+)
 SEVERITY_ORDER = {
     "block": 0,
     "warn": 1,
@@ -110,12 +121,17 @@ def extract_nested_str(value: Any, *paths: tuple[str, ...]) -> str | None:
     return None
 
 
+def normalize_hex_address(match: re.Match[str]) -> str:
+    hex_digits = match.group(0)[2:].lstrip("0") or "0"
+    return f"0x{hex_digits.lower()}"
+
+
 def normalize_token_code(token_code: str) -> str:
-    return token_code.strip()
+    return HEX_ADDRESS_RE.sub(normalize_hex_address, token_code.strip())
 
 
 def is_stc_like_token(token_code: str) -> bool:
-    return normalize_token_code(token_code).lower().endswith("::stc")
+    return normalize_token_code(token_code).lower() in CANONICAL_STC_CODES
 
 
 def token_codes_match(left: str, right: str) -> bool:
@@ -123,7 +139,7 @@ def token_codes_match(left: str, right: str) -> bool:
     normalized_right = normalize_token_code(right).lower()
     if normalized_left == normalized_right:
         return True
-    return is_stc_like_token(normalized_left) and is_stc_like_token(normalized_right)
+    return normalized_left in CANONICAL_STC_CODES and normalized_right in CANONICAL_STC_CODES
 
 
 def token_present_in_accepted_tokens(token_code: str, accepted_tokens: list[Any]) -> bool:
@@ -138,7 +154,7 @@ def balance_entry_matches_token(entry: Any, token_code: str) -> bool:
     if not isinstance(entry, dict):
         return False
     normalized_token = normalize_token_code(token_code).lower()
-    entry_name = str(entry.get("name") or "").lower()
+    entry_name = normalize_token_code(str(entry.get("name") or "")).lower()
     if normalized_token and normalized_token in entry_name:
         return True
     token_label = extract_nested_str(
@@ -146,12 +162,11 @@ def balance_entry_matches_token(entry: Any, token_code: str) -> bool:
         ("value", "json", "token"),
         ("json", "token"),
     )
-    if token_label is not None and normalized_token.endswith(f"::{token_label.lower()}"):
-        return True
+    token_label_value = str(token_label or "").strip().lower()
     return (
-        is_stc_like_token(normalized_token)
+        normalized_token in CANONICAL_STC_CODES
         and "fungible_asset::fungiblestore" in entry_name
-        and token_label in (None, "", "STC", "stc")
+        and token_label_value in ("", "stc")
     )
 
 
@@ -306,6 +321,11 @@ def analyze_preflight(
     sender_post_transfer_balance = None
     if sender_token_balance is not None:
         sender_post_transfer_balance = sender_token_balance - raw_amount
+        if (
+            estimated_network_fee is not None
+            and token_codes_match(token_code, gas_token_code)
+        ):
+            sender_post_transfer_balance -= estimated_network_fee
 
     risk_labels: list[TransferRiskLabel] = []
     prepared_context = session.prepare_result.get("chain_context") or {}
@@ -541,11 +561,18 @@ def has_blocking_risks(report: TransferPreflightReport) -> bool:
 class TransferAuditLogger:
     def __init__(self, path: Path):
         self.path = Path(path).expanduser().resolve()
+        self.lock_path = self.path.with_name(f"{self.path.name}.lock")
         self.path.parent.mkdir(parents=True, exist_ok=True)
         if not self.path.exists():
             self.path.touch(mode=0o600)
+        if not self.lock_path.exists():
+            self.lock_path.touch(mode=0o600)
         try:
             self.path.chmod(0o600)
+        except OSError:
+            pass
+        try:
+            self.lock_path.chmod(0o600)
         except OSError:
             pass
 
@@ -650,6 +677,12 @@ class TransferAuditLogger:
 
     def _append(self, record: dict[str, Any]) -> None:
         payload = {"recorded_at": utc_now_rfc3339(), **record}
-        with self.path.open("a", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=True, separators=(",", ":"))
-            handle.write("\n")
+        with self.lock_path.open("a", encoding="utf-8") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            try:
+                with self.path.open("a", encoding="utf-8") as handle:
+                    json.dump(payload, handle, ensure_ascii=True, separators=(",", ":"))
+                    handle.write("\n")
+                    handle.flush()
+            finally:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)

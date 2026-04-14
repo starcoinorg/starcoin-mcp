@@ -195,10 +195,10 @@ mod tests {
     use std::cell::RefCell;
 
     use starmask_types::{
-        AckResult, ClientRequestId, GetRequestStatusParams, GetRequestStatusResult, LockState,
-        PayloadHash, RequestHasAvailableParams, RequestHasAvailableResult, RequestId, RequestKind,
-        RequestPullNextResult, RequestRejectParams, RequestResolveParams, ResultKind, SharedError,
-        SharedErrorCode, WalletInstanceId,
+        AckResult, ClientRequestId, Curve, GetRequestStatusParams, GetRequestStatusResult,
+        LockState, PayloadHash, RequestHasAvailableParams, RequestHasAvailableResult, RequestId,
+        RequestKind, RequestPullNextResult, RequestRejectParams, RequestResolveParams, ResultKind,
+        SharedError, SharedErrorCode, WalletInstanceId,
     };
 
     use super::*;
@@ -474,6 +474,57 @@ mod tests {
                 created_account_curve: None,
                 created_account_is_default: None,
                 created_account_is_locked: None,
+            }
+        );
+    }
+
+    #[test]
+    fn request_resolve_forwards_created_account_payload_to_daemon() {
+        let client = FakeClient::default();
+        let wallet_instance_id = WalletInstanceId::new("wallet-1").unwrap();
+        let request_id = RequestId::new("request-1").unwrap();
+        let presentation_id = starmask_types::PresentationId::new("presentation-1").unwrap();
+
+        let response = handle_request(
+            &client,
+            NativeBridgeRequest::RequestResolve {
+                message_id: "msg-resolve-created".to_owned(),
+                wallet_instance_id: wallet_instance_id.clone(),
+                request_id: request_id.clone(),
+                presentation_id: presentation_id.clone(),
+                result_kind: ResultKind::CreatedAccount,
+                signed_txn_bcs_hex: None,
+                signature: None,
+                created_account_address: Some("0xabc".to_owned()),
+                created_account_public_key: Some("0xpub".to_owned()),
+                created_account_curve: Some(Curve::Ed25519),
+                created_account_is_default: Some(true),
+                created_account_is_locked: Some(false),
+            },
+        );
+
+        assert_eq!(
+            response,
+            NativeBridgeResponse::ExtensionAck {
+                reply_to: "msg-resolve-created".to_owned(),
+            }
+        );
+        assert_eq!(client.resolve_calls.borrow().len(), 1);
+        assert_eq!(
+            client.resolve_calls.borrow()[0],
+            RequestResolveParams {
+                protocol_version: daemon_protocol_version(),
+                wallet_instance_id,
+                request_id,
+                presentation_id,
+                result_kind: ResultKind::CreatedAccount,
+                signed_txn_bcs_hex: None,
+                signature: None,
+                created_account_address: Some("0xabc".to_owned()),
+                created_account_public_key: Some("0xpub".to_owned()),
+                created_account_curve: Some(Curve::Ed25519),
+                created_account_is_default: Some(true),
+                created_account_is_locked: Some(false),
             }
         );
     }

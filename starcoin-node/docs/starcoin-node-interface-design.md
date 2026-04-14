@@ -482,7 +482,10 @@ Prepare an unsigned script-function or contract-call transaction.
 - `transaction_kind`: `contract_call`
 - `simulation_status`
 - `simulation`
+- `execution_facts`
+  - resolved sender, nonce, gas settings, gas token, expiration, and fee estimates
 - `next_action`
+  - expected wallet step, usually `sign_transaction` or `get_public_key_then_simulate_or_sign`
 
 #### `prepare_publish_package`
 
@@ -509,7 +512,10 @@ Payloads above the configured size ceiling must be rejected locally with `payloa
 - `transaction_kind`: `publish_package`
 - `simulation_status`
 - `simulation`
+- `execution_facts`
+  - resolved sender, nonce, gas settings, gas token, expiration, and fee estimates
 - `next_action`
+  - expected wallet step, usually `sign_transaction` or `get_public_key_then_simulate_or_sign`
 
 ### 6.7 Simulation
 
@@ -662,6 +668,9 @@ Likely shared errors:
 - `node_unavailable`
 - `rpc_unavailable`
 - `invalid_chain_context`
+- `invalid_address`: preparation validation failed because an address field was malformed or unparsable
+- `invalid_asset`: preparation validation failed because an asset identifier was unknown or unsupported
+- `invalid_amount`: preparation validation failed because the amount was non-positive or malformed
 - `submission_unknown`
 - `simulation_failed`
 - `submission_failed`
