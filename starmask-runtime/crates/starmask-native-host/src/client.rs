@@ -304,6 +304,11 @@ mod tests {
                 result_kind: starmask_types::ResultKind::SignedMessage,
                 signed_txn_bcs_hex: None,
                 signature: Some("0xsig".to_owned()),
+                created_account_address: None,
+                created_account_public_key: None,
+                created_account_curve: None,
+                created_account_is_default: None,
+                created_account_is_locked: None,
             })
             .unwrap_err();
 

@@ -155,6 +155,7 @@ pub fn register_local_backend(
                     WalletCapability::GetPublicKey,
                     WalletCapability::SignMessage,
                     WalletCapability::SignTransaction,
+                    WalletCapability::CreateAccount,
                 ],
                 backend_metadata: serde_json::json!({
                     "account_provider_kind": "local",

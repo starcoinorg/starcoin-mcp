@@ -118,6 +118,7 @@ Phase-2 capability flags:
 
 - `unlock`
 - `get_public_key`
+- `create_account`
 - `sign_message`
 - `sign_transaction`
 
@@ -129,6 +130,8 @@ Rules:
 3. capability absence is authoritative and must fail closed
 4. `unlock` allows a backend to accept sign requests while still requiring backend-local password
    entry before signature production
+5. `create_account` allows a backend to accept an account-creation request where any new password is
+   collected only on the backend-local approval surface
 
 ## 7. Wallet Instance Metadata
 
@@ -302,6 +305,8 @@ Result when work exists:
 
 Payload body rules:
 
+- `create_account` carries only host display metadata; the backend must gather any new password
+  locally
 - `sign_transaction` carries canonical transaction bytes
 - `sign_message` carries canonical message payload plus format
 - future `unlock` requests should carry only unlock metadata, never passwords
@@ -356,6 +361,12 @@ Result payload rules:
 
 - `signed_transaction` returns `signed_txn_bcs_hex`
 - `signed_message` returns `signature`
+- `created_account` returns all of:
+  - `created_account_address`: canonical account address string
+  - `created_account_public_key`: encoded public key bytes
+  - `created_account_curve`: key curve enum such as `ed25519` or `secp256k1`
+  - `created_account_is_default`: boolean flag for the default-account marker
+  - `created_account_is_locked`: boolean flag for whether the new account is locked immediately
 - future `unlock_granted` may return `unlock_expires_at`
 
 Coordinator behavior:
@@ -482,10 +493,11 @@ Minimum functional requirements:
 
 1. list accounts from `AccountProvider`
 2. expose `is_default`, `is_read_only`, `is_locked`, and `public_key`
-3. sign canonical transaction bytes through `sign_txn`
-4. sign canonical messages through `sign_message`
-5. keep unlock and password entry entirely inside the backend agent
-6. if the backend advertises `unlock`, any password prompt must happen only after local approval is
+3. create a new local account when a `create_account` request is approved
+4. sign canonical transaction bytes through `sign_txn`
+5. sign canonical messages through `sign_message`
+6. keep unlock and password entry entirely inside the backend agent
+7. if the backend advertises `unlock`, any password prompt must happen only after local approval is
    displayed and must never cross daemon transport
 
 ## 16. Phase-2 Decisions Closed by Companion Documents

@@ -155,7 +155,7 @@ async fn register_local_backend(
             "approval_surface": "tty_prompt",
             "instance_label": "Local Main",
             "lock_state": lock_state,
-            "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction"],
+            "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction", "create_account"],
             "backend_metadata": {
                 "account_provider_kind": "local",
                 "prompt_mode": "tty_prompt"
@@ -492,6 +492,52 @@ async fn unix_server_round_trips_generic_backend_register_and_resolve() {
 }
 
 #[tokio::test]
+async fn unix_server_round_trips_local_create_account_request() {
+    let (_tempdir, socket_path, server) = spawn_local_backend_server().await;
+
+    register_local_backend(&socket_path, "unlocked", vec![]).await;
+
+    let created = call_daemon(
+        &socket_path,
+        "req-create-account-local",
+        "request.createAccount",
+        json!({
+            "protocol_version": 1,
+            "client_request_id": "client-local-create-account",
+            "wallet_instance_id": "local-main",
+            "display_hint": "Create account",
+            "client_context": "codex",
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(created) = created else {
+        panic!("expected create account success");
+    };
+    assert_eq!(created.result["kind"], json!("create_account"));
+    assert_eq!(created.result["status"], json!("created"));
+
+    let request_id = created.result["request_id"].as_str().unwrap();
+    let status = call_daemon(
+        &socket_path,
+        "req-status-create-account-local",
+        "request.getStatus",
+        json!({
+            "protocol_version": 1,
+            "request_id": request_id,
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(status) = status else {
+        panic!("expected create account status success");
+    };
+    assert_eq!(status.result["kind"], json!("create_account"));
+    assert_eq!(status.result["result_kind"], json!("created_account"));
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
 async fn unix_server_round_trips_generic_backend_reject() {
     let (_tempdir, socket_path, server) = spawn_local_backend_server().await;
 
@@ -712,7 +758,7 @@ async fn unix_server_rejects_unknown_local_backend_registration() {
             "approval_surface": "tty_prompt",
             "instance_label": "Local Unknown",
             "lock_state": "unlocked",
-            "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction"],
+            "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction", "create_account"],
             "backend_metadata": {
                 "account_provider_kind": "local",
                 "prompt_mode": "tty_prompt"
@@ -749,7 +795,7 @@ async fn unix_server_rejects_generic_backend_registration_over_v1_protocol() {
             "approval_surface": "tty_prompt",
             "instance_label": "Local Main",
             "lock_state": "unlocked",
-            "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction"],
+            "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction", "create_account"],
             "backend_metadata": {
                 "account_provider_kind": "local",
                 "prompt_mode": "tty_prompt"
@@ -786,7 +832,7 @@ async fn unix_server_rejects_local_backend_registration_when_backend_is_not_enab
             "approval_surface": "tty_prompt",
             "instance_label": "Local Main",
             "lock_state": "unlocked",
-            "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction"],
+            "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction", "create_account"],
             "backend_metadata": {
                 "account_provider_kind": "local",
                 "prompt_mode": "tty_prompt"
@@ -882,7 +928,7 @@ async fn unix_server_backend_update_accounts_replaces_snapshot() {
             "protocol_version": 2,
             "wallet_instance_id": "local-main",
             "lock_state": "locked",
-            "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction"],
+            "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction", "create_account"],
             "accounts": [
                 local_backend_account(
                     "0x2",

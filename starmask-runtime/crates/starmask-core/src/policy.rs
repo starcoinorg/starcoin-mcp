@@ -1,5 +1,5 @@
 use crate::{
-    commands::{CreateSignMessageCommand, CreateSignTransactionCommand},
+    commands::{CreateAccountCommand, CreateSignMessageCommand, CreateSignTransactionCommand},
     error::CoreResult,
 };
 
@@ -20,6 +20,10 @@ pub trait PolicyEngine {
     }
 
     fn check_create_sign_message(&self, _command: &CreateSignMessageCommand) -> CoreResult<()> {
+        Ok(())
+    }
+
+    fn check_create_account(&self, _command: &CreateAccountCommand) -> CoreResult<()> {
         Ok(())
     }
 }

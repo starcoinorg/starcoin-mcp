@@ -5,11 +5,14 @@ impl AppContext {
         &self,
         input: PrepareTransferInput,
     ) -> Result<PreparationResult, SharedError> {
-        let sender = parse_address(&input.sender)?;
-        let receiver = parse_address(&input.receiver)?;
+        let sender_text = input.sender.clone();
+        let receiver_text = input.receiver.clone();
+        let amount_text = input.amount.clone();
+        let sender = parse_address("sender", &input.sender)?;
+        let receiver = parse_address("receiver", &input.receiver)?;
         let amount = input.amount.parse::<u128>().map_err(|error| {
             SharedError::new(
-                SharedErrorCode::InvalidPackagePayload,
+                SharedErrorCode::InvalidAmount,
                 format!("invalid transfer amount: {error}"),
             )
         })?;
@@ -17,9 +20,9 @@ impl AppContext {
         let payload = build_transfer_payload(receiver, amount, token_code.clone())?;
         let summary = json!({
             "kind": "transfer",
-            "sender": input.sender,
-            "receiver": input.receiver,
-            "amount": input.amount,
+            "sender": sender_text,
+            "receiver": receiver_text,
+            "amount": amount_text,
             "token_code": token_code.to_string(),
         });
         self.prepare_transaction(
@@ -33,6 +36,11 @@ impl AppContext {
             input.gas_token,
             TransactionKind::Transfer,
             summary,
+            Some(PreparedTransferDetails {
+                receiver: input.receiver,
+                amount: input.amount,
+                token_code: token_code.to_string(),
+            }),
         )
         .await
     }
@@ -41,7 +49,7 @@ impl AppContext {
         &self,
         input: PrepareContractCallInput,
     ) -> Result<PreparationResult, SharedError> {
-        let sender = parse_address(&input.sender)?;
+        let sender = parse_address("sender", &input.sender)?;
         let payload =
             build_contract_call_payload(&input.function_id, &input.type_args, &input.args)?;
         let summary = json!({
@@ -62,6 +70,7 @@ impl AppContext {
             input.gas_token,
             TransactionKind::ContractCall,
             summary,
+            None,
         )
         .await
     }
@@ -81,7 +90,7 @@ impl AppContext {
                 ),
             ));
         }
-        let sender = parse_address(&input.sender)?;
+        let sender = parse_address("sender", &input.sender)?;
         let package_bytes = decode_hex_bytes(&input.package_bcs_hex)?;
         let package: Package = bcs_ext::from_bytes(&package_bytes).map_err(|error| {
             SharedError::new(
@@ -108,6 +117,7 @@ impl AppContext {
             input.gas_token,
             TransactionKind::PublishPackage,
             summary,
+            None,
         )
         .await
     }
@@ -159,6 +169,7 @@ impl AppContext {
         gas_token: Option<String>,
         transaction_kind: TransactionKind,
         transaction_summary: Value,
+        transfer_details: Option<PreparedTransferDetails>,
     ) -> Result<PreparationResult, SharedError> {
         ensure_transaction_mode(self.mode())?;
         self.ensure_transaction_capabilities_current().await?;
@@ -170,14 +181,16 @@ impl AppContext {
             self.resolve_gas_price(gas_unit_price).await?;
         let expiration_timestamp_secs =
             self.resolve_expiration(snapshot.now_seconds, expiration_time_secs)?;
+        let max_gas_amount = max_gas_amount.unwrap_or(10_000_000);
+        let gas_token_code = normalize_gas_token_code(gas_token.as_deref())?;
         let raw_txn = build_raw_transaction(
             sender,
             sequence_number,
             payload,
-            max_gas_amount.unwrap_or(10_000_000),
+            max_gas_amount,
             gas_unit_price,
             expiration_timestamp_secs,
-            gas_token.unwrap_or_else(|| G_STC_TOKEN_CODE.to_string()),
+            gas_token_code.clone(),
             ChainId::new(snapshot.chain_context.chain_id),
         );
         let raw_txn_bcs_hex = encode_hex_bcs(&raw_txn)?;
@@ -219,6 +232,29 @@ impl AppContext {
             simulation_status,
         )
         .await;
+        let estimated_network_fee = simulation
+            .as_ref()
+            .map(|result| multiply_u64_to_string(result.gas_used, gas_unit_price));
+        let execution_facts = PreparedExecutionFacts {
+            sender: sender.to_string(),
+            sequence_number,
+            max_gas_amount,
+            gas_unit_price,
+            gas_token_code,
+            expiration_timestamp_secs,
+            chain_id: snapshot.chain_context.chain_id,
+            estimated_max_network_fee: multiply_u64_to_string(max_gas_amount, gas_unit_price),
+            estimated_network_fee,
+            transfer_receiver: transfer_details
+                .as_ref()
+                .map(|details| details.receiver.clone()),
+            transfer_amount: transfer_details
+                .as_ref()
+                .map(|details| details.amount.clone()),
+            transfer_token_code: transfer_details
+                .as_ref()
+                .map(|details| details.token_code.clone()),
+        };
 
         Ok(PreparationResult {
             transaction_kind,
@@ -231,6 +267,7 @@ impl AppContext {
             gas_unit_price_source,
             simulation_status,
             simulation,
+            execution_facts,
             next_action,
         })
     }
@@ -301,11 +338,18 @@ impl AppContext {
     }
 }
 
-fn parse_address(input: &str) -> Result<AccountAddress, SharedError> {
+#[derive(Clone, Debug)]
+struct PreparedTransferDetails {
+    receiver: String,
+    amount: String,
+    token_code: String,
+}
+
+fn parse_address(field_name: &str, input: &str) -> Result<AccountAddress, SharedError> {
     AccountAddress::from_str(input).map_err(|error| {
         SharedError::new(
-            SharedErrorCode::MissingSender,
-            format!("invalid account address {input}: {error}"),
+            SharedErrorCode::InvalidAddress,
+            format!("invalid {field_name} address {input}: {error}"),
         )
     })
 }
@@ -314,12 +358,23 @@ fn parse_token_code(input: Option<&str>) -> Result<TokenCode, SharedError> {
     match input {
         Some(value) => TokenCode::from_str(value).map_err(|error| {
             SharedError::new(
-                SharedErrorCode::InvalidPackagePayload,
+                SharedErrorCode::InvalidAsset,
                 format!("invalid token code {value}: {error}"),
             )
         }),
         None => Ok(G_STC_TOKEN_CODE.clone()),
     }
+}
+
+fn normalize_gas_token_code(input: Option<&str>) -> Result<String, SharedError> {
+    match input {
+        Some(value) => parse_token_code(Some(value)).map(|token| token.to_string()),
+        None => Ok(G_STC_TOKEN_CODE.to_string()),
+    }
+}
+
+fn multiply_u64_to_string(left: u64, right: u64) -> String {
+    (u128::from(left) * u128::from(right)).to_string()
 }
 
 fn build_contract_call_payload(

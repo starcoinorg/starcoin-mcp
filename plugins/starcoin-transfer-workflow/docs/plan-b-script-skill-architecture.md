@@ -203,8 +203,22 @@ Keep the host-side transfer orchestration in Python and skill text.
 - approved signed transaction bytes
 - submit result and watch result
 
-The controller should remain mostly unchanged by using client adapters that preserve the existing
-`call_tool(name, arguments)` shape, even though the underlying transport is no longer MCP.
+The host-side workflow now has two layers:
+
+- skill-level intent resolution
+  - extract network, sender, receiver, token, amount, and wallet instance from the user's request
+  - if any field is missing, ask one precise follow-up question or list concrete wallet candidates
+- script-level deterministic execution
+  - prepare the transaction
+  - consume typed `execution_facts` from preparation output instead of scraping transaction-view JSON for nonce and gas details
+  - query `node_health` and `get_account_overview`
+  - derive nonce, balance, fee estimate, and chain-context checks
+  - generate risk labels and a transaction preview before wallet signing
+  - append a minimal JSONL audit trail with request id, payload hash, backend id, and terminal decision
+
+The controller still preserves the existing `call_tool(name, arguments)` shape even though the
+underlying transport is no longer MCP, but the host contract is now broader than a pure
+prepare-confirm-sign-submit-watch chain.
 
 ### 5.4 Plugin Contract
 

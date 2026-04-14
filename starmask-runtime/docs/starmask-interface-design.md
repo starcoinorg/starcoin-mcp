@@ -234,7 +234,46 @@ Output:
 - `public_key`
 - `curve`
 
-### 5.5 `wallet_request_sign_transaction`
+### 5.5 `wallet_request_create_account`
+
+Purpose:
+
+- create an asynchronous local-wallet account-creation request
+
+Input:
+
+- `client_request_id`
+- `wallet_instance_id`: required explicit route target
+- `display_hint`: optional human-readable description
+- `client_context`: optional string such as `codex`
+- `ttl_seconds`: optional bounded override
+
+Output:
+
+- `request_id`
+- `client_request_id`
+- `kind`
+- `status`
+- `wallet_instance_id`
+- `created_at`
+- `expires_at`
+
+Creation policy:
+
+- the selected wallet instance must be connected
+- the selected wallet instance must advertise `create_account`
+- password collection stays inside the wallet-side approval surface and never crosses daemon RPC
+
+Approved result payload:
+
+- `kind = created_account`
+- `address`
+- `public_key`
+- `curve`
+- `is_default`
+- `is_locked`
+
+### 5.6 `wallet_request_sign_transaction`
 
 Purpose:
 
@@ -268,7 +307,7 @@ Creation policy:
 - if that instance is locked, it must advertise backend-local `unlock` capability for signing
 - the current implementation fails fast instead of queueing for later reconnect
 
-### 5.6 `wallet_sign_message`
+### 5.7 `wallet_sign_message`
 
 Purpose:
 
@@ -295,7 +334,7 @@ Output:
 - `created_at`
 - `expires_at`
 
-### 5.7 `wallet_get_request_status`
+### 5.8 `wallet_get_request_status`
 
 Purpose:
 
@@ -321,7 +360,13 @@ Output:
 - `error_message`
 - `result`
 
-### 5.8 `wallet_cancel_request`
+Result payload variants currently include:
+
+- `signed_transaction`
+- `signed_message`
+- `created_account`
+
+### 5.9 `wallet_cancel_request`
 
 Purpose:
 
@@ -382,6 +427,7 @@ The current implementation does not define:
 
 - backend-kind metadata in MCP tool responses
 - `private_key_dev` support
+- synchronous `wallet_create_account` outside the request lifecycle
 - `wallet_request_unlock`
 - blind signing
 

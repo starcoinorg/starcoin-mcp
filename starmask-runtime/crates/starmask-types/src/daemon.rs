@@ -101,6 +101,19 @@ pub struct WalletGetPublicKeyResult {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct CreateAccountParams {
+    pub protocol_version: u32,
+    pub client_request_id: ClientRequestId,
+    pub wallet_instance_id: WalletInstanceId,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl_seconds: Option<DurationSeconds>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct CreateSignTransactionParams {
     pub protocol_version: u32,
     pub client_request_id: ClientRequestId,
@@ -353,6 +366,16 @@ pub struct RequestResolveParams {
     pub signed_txn_bcs_hex: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub signature: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_account_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_account_public_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_account_curve: Option<Curve>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_account_is_default: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub created_account_is_locked: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]

@@ -25,6 +25,12 @@ pub(crate) trait ApprovalPrompt: Send + Sync {
         account_info: &AccountInfo,
         capabilities: &[WalletCapability],
     ) -> std::result::Result<PromptApproval, RequestRejection>;
+
+    fn prompt_for_create_account(
+        &self,
+        request: &PulledRequest,
+        capabilities: &[WalletCapability],
+    ) -> std::result::Result<PromptApproval, RequestRejection>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -102,6 +108,45 @@ impl ApprovalPrompt for TtyApprovalPrompt {
         Ok(PromptApproval {
             approved: true,
             password,
+        })
+    }
+
+    fn prompt_for_create_account(
+        &self,
+        request: &PulledRequest,
+        capabilities: &[WalletCapability],
+    ) -> std::result::Result<PromptApproval, RequestRejection> {
+        if !capabilities.contains(&WalletCapability::CreateAccount) {
+            return Err(RequestRejection {
+                reason_code: starmask_types::RejectReasonCode::UnsupportedOperation,
+                message: Some("Local backend does not support account creation".to_owned()),
+            });
+        }
+
+        print_create_account_summary(request);
+
+        loop {
+            match prompt_for_action().map_err(|error| RequestRejection {
+                reason_code: starmask_types::RejectReasonCode::BackendUnavailable,
+                message: Some(format!("Failed to read local approval input: {error}")),
+            })? {
+                PromptAction::Approve => break,
+                PromptAction::Reject => {
+                    return Ok(PromptApproval {
+                        approved: false,
+                        password: None,
+                    });
+                }
+                PromptAction::ViewRaw => {
+                    print_raw_payload_details(request);
+                }
+            }
+        }
+
+        let password = prompt_for_new_account_password()?;
+        Ok(PromptApproval {
+            approved: true,
+            password: Some(password),
         })
     }
 }
@@ -191,6 +236,10 @@ fn print_request_summary(request: &PulledRequest, account_info: &AccountInfo) {
     eprint!("{}", render_request_summary(request, account_info));
 }
 
+fn print_create_account_summary(request: &PulledRequest) {
+    eprint!("{}", render_create_account_summary(request));
+}
+
 fn print_raw_payload_details(request: &PulledRequest) {
     eprint!("{}", render_raw_payload_details(request));
 }
@@ -208,7 +257,26 @@ fn render_request_summary(request: &PulledRequest, account_info: &AccountInfo) -
     match request.kind {
         RequestKind::SignTransaction => write_transaction_section(&mut output, request),
         RequestKind::SignMessage => write_message_section(&mut output, request),
+        RequestKind::CreateAccount => write_create_account_section(&mut output),
     }
+    write_context_section(&mut output, request);
+    write_actions_section(&mut output);
+    write_card_border(&mut output);
+
+    output.push('\n');
+    output
+}
+
+fn render_create_account_summary(request: &PulledRequest) -> String {
+    let mut output = String::new();
+    output.push('\n');
+
+    write_card_border(&mut output);
+    write_card_text_line(&mut output, "Starmask Local Account Creation Request");
+    write_card_border(&mut output);
+
+    write_request_section(&mut output, request);
+    write_create_account_section(&mut output);
     write_context_section(&mut output, request);
     write_actions_section(&mut output);
     write_card_border(&mut output);
@@ -273,6 +341,14 @@ fn render_raw_payload_details(request: &PulledRequest) -> String {
                 Err(error) => write_card_field_full(&mut output, "Message Decode Error", &error),
             }
         }
+        RequestKind::CreateAccount => {
+            write_card_section_heading(&mut output, "Account Creation");
+            write_card_field_full(
+                &mut output,
+                "Operation",
+                "Create a new local account and add it to this wallet backend.",
+            );
+        }
     }
 
     write_card_section_heading(&mut output, "Back");
@@ -313,6 +389,16 @@ fn write_account_section(output: &mut String, request: &PulledRequest, account_i
         output,
         "Account Locked",
         &account_info.is_locked.to_string(),
+    );
+}
+
+fn write_create_account_section(output: &mut String) {
+    write_card_section_heading(output, "Account Creation");
+    write_card_field_preview(output, "Operation", "create_local_account");
+    write_card_field_preview(
+        output,
+        "Password Handling",
+        "password is entered locally on this terminal and is not sent by the host",
     );
 }
 
@@ -649,6 +735,44 @@ fn request_kind_label(kind: RequestKind) -> &'static str {
     match kind {
         RequestKind::SignTransaction => "sign_transaction",
         RequestKind::SignMessage => "sign_message",
+        RequestKind::CreateAccount => "create_account",
+    }
+}
+
+fn prompt_for_new_account_password() -> std::result::Result<String, RequestRejection> {
+    loop {
+        let password = rpassword::prompt_password("New account password: ").map_err(|error| {
+            RequestRejection {
+                reason_code: starmask_types::RejectReasonCode::BackendUnavailable,
+                message: Some(format!("Failed to read new account password: {error}")),
+            }
+        })?;
+        if password.is_empty() {
+            return Err(RequestRejection {
+                reason_code: starmask_types::RejectReasonCode::BackendPolicyBlocked,
+                message: Some("Account password cannot be empty".to_owned()),
+            });
+        }
+        let confirm =
+            rpassword::prompt_password("Confirm new account password: ").map_err(|error| {
+                RequestRejection {
+                    reason_code: starmask_types::RejectReasonCode::BackendUnavailable,
+                    message: Some(format!("Failed to read password confirmation: {error}")),
+                }
+            })?;
+        if password == confirm {
+            return Ok(password);
+        }
+
+        let mut stderr = io::stderr().lock();
+        writeln!(stderr, "Passwords did not match. Try again.").map_err(|error| {
+            RequestRejection {
+                reason_code: starmask_types::RejectReasonCode::BackendUnavailable,
+                message: Some(format!(
+                    "Failed to write password mismatch warning: {error}"
+                )),
+            }
+        })?;
     }
 }
 

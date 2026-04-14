@@ -22,6 +22,7 @@ from runtime_layout import (
     wallet_runtime_socket_path,
 )
 from starmaskd_client import StarmaskDaemonClient
+from transfer_host import TransferAuditLogger
 from transfer_controller import (
     TransferController,
     describe_confirmation_depth,
@@ -159,6 +160,11 @@ def parse_args() -> argparse.Namespace:
         default=2,
         help="Minimum confirmed block count required before success. 2 means the inclusion block plus 1 additional block.",
     )
+    parser.add_argument(
+        "--audit-log-path",
+        default=None,
+        help="Optional JSONL path for local transfer audit records. Defaults under the active runtime directory.",
+    )
     return parser.parse_args()
 
 
@@ -238,6 +244,18 @@ def read_json_if_exists(path: Path) -> dict[str, Any] | None:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def resolve_audit_log_path(
+    audit_log_path_arg: str | None,
+    *,
+    runtime_dir: Path,
+    wallet_runtime_dir: Path | None,
+) -> Path:
+    if audit_log_path_arg:
+        return Path(audit_log_path_arg).expanduser().resolve()
+    base_dir = wallet_runtime_dir if wallet_runtime_dir is not None else runtime_dir
+    return base_dir / "audit" / "transfer-audit.jsonl"
+
+
 def socket_reachable(path: Path) -> tuple[bool, str]:
     if not path.exists():
         return False, "socket file is missing"
@@ -311,6 +329,12 @@ def main() -> int:
     wallet_runtime_dir = (
         Path(args.wallet_runtime_dir).resolve() if args.wallet_runtime_dir else None
     )
+    audit_log_path = resolve_audit_log_path(
+        args.audit_log_path,
+        runtime_dir=runtime_dir,
+        wallet_runtime_dir=wallet_runtime_dir,
+    )
+    audit_logger = TransferAuditLogger(audit_log_path)
     wallet_runtime = None
     wallet_dir: Path | None = None
     wallet_instance_id = args.wallet_instance_id
@@ -514,16 +538,34 @@ require_strict_permissions = true
             )
         except ValueError as error:
             raise SystemExit(f"invalid transfer amount: {error}") from error
+        preflight_report = controller.collect_preflight_report(session)
+        audit_logger.record_preflight(session, preflight_report)
         print(
             render_card(
-                "Host Transfer Confirmation",
-                controller.confirmation_rows(
+                "Transfer Preflight Preview",
+                controller.preflight_rows(
                     session,
+                    preflight_report,
                     min_confirmed_blocks=min_confirmed_blocks,
                 ),
             )
         )
+        risk_rows = controller.risk_rows(preflight_report)
+        if risk_rows:
+            print()
+            print(render_card("Risk Labels", risk_rows))
         print()
+        print(f"Audit records will be written to {audit_logger.path}.")
+        if controller.has_blocking_risks(preflight_report):
+            audit_logger.record_host_decision(
+                session,
+                decision="blocked",
+                reason="blocking_preflight_risk",
+                report=preflight_report,
+            )
+            print("Blocking risks were detected. Fix them before requesting a wallet signature.")
+            print(f"Audit log: {audit_logger.path}")
+            return 1
         print("The next step will create a wallet signing request.")
         print(
             "A successful result will require "
@@ -532,7 +574,14 @@ require_strict_permissions = true
         )
         print("The local-account-agent will then show its own CLI approval card.")
         if not prompt_yes_no("Continue with wallet signing"):
+            audit_logger.record_host_decision(
+                session,
+                decision="cancelled",
+                reason="user_declined_after_preview",
+                report=preflight_report,
+            )
             print("Transfer test cancelled before wallet_request_sign_transaction.")
+            print(f"Audit log: {audit_logger.path}")
             return 0
 
         request = controller.create_sign_request(
@@ -541,6 +590,7 @@ require_strict_permissions = true
             ttl_seconds=args.ttl_seconds,
             client_context="starcoin-transfer-test",
         )
+        audit_logger.record_sign_request_created(session, request)
         request_id = request["request_id"]
         print()
         print(
@@ -560,6 +610,7 @@ require_strict_permissions = true
             session,
             on_status_change=lambda current: print(f"wallet_get_request_status -> {current}"),
         )
+        audit_logger.record_sign_request_terminal(session, status)
 
         if status["status"] != "approved":
             print(
@@ -573,6 +624,7 @@ require_strict_permissions = true
                     ],
                 )
             )
+            print(f"Audit log: {audit_logger.path}")
             return 1
 
         submit_outcome = controller.submit(
@@ -581,8 +633,10 @@ require_strict_permissions = true
             min_confirmed_blocks=min_confirmed_blocks,
             blocking=True,
         )
+        audit_logger.record_submission(session, submit_outcome)
         print()
         print(render_card("Submit Result", controller.submit_rows(submit_outcome)))
+        print(f"Audit log: {audit_logger.path}")
         return 0 if submit_outcome.success else 1
     finally:
         if agent is not None and agent.poll() is None:

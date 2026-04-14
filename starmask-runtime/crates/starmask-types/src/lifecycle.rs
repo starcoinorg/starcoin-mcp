@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 pub enum RequestKind {
     SignTransaction,
     SignMessage,
+    CreateAccount,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq, Hash)]
@@ -55,6 +56,7 @@ impl RequestStatus {
 pub enum ResultKind {
     SignedTransaction,
     SignedMessage,
+    CreatedAccount,
     None,
 }
 
@@ -97,6 +99,7 @@ pub enum WalletCapability {
     GetPublicKey,
     SignMessage,
     SignTransaction,
+    CreateAccount,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq, Hash)]
@@ -139,6 +142,7 @@ impl RequestKind {
         match self {
             Self::SignTransaction => ResultKind::SignedTransaction,
             Self::SignMessage => ResultKind::SignedMessage,
+            Self::CreateAccount => ResultKind::CreatedAccount,
         }
     }
 }

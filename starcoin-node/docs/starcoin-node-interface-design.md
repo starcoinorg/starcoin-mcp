@@ -443,9 +443,19 @@ Prepare an unsigned transfer transaction.
 - `transaction_kind`: `transfer`
 - `simulation_status`
 - `simulation`
+- `execution_facts`
+  - resolved sender, nonce, gas settings, gas token, expiration, and fee estimates
+  - for transfers, also includes receiver, normalized transfer amount, and normalized transfer token code
 - `next_action`
   - usually `sign_transaction`
   - `get_public_key_then_simulate_or_sign` when simulation could not run because the public key was not provided
+
+Preparation must reject malformed transfer inputs with specific validation errors instead of
+overloading generic payload failures:
+
+- `invalid_address`
+- `invalid_asset`
+- `invalid_amount`
 
 #### `prepare_contract_call`
 
@@ -472,7 +482,10 @@ Prepare an unsigned script-function or contract-call transaction.
 - `transaction_kind`: `contract_call`
 - `simulation_status`
 - `simulation`
+- `execution_facts`
+  - resolved sender, nonce, gas settings, gas token, expiration, and fee estimates
 - `next_action`
+  - expected wallet step, usually `sign_transaction` or `get_public_key_then_simulate_or_sign`
 
 #### `prepare_publish_package`
 
@@ -499,7 +512,10 @@ Payloads above the configured size ceiling must be rejected locally with `payloa
 - `transaction_kind`: `publish_package`
 - `simulation_status`
 - `simulation`
+- `execution_facts`
+  - resolved sender, nonce, gas settings, gas token, expiration, and fee estimates
 - `next_action`
+  - expected wallet step, usually `sign_transaction` or `get_public_key_then_simulate_or_sign`
 
 ### 6.7 Simulation
 
@@ -580,6 +596,7 @@ All preparation tools should return:
 - `gas_unit_price_source`
 - `simulation_status`
 - simulation output when available
+- `execution_facts`, which should expose the typed execution values that the host needs for preview and preflight without re-parsing `raw_txn`
 - a `next_action` field indicating the expected wallet step
 
 If `sender_public_key` is unavailable during preparation:
@@ -651,6 +668,9 @@ Likely shared errors:
 - `node_unavailable`
 - `rpc_unavailable`
 - `invalid_chain_context`
+- `invalid_address`: preparation validation failed because an address field was malformed or unparsable
+- `invalid_asset`: preparation validation failed because an asset identifier was unknown or unsupported
+- `invalid_amount`: preparation validation failed because the amount was non-positive or malformed
 - `submission_unknown`
 - `simulation_failed`
 - `submission_failed`

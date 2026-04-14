@@ -14,7 +14,7 @@ use starcoin_node_types::{
     SubmitSignedTransactionInput, VmProfile, WatchTransactionInput,
 };
 use starcoin_vm2_crypto::ed25519::genesis_key_pair;
-use starcoin_vm2_vm_types::transaction::RawUserTransaction;
+use starcoin_vm2_vm_types::{token::stc::G_STC_TOKEN_CODE, transaction::RawUserTransaction};
 
 #[tokio::test]
 async fn submit_policy_requires_local_simulation_attestation() {
@@ -646,8 +646,116 @@ async fn prepare_transfer_rejects_past_expiration_and_normalizes_nested_dry_run_
         prepared.sequence_number_source,
         starcoin_node_types::SequenceNumberSource::Onchain
     );
+    assert_eq!(
+        prepared.execution_facts.sender,
+        "0x00000000000000000000000000000001"
+    );
+    assert_eq!(prepared.execution_facts.sequence_number, 4);
+    assert_eq!(
+        prepared.execution_facts.transfer_receiver.as_deref(),
+        Some("0x2")
+    );
+    assert_eq!(
+        prepared.execution_facts.transfer_amount.as_deref(),
+        Some("1")
+    );
+    let expected_token_code = G_STC_TOKEN_CODE.to_string();
+    assert_eq!(
+        prepared.execution_facts.transfer_token_code.as_deref(),
+        Some(expected_token_code.as_str())
+    );
+    assert_eq!(prepared.execution_facts.gas_unit_price, 1);
+    assert_eq!(
+        prepared.execution_facts.estimated_network_fee.as_deref(),
+        Some("7")
+    );
+    assert_eq!(
+        prepared.execution_facts.estimated_max_network_fee,
+        "10000000"
+    );
     assert_eq!(simulation.events.len(), 1);
     drop(private_key);
+}
+
+#[tokio::test]
+async fn prepare_transfer_surfaces_specific_validation_errors() {
+    let server = MockServer::start();
+    mock_transaction_bootstrap(&server);
+    mock_json_rpc_result(
+        &server,
+        "state.get_account_state",
+        json!({ "sequence_number": "4" }),
+    );
+    mock_txpool_sequence_probe(&server, "txpool.next_sequence_number2", json!("4"));
+    mock_method_not_found(&server, "state.list_resource");
+    mock_method_not_found(&server, "state.list_code");
+    mock_json_rpc_result(&server, "txpool.gas_price", json!("1"));
+    mock_submit_probe_invalid_params(&server, "txpool.submit_hex_transaction2");
+    mock_json_rpc_result(
+        &server,
+        "contract2.dry_run_raw",
+        json!({ "status": "Executed", "gas_used": "7", "events": [] }),
+    );
+
+    let app = AppContext::bootstrap(runtime_config(
+        &server,
+        Mode::Transaction,
+        VmProfile::Auto,
+        true,
+    ))
+    .await
+    .expect("transaction app should bootstrap");
+
+    let invalid_sender = app
+        .prepare_transfer(PrepareTransferInput {
+            sender: "not-an-address".to_owned(),
+            sender_public_key: None,
+            receiver: "0x2".to_owned(),
+            amount: "1".to_owned(),
+            token_code: None,
+            sequence_number: None,
+            max_gas_amount: None,
+            gas_unit_price: None,
+            expiration_time_secs: None,
+            gas_token: None,
+        })
+        .await
+        .expect_err("invalid sender should be rejected");
+    assert_eq!(invalid_sender.code, SharedErrorCode::InvalidAddress);
+
+    let invalid_amount = app
+        .prepare_transfer(PrepareTransferInput {
+            sender: "0x1".to_owned(),
+            sender_public_key: None,
+            receiver: "0x2".to_owned(),
+            amount: "1.2".to_owned(),
+            token_code: None,
+            sequence_number: None,
+            max_gas_amount: None,
+            gas_unit_price: None,
+            expiration_time_secs: None,
+            gas_token: None,
+        })
+        .await
+        .expect_err("invalid amount should be rejected");
+    assert_eq!(invalid_amount.code, SharedErrorCode::InvalidAmount);
+
+    let invalid_asset = app
+        .prepare_transfer(PrepareTransferInput {
+            sender: "0x1".to_owned(),
+            sender_public_key: None,
+            receiver: "0x2".to_owned(),
+            amount: "1".to_owned(),
+            token_code: Some("not::a::token".to_owned()),
+            sequence_number: None,
+            max_gas_amount: None,
+            gas_unit_price: None,
+            expiration_time_secs: None,
+            gas_token: None,
+        })
+        .await
+        .expect_err("invalid token code should be rejected");
+    assert_eq!(invalid_asset.code, SharedErrorCode::InvalidAsset);
 }
 
 fn mock_read_only_bootstrap(server: &MockServer) {

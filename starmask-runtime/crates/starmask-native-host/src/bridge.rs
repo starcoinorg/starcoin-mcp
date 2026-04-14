@@ -2,7 +2,7 @@ use starmask_types::{
     ExtensionHeartbeatParams, ExtensionRegisterParams, ExtensionUpdateAccountsParams,
     NATIVE_BRIDGE_PROTOCOL_VERSION, NativeBridgeRequest, NativeBridgeResponse,
     RequestPresentedParams, RequestPullNextParams, RequestRejectParams, RequestResolveParams,
-    SharedError, SharedErrorCode,
+    ResultKind, SharedError, SharedErrorCode,
 };
 
 use crate::client::{DaemonRpc, daemon_protocol_version};
@@ -133,20 +133,29 @@ where
             result_kind,
             signed_txn_bcs_hex,
             signature,
+            created_account_address,
+            created_account_public_key,
+            created_account_curve,
+            created_account_is_default,
+            created_account_is_locked,
             ..
-        } => client
-            .request_resolve(RequestResolveParams {
-                protocol_version: daemon_protocol_version(),
-                wallet_instance_id,
-                request_id,
-                presentation_id,
-                result_kind,
-                signed_txn_bcs_hex,
-                signature,
-            })
-            .map(|_| NativeBridgeResponse::ExtensionAck {
-                reply_to: reply_to.clone(),
-            }),
+        } => validate_request_resolve_params(
+            wallet_instance_id,
+            request_id,
+            presentation_id,
+            result_kind,
+            signed_txn_bcs_hex,
+            signature,
+            created_account_address,
+            created_account_public_key,
+            created_account_curve,
+            created_account_is_default,
+            created_account_is_locked,
+        )
+        .and_then(|params| client.request_resolve(params))
+        .map(|_| NativeBridgeResponse::ExtensionAck {
+            reply_to: reply_to.clone(),
+        }),
         NativeBridgeRequest::RequestReject {
             wallet_instance_id,
             request_id,
@@ -180,15 +189,123 @@ pub fn shared_error_response(reply_to: Option<String>, error: SharedError) -> Na
     }
 }
 
+fn request_resolve_payload_error(message: impl Into<String>) -> SharedError {
+    SharedError::new(SharedErrorCode::InternalBridgeError, message).with_retryable(false)
+}
+
+fn validate_request_resolve_params(
+    wallet_instance_id: starmask_types::WalletInstanceId,
+    request_id: starmask_types::RequestId,
+    presentation_id: starmask_types::PresentationId,
+    result_kind: ResultKind,
+    signed_txn_bcs_hex: Option<String>,
+    signature: Option<String>,
+    created_account_address: Option<String>,
+    created_account_public_key: Option<String>,
+    created_account_curve: Option<starmask_types::Curve>,
+    created_account_is_default: Option<bool>,
+    created_account_is_locked: Option<bool>,
+) -> Result<RequestResolveParams, SharedError> {
+    let has_created_account_fields = created_account_address.is_some()
+        || created_account_public_key.is_some()
+        || created_account_curve.is_some()
+        || created_account_is_default.is_some()
+        || created_account_is_locked.is_some();
+    let signed_txn_is_set = signed_txn_bcs_hex
+        .as_ref()
+        .is_some_and(|value| !value.trim().is_empty());
+    let signature_is_set = signature
+        .as_ref()
+        .is_some_and(|value| !value.trim().is_empty());
+
+    match result_kind {
+        ResultKind::SignedTransaction => {
+            if !signed_txn_is_set {
+                return Err(request_resolve_payload_error(
+                    "signed_txn_bcs_hex is required for signed_transaction",
+                ));
+            }
+            if signature.is_some() {
+                return Err(request_resolve_payload_error(
+                    "signature must be omitted for signed_transaction",
+                ));
+            }
+            if has_created_account_fields {
+                return Err(request_resolve_payload_error(
+                    "created_account_* fields must be omitted for signed_transaction",
+                ));
+            }
+        }
+        ResultKind::SignedMessage => {
+            if !signature_is_set {
+                return Err(request_resolve_payload_error(
+                    "signature is required for signed_message",
+                ));
+            }
+            if signed_txn_bcs_hex.is_some() {
+                return Err(request_resolve_payload_error(
+                    "signed_txn_bcs_hex must be omitted for signed_message",
+                ));
+            }
+            if has_created_account_fields {
+                return Err(request_resolve_payload_error(
+                    "created_account_* fields must be omitted for signed_message",
+                ));
+            }
+        }
+        ResultKind::CreatedAccount => {
+            if signed_txn_bcs_hex.is_some() || signature.is_some() {
+                return Err(request_resolve_payload_error(
+                    "signed_transaction and signed_message payloads must be omitted for created_account",
+                ));
+            }
+            if !created_account_address
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty())
+                || !created_account_public_key
+                    .as_ref()
+                    .is_some_and(|value| !value.trim().is_empty())
+                || created_account_curve.is_none()
+                || created_account_is_default.is_none()
+                || created_account_is_locked.is_none()
+            {
+                return Err(request_resolve_payload_error(
+                    "created_account requires address, public_key, curve, is_default, and is_locked",
+                ));
+            }
+        }
+        ResultKind::None => {
+            return Err(request_resolve_payload_error(
+                "result_kind none is not valid for request.resolve",
+            ));
+        }
+    }
+
+    Ok(RequestResolveParams {
+        protocol_version: daemon_protocol_version(),
+        wallet_instance_id,
+        request_id,
+        presentation_id,
+        result_kind,
+        signed_txn_bcs_hex,
+        signature,
+        created_account_address,
+        created_account_public_key,
+        created_account_curve,
+        created_account_is_default,
+        created_account_is_locked,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use std::cell::RefCell;
 
     use starmask_types::{
-        AckResult, ClientRequestId, GetRequestStatusParams, GetRequestStatusResult, LockState,
-        PayloadHash, RequestHasAvailableParams, RequestHasAvailableResult, RequestId, RequestKind,
-        RequestPullNextResult, RequestRejectParams, RequestResolveParams, ResultKind, SharedError,
-        SharedErrorCode, WalletInstanceId,
+        AckResult, ClientRequestId, Curve, GetRequestStatusParams, GetRequestStatusResult,
+        LockState, PayloadHash, RequestHasAvailableParams, RequestHasAvailableResult, RequestId,
+        RequestKind, RequestPullNextResult, RequestRejectParams, RequestResolveParams, ResultKind,
+        SharedError, SharedErrorCode, WalletInstanceId,
     };
 
     use super::*;
@@ -434,6 +551,11 @@ mod tests {
                 result_kind: ResultKind::SignedMessage,
                 signed_txn_bcs_hex: None,
                 signature: Some("0xsig".to_owned()),
+                created_account_address: None,
+                created_account_public_key: None,
+                created_account_curve: None,
+                created_account_is_default: None,
+                created_account_is_locked: None,
             },
         );
 
@@ -454,8 +576,168 @@ mod tests {
                 result_kind: ResultKind::SignedMessage,
                 signed_txn_bcs_hex: None,
                 signature: Some("0xsig".to_owned()),
+                created_account_address: None,
+                created_account_public_key: None,
+                created_account_curve: None,
+                created_account_is_default: None,
+                created_account_is_locked: None,
             }
         );
+    }
+
+    #[test]
+    fn request_resolve_forwards_created_account_payload_to_daemon() {
+        let client = FakeClient::default();
+        let wallet_instance_id = WalletInstanceId::new("wallet-1").unwrap();
+        let request_id = RequestId::new("request-1").unwrap();
+        let presentation_id = starmask_types::PresentationId::new("presentation-1").unwrap();
+
+        let response = handle_request(
+            &client,
+            NativeBridgeRequest::RequestResolve {
+                message_id: "msg-resolve-created".to_owned(),
+                wallet_instance_id: wallet_instance_id.clone(),
+                request_id: request_id.clone(),
+                presentation_id: presentation_id.clone(),
+                result_kind: ResultKind::CreatedAccount,
+                signed_txn_bcs_hex: None,
+                signature: None,
+                created_account_address: Some("0xabc".to_owned()),
+                created_account_public_key: Some("0xpub".to_owned()),
+                created_account_curve: Some(Curve::Ed25519),
+                created_account_is_default: Some(true),
+                created_account_is_locked: Some(false),
+            },
+        );
+
+        assert_eq!(
+            response,
+            NativeBridgeResponse::ExtensionAck {
+                reply_to: "msg-resolve-created".to_owned(),
+            }
+        );
+        assert_eq!(client.resolve_calls.borrow().len(), 1);
+        assert_eq!(
+            client.resolve_calls.borrow()[0],
+            RequestResolveParams {
+                protocol_version: daemon_protocol_version(),
+                wallet_instance_id,
+                request_id,
+                presentation_id,
+                result_kind: ResultKind::CreatedAccount,
+                signed_txn_bcs_hex: None,
+                signature: None,
+                created_account_address: Some("0xabc".to_owned()),
+                created_account_public_key: Some("0xpub".to_owned()),
+                created_account_curve: Some(Curve::Ed25519),
+                created_account_is_default: Some(true),
+                created_account_is_locked: Some(false),
+            }
+        );
+    }
+
+    #[test]
+    fn request_resolve_rejects_missing_signature_before_daemon_call() {
+        let client = FakeClient::default();
+
+        let response = handle_request(
+            &client,
+            NativeBridgeRequest::RequestResolve {
+                message_id: "msg-resolve-missing-signature".to_owned(),
+                wallet_instance_id: WalletInstanceId::new("wallet-1").unwrap(),
+                request_id: RequestId::new("request-1").unwrap(),
+                presentation_id: starmask_types::PresentationId::new("presentation-1").unwrap(),
+                result_kind: ResultKind::SignedMessage,
+                signed_txn_bcs_hex: None,
+                signature: None,
+                created_account_address: None,
+                created_account_public_key: None,
+                created_account_curve: None,
+                created_account_is_default: None,
+                created_account_is_locked: None,
+            },
+        );
+
+        assert_eq!(
+            response,
+            NativeBridgeResponse::ExtensionError {
+                reply_to: Some("msg-resolve-missing-signature".to_owned()),
+                code: SharedErrorCode::InternalBridgeError,
+                message: "signature is required for signed_message".to_owned(),
+                retryable: Some(false),
+            }
+        );
+        assert!(client.resolve_calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn request_resolve_rejects_created_account_fields_for_non_created_account_kind() {
+        let client = FakeClient::default();
+
+        let response = handle_request(
+            &client,
+            NativeBridgeRequest::RequestResolve {
+                message_id: "msg-resolve-mixed".to_owned(),
+                wallet_instance_id: WalletInstanceId::new("wallet-1").unwrap(),
+                request_id: RequestId::new("request-1").unwrap(),
+                presentation_id: starmask_types::PresentationId::new("presentation-1").unwrap(),
+                result_kind: ResultKind::SignedMessage,
+                signed_txn_bcs_hex: None,
+                signature: Some("0xsig".to_owned()),
+                created_account_address: Some("0xabc".to_owned()),
+                created_account_public_key: None,
+                created_account_curve: None,
+                created_account_is_default: None,
+                created_account_is_locked: None,
+            },
+        );
+
+        assert_eq!(
+            response,
+            NativeBridgeResponse::ExtensionError {
+                reply_to: Some("msg-resolve-mixed".to_owned()),
+                code: SharedErrorCode::InternalBridgeError,
+                message: "created_account_* fields must be omitted for signed_message".to_owned(),
+                retryable: Some(false),
+            }
+        );
+        assert!(client.resolve_calls.borrow().is_empty());
+    }
+
+    #[test]
+    fn request_resolve_rejects_incomplete_created_account_payload() {
+        let client = FakeClient::default();
+
+        let response = handle_request(
+            &client,
+            NativeBridgeRequest::RequestResolve {
+                message_id: "msg-resolve-incomplete-created".to_owned(),
+                wallet_instance_id: WalletInstanceId::new("wallet-1").unwrap(),
+                request_id: RequestId::new("request-1").unwrap(),
+                presentation_id: starmask_types::PresentationId::new("presentation-1").unwrap(),
+                result_kind: ResultKind::CreatedAccount,
+                signed_txn_bcs_hex: None,
+                signature: None,
+                created_account_address: Some("0xabc".to_owned()),
+                created_account_public_key: None,
+                created_account_curve: Some(Curve::Ed25519),
+                created_account_is_default: Some(true),
+                created_account_is_locked: Some(false),
+            },
+        );
+
+        assert_eq!(
+            response,
+            NativeBridgeResponse::ExtensionError {
+                reply_to: Some("msg-resolve-incomplete-created".to_owned()),
+                code: SharedErrorCode::InternalBridgeError,
+                message:
+                    "created_account requires address, public_key, curve, is_default, and is_locked"
+                        .to_owned(),
+                retryable: Some(false),
+            }
+        );
+        assert!(client.resolve_calls.borrow().is_empty());
     }
 
     #[test]
