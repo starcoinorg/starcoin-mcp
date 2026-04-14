@@ -9,8 +9,13 @@ from pathlib import Path
 from unittest.mock import patch
 
 from runtime_layout import (
+    DEFAULT_LOCAL_ACCOUNT_DIR,
+    DEFAULT_WALLET_BACKEND_ID,
     DEFAULT_WALLET_RUNTIME_DIR,
+    agent_home_root,
     current_platform_paths,
+    default_local_account_dir,
+    default_wallet_runtime_dir,
     metadata_daemon_socket_path,
     platform_daemon_socket_candidates,
     resolve_node_config_override,
@@ -23,6 +28,21 @@ from starmaskd_client import resolve_socket_path
 
 
 class RuntimeLayoutTests(unittest.TestCase):
+    def test_default_wallet_runtime_dir_uses_starcoin_agents_root(self) -> None:
+        self.assertEqual(
+            DEFAULT_WALLET_RUNTIME_DIR,
+            Path.home() / ".starcoin-agents" / "wallet-runtime",
+        )
+
+    def test_default_local_account_dir_uses_named_local_accounts_root(self) -> None:
+        self.assertEqual(
+            DEFAULT_LOCAL_ACCOUNT_DIR,
+            Path.home() / ".starcoin-agents" / "local-accounts" / "default",
+        )
+
+    def test_default_wallet_backend_id_matches_default_profile(self) -> None:
+        self.assertEqual(DEFAULT_WALLET_BACKEND_ID, "local-default")
+
     def test_wallet_runtime_socket_path_uses_runtime_run_subdirectory(self) -> None:
         runtime_dir = Path("/tmp/example-wallet-runtime")
         self.assertEqual(
@@ -92,15 +112,11 @@ class RuntimeLayoutTests(unittest.TestCase):
                 Path("/tmp/new-daemon.sock"),
             )
 
-    def test_resolve_wallet_daemon_socket_path_uses_default_socket_for_default_runtime(self) -> None:
-        default_socket_path = Path("/tmp/platform-default.sock")
+    def test_resolve_wallet_daemon_socket_path_uses_runtime_socket_for_default_runtime(self) -> None:
         with patch.dict(os.environ, {}, clear=True):
             self.assertEqual(
-                resolve_wallet_daemon_socket_path(
-                    DEFAULT_WALLET_RUNTIME_DIR,
-                    default_socket_path=default_socket_path,
-                ),
-                default_socket_path,
+                resolve_wallet_daemon_socket_path(default_wallet_runtime_dir()),
+                default_wallet_runtime_dir() / "run" / "starmaskd.sock",
             )
 
     def test_platform_daemon_socket_candidates_include_current_platform_path(self) -> None:
@@ -148,6 +164,18 @@ class RuntimeLayoutTests(unittest.TestCase):
                 paths.daemon_socket_path,
                 Path("/tmp/runtime-layout-run/starmask-runtime/starmaskd.sock"),
             )
+
+    def test_agent_home_root_helper_uses_starcoin_agents_directory(self) -> None:
+        self.assertEqual(
+            agent_home_root(Path("/tmp/fake-home")),
+            Path("/tmp/fake-home/.starcoin-agents"),
+        )
+
+    def test_default_local_account_dir_helper_builds_profile_path(self) -> None:
+        self.assertEqual(
+            default_local_account_dir(Path("/tmp/fake-home")),
+            Path("/tmp/fake-home/.starcoin-agents/local-accounts/default"),
+        )
 
     def test_metadata_daemon_socket_path_ignores_non_string_values(self) -> None:
         self.assertIsNone(metadata_daemon_socket_path({"daemon_socket_path": True}))

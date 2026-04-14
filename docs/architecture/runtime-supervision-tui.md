@@ -99,7 +99,7 @@ Recommended profile kinds:
 1. `system`
    - uses normal OS-default config locations
 2. `workspace_dev`
-   - uses repository-local `.runtime/` paths similar to the current workflow scripts
+   - uses repository-local `.starcoin-agents/` paths similar to the current workflow scripts
 
 The first TUI pass should support selecting one profile at startup rather than hot-switching
 profiles while processes are running.

@@ -75,8 +75,8 @@ async fn spawn_local_backend_server() -> (tempfile::TempDir, std::path::PathBuf,
                 Channel::Development,
                 vec![WalletBackendConfig::LocalAccountDir(
                     LocalAccountDirBackendConfig::new(
-                        "local-main",
-                        "Local Main",
+                        "local-default",
+                        "Local Default Wallet",
                         starmask_types::ApprovalSurface::TtyPrompt,
                         account_dir,
                         LocalPromptMode::TtyPrompt,
@@ -149,11 +149,11 @@ async fn register_local_backend(
         "backend.register",
         json!({
             "protocol_version": 2,
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "backend_kind": "local_account_dir",
             "transport_kind": "local_socket",
             "approval_surface": "tty_prompt",
-            "instance_label": "Local Main",
+            "instance_label": "Local Default Wallet",
             "lock_state": lock_state,
             "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction", "create_account"],
             "backend_metadata": {
@@ -400,7 +400,7 @@ async fn unix_server_round_trips_generic_backend_register_and_resolve() {
             "protocol_version": 1,
             "client_request_id": "client-local-sign",
             "account_address": "0x1",
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "message": "hello",
             "format": "utf8",
         }),
@@ -417,7 +417,7 @@ async fn unix_server_round_trips_generic_backend_register_and_resolve() {
         "request.pullNext",
         json!({
             "protocol_version": 2,
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
         }),
     )
     .await;
@@ -434,7 +434,7 @@ async fn unix_server_round_trips_generic_backend_register_and_resolve() {
         "request.presented",
         json!({
             "protocol_version": 2,
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "request_id": request_id,
             "delivery_lease_id": delivery_lease_id,
             "presentation_id": "presentation-1",
@@ -452,7 +452,7 @@ async fn unix_server_round_trips_generic_backend_register_and_resolve() {
         "request.resolve",
         json!({
             "protocol_version": 2,
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "request_id": request_id,
             "presentation_id": "presentation-1",
             "result_kind": "signed_message",
@@ -504,7 +504,7 @@ async fn unix_server_round_trips_local_create_account_request() {
         json!({
             "protocol_version": 1,
             "client_request_id": "client-local-create-account",
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "display_hint": "Create account",
             "client_context": "codex",
         }),
@@ -563,7 +563,7 @@ async fn unix_server_round_trips_generic_backend_reject() {
             "protocol_version": 1,
             "client_request_id": "client-local-reject",
             "account_address": "0x1",
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "message": "hello",
             "format": "utf8",
         }),
@@ -580,7 +580,7 @@ async fn unix_server_round_trips_generic_backend_reject() {
         "request.pullNext",
         json!({
             "protocol_version": 2,
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
         }),
     )
     .await;
@@ -597,7 +597,7 @@ async fn unix_server_round_trips_generic_backend_reject() {
         "request.presented",
         json!({
             "protocol_version": 2,
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "request_id": request_id,
             "delivery_lease_id": delivery_lease_id,
             "presentation_id": "presentation-reject",
@@ -615,7 +615,7 @@ async fn unix_server_round_trips_generic_backend_reject() {
         "request.reject",
         json!({
             "protocol_version": 2,
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "request_id": request_id,
             "presentation_id": "presentation-reject",
             "reason_code": "request_rejected",
@@ -670,7 +670,7 @@ async fn unix_server_reports_request_has_available_for_local_backend() {
     )
     .await;
 
-    let available = has_available(&socket_path, "local-main").await;
+    let available = has_available(&socket_path, "local-default").await;
     assert_eq!(available["available"], json!(false));
 
     let created = call_daemon(
@@ -681,7 +681,7 @@ async fn unix_server_reports_request_has_available_for_local_backend() {
             "protocol_version": 1,
             "client_request_id": "client-has-available",
             "account_address": "0x1",
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "message": "hello",
             "format": "utf8",
         }),
@@ -692,7 +692,7 @@ async fn unix_server_reports_request_has_available_for_local_backend() {
     };
     assert_eq!(created.result["status"], json!("created"));
 
-    let available = has_available(&socket_path, "local-main").await;
+    let available = has_available(&socket_path, "local-default").await;
     assert_eq!(available["available"], json!(true));
 
     server.abort();
@@ -726,7 +726,7 @@ async fn unix_server_repeated_empty_pull_next_remains_stable_for_local_backend()
                 "request.pullNext",
                 json!({
                     "protocol_version": 2,
-                    "wallet_instance_id": "local-main",
+                    "wallet_instance_id": "local-default",
                 }),
             ),
         )
@@ -789,11 +789,11 @@ async fn unix_server_rejects_generic_backend_registration_over_v1_protocol() {
         "backend.register",
         json!({
             "protocol_version": 1,
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "backend_kind": "local_account_dir",
             "transport_kind": "local_socket",
             "approval_surface": "tty_prompt",
-            "instance_label": "Local Main",
+            "instance_label": "Local Default Wallet",
             "lock_state": "unlocked",
             "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction", "create_account"],
             "backend_metadata": {
@@ -826,11 +826,11 @@ async fn unix_server_rejects_local_backend_registration_when_backend_is_not_enab
         "backend.register",
         json!({
             "protocol_version": 2,
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "backend_kind": "local_account_dir",
             "transport_kind": "local_socket",
             "approval_surface": "tty_prompt",
-            "instance_label": "Local Main",
+            "instance_label": "Local Default Wallet",
             "lock_state": "unlocked",
             "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction", "create_account"],
             "backend_metadata": {
@@ -877,7 +877,7 @@ async fn unix_server_backend_heartbeat_updates_lock_state() {
         "backend.heartbeat",
         json!({
             "protocol_version": 2,
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "presented_request_ids": [],
             "lock_state": "locked",
         }),
@@ -891,7 +891,7 @@ async fn unix_server_backend_heartbeat_updates_lock_state() {
     let instances = list_wallet_instances(&socket_path).await;
     assert_eq!(
         instances["wallet_instances"][0]["wallet_instance_id"],
-        json!("local-main")
+        json!("local-default")
     );
     assert_eq!(
         instances["wallet_instances"][0]["lock_state"],
@@ -926,7 +926,7 @@ async fn unix_server_backend_update_accounts_replaces_snapshot() {
         "backend.updateAccounts",
         json!({
             "protocol_version": 2,
-            "wallet_instance_id": "local-main",
+            "wallet_instance_id": "local-default",
             "lock_state": "locked",
             "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction", "create_account"],
             "accounts": [
@@ -947,10 +947,10 @@ async fn unix_server_backend_update_accounts_replaces_snapshot() {
     };
     assert_eq!(updated.result["ok"], json!(true));
 
-    let accounts = list_wallet_accounts(&socket_path, "local-main").await;
+    let accounts = list_wallet_accounts(&socket_path, "local-default").await;
     assert_eq!(
         accounts["wallet_instances"][0]["wallet_instance_id"],
-        json!("local-main")
+        json!("local-default")
     );
     assert_eq!(
         accounts["wallet_instances"][0]["lock_state"],

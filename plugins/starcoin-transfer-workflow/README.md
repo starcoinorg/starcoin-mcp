@@ -1,13 +1,13 @@
 # Starcoin Transfer Workflow
 
-This plugin example turns Codex into the transfer host client for a user-in-the-loop Starcoin
-transfer flow.
+This plugin example turns an agentic host into the host client for user-in-the-loop Starcoin wallet flows,
+including address creation, transfer execution, and local audit tracking.
 
 The current direction is Plan B:
 
 - keep the host sequencing in skills and scripts
 - remove direct runtime dependence on in-tree stdio adapters for the converged transfer path
-- keep wallet approval outside Codex
+- keep wallet approval outside the host session
 - keep chain-side transaction logic in Rust instead of reimplementing it in Python
 
 The design document for that direction lives at:
@@ -20,7 +20,7 @@ The converged transfer path now looks like this:
 
 ```mermaid
 flowchart LR
-    H["Codex Skill + Scripts"] --> W["scripts/starmaskd_client.py"]
+    H["Agentic Host Skill + Scripts"] --> W["scripts/starmaskd_client.py"]
     H --> N["scripts/node_cli_client.py"]
     W --> D["starmaskd"]
     D --> A["local-account-agent or extension"]
@@ -45,17 +45,21 @@ ships a plugin-managed adapter entrypoint.
 - `docs/plan-b-script-skill-architecture.md`
   - phased design for the script + skill architecture
 - `hooks/hooks.json`
-  - startup runtime guardrail for Codex sessions
+  - startup runtime guardrail for agentic-host sessions
 - `skills/starcoin-transfer/SKILL.md`
-  - transfer workflow instructions for Codex
+  - transfer workflow instructions for an agentic host
 - `scripts/starmaskd_client.py`
   - direct JSON-RPC client for `starmaskd`
 - `scripts/node_cli_client.py`
   - adapter that calls `starcoin-node-cli`
+- `scripts/run_create_account.py`
+  - one-shot account-creation flow through the direct daemon path
 - `scripts/transfer_controller.py`
   - typed host-side transfer controller
 - `scripts/transfer_host.py`
-  - host-side preflight, risk labeling, preview, and audit helpers
+  - host-side preflight, risk labeling, and preview helpers
+- `scripts/workflow_audit.py`
+  - shared JSONL audit logger for create-account and transfer workflows
 - `scripts/wallet_runtime.py`
   - foreground wallet-side supervisor for `starmaskd + local-account-agent`
 - `scripts/run_transfer_test.py`
@@ -79,14 +83,14 @@ The Plan B transfer path expects:
 3. a wallet backend to be registered with `starmaskd`
 4. the daemon socket to be reachable
 
-Default config locations now prefer `$HOME/.runtime`:
+Default config locations now prefer `$HOME/.starcoin-agents`:
 
 - node config:
-  - `$HOME/.runtime/node-cli.toml`
+  - `$HOME/.starcoin-agents/node-cli.toml`
 - wallet config:
-  - `$HOME/.runtime/config.toml`
+  - `$HOME/.starcoin-agents/wallet-runtime/starmaskd.toml`
 - daemon socket:
-  - `$HOME/.runtime/run/starmaskd.sock`
+  - `$HOME/.starcoin-agents/wallet-runtime/run/starmaskd.sock`
 
 Repo-local example templates:
 
@@ -111,9 +115,9 @@ Keep the chain node data and signing wallet data in different directories.
 Recommended layout:
 
 - dev node data dir:
-  - `<repo-root>/.runtime/devstack`
+  - `<repo-root>/.starcoin-agents/devstack`
 - standalone signer wallet dir:
-  - `<repo-root>/.runtime/devwallet`
+  - `<repo-root>/.starcoin-agents/local-accounts/default`
 
 Why:
 
@@ -121,31 +125,40 @@ Why:
 - `local-account-agent` must open a wallet directory independently
 - reusing the node-owned wallet directory causes `LOCK: Resource temporarily unavailable`
 
+`devwallet` was only a demo name for the standalone local account vault. It is not the wallet
+runtime state directory. The runtime state belongs under `wallet-runtime/`, while local accounts
+should live under `local-accounts/<name>/`. The default local-account location is now
+`$HOME/.starcoin-agents/local-accounts/default`.
+
 Example standalone wallet bootstrap:
 
 ```bash
-chmod 700 <repo-root>/.runtime/devwallet
-starcoin --connect ws://127.0.0.1:9870 --local-account-dir <repo-root>/.runtime/devwallet account create -p test123
-starcoin --connect ws://127.0.0.1:9870 --local-account-dir <repo-root>/.runtime/devwallet account create -p test123
+chmod 700 <repo-root>/.starcoin-agents/local-accounts/default
+starcoin --connect ws://127.0.0.1:9870 --local-account-dir <repo-root>/.starcoin-agents/local-accounts/default account create -p test123
+starcoin --connect ws://127.0.0.1:9870 --local-account-dir <repo-root>/.starcoin-agents/local-accounts/default account create -p test123
 ```
 
 Example funding from the dev node side:
 
 ```bash
-starcoin -n dev -d <repo-root>/.runtime/devstack dev get-coin <sender-address>
+starcoin -n dev -d <repo-root>/.starcoin-agents/devstack dev get-coin <sender-address>
 ```
 
 If the wallet runtime is already up, bootstrap can also stay inside the daemon request flow:
 
 ```bash
-python3 ./scripts/starmaskd_client.py --wallet-runtime-dir $HOME/.runtime/wallet-runtime \
-  call wallet_create_account <<'JSON'
-{"client_request_id":"bootstrap-account-1","wallet_instance_id":"local-main","display_hint":"Bootstrap local account","client_context":"codex"}
-JSON
+python3 ./scripts/run_create_account.py \
+  --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime \
+  --wallet-instance-id local-default \
+  --display-hint "Bootstrap local account"
 ```
 
-Then poll `wallet_get_request_status` until the request reaches `approved` and read
-`result.address` from the `created_account` payload.
+`run_create_account.py` creates the request, polls `wallet_get_request_status`, prints the created
+address on approval, and writes an audit record under
+`$HOME/.starcoin-agents/wallet-runtime/audit/create-account-audit.jsonl` by default.
+
+For lower-level debugging, you can still call `wallet_create_account` directly through
+`starmaskd_client.py` and poll `wallet_get_request_status` yourself.
 
 Those `starcoin` CLI examples are still useful for local funding. The transfer flow itself should
 use the script-driven `starmaskd` + `starcoin-node-cli` path.
@@ -175,7 +188,7 @@ Preferred local-account flow:
 1. start the wallet supervisor in one terminal
 2. keep that terminal open for CLI approval cards
 3. run `python3 ./scripts/doctor.py`
-4. run the host-side transfer test or ask Codex to prepare a transfer
+4. run `python3 ./scripts/run_create_account.py ...`, run the host-side transfer test, or ask the agentic host to drive the workflow
 
 If the daemon socket path exists but the doctor reports `Connection refused`, rerun:
 
@@ -187,18 +200,47 @@ Recommended wallet-side startup:
 
 ```bash
 python3 ./scripts/wallet_runtime.py up \
-  --wallet-dir $HOME/.runtime/devwallet \
+  --wallet-dir $HOME/.starcoin-agents/local-accounts/default \
   --chain-id 254
 ```
 
-The supervisor writes `wallet-runtime.json` under `$HOME/.runtime/wallet-runtime/` by default and keeps
+The supervisor writes `wallet-runtime.json` under `$HOME/.starcoin-agents/wallet-runtime/` by default and keeps
 `local-account-agent` attached to the current terminal so `tty_prompt` approvals still work.
+
+To back up the local account vault, use:
+
+```bash
+python3 ./scripts/wallet_runtime.py backup
+```
+
+If `--backup-dir` is omitted, the command prompts for a destination directory. It backs up the
+local account vault, not the wallet runtime socket or sqlite state. If the runtime is still
+running, stop it first or pass `--allow-live` for a best-effort copy.
+
+## Create Account Flow
+
+The converged wallet bootstrap flow is:
+
+1. The agentic host or the operator resolves the target `wallet_instance_id`
+2. `wallet.listInstances` through `scripts/starmaskd_client.py`
+3. `request.createAccount` through `scripts/run_create_account.py` or `scripts/starmaskd_client.py`
+4. wallet approval plus `request.getStatus`
+5. report `result.address`, `is_default`, and `is_locked`
+6. append a local JSONL audit record for request creation and the terminal decision
+
+Recommended command:
+
+```bash
+python3 ./scripts/run_create_account.py \
+  --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime \
+  --wallet-instance-id local-default
+```
 
 ## Transfer Flow
 
 The converged Plan B flow is:
 
-1. Codex resolves the user transfer intent into network, sender, receiver, token, amount, and wallet instance
+1. The agentic host resolves the user transfer intent into network, sender, receiver, token, amount, and wallet instance
 2. `wallet.listInstances` through `scripts/starmaskd_client.py`
 3. `wallet.listAccounts` through `scripts/starmaskd_client.py`
 4. `chain_status` and `node_health` through `scripts/node_cli_client.py`
@@ -215,8 +257,21 @@ The converged Plan B flow is:
 If the local runtime is not ready, the right recovery is to stop and run `doctor.py`, not to fall
 back to direct `starcoin` CLI transfer commands.
 
-The scripts assume Codex has already resolved the intent. Natural-language extraction and precise
+The scripts assume the agentic host has already resolved the intent. Natural-language extraction and precise
 follow-up questions remain a skill-level responsibility, not a Python parser feature.
+
+## Audit Trail
+
+The workflow now keeps separate default JSONL audit files for the two wallet-side flows:
+
+- create-account:
+  - `$HOME/.starcoin-agents/wallet-runtime/audit/create-account-audit.jsonl`
+- transfer:
+  - `<active-runtime>/audit/transfer-audit.jsonl`
+
+Both audit files record request ids, backend ids, timestamps, and terminal decisions. The transfer
+path also records the prepared payload hash and submit outcome. The audit helpers intentionally do
+not log passwords, private keys, raw signed payloads, or full signed transaction bytes.
 
 ## CLI Transfer Test
 
@@ -229,14 +284,14 @@ This mode starts wallet-side processes inside the test script:
 ```bash
 python3 ./scripts/run_transfer_test.py \
   --rpc-url http://127.0.0.1:9850 \
-  --wallet-dir <repo-root>/.runtime/devwallet \
+  --wallet-dir <repo-root>/.starcoin-agents/local-accounts/default \
   --sender <sender-address> \
   --receiver <receiver-address> \
   --amount 1 \
   --amount-unit stc \
   --vm-profile vm2_only \
   --min-confirmed-blocks 3 \
-  --audit-log-path <repo-root>/.runtime/transfer-audit.jsonl
+  --audit-log-path <repo-root>/.starcoin-agents/transfer-audit.jsonl
 ```
 
 ### Reuse A Running Wallet Supervisor
@@ -246,7 +301,7 @@ This mode reuses an already-running wallet runtime:
 ```bash
 python3 ./scripts/run_transfer_test.py \
   --rpc-url http://127.0.0.1:9850 \
-  --wallet-runtime-dir $HOME/.runtime/wallet-runtime \
+  --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime \
   --sender <sender-address> \
   --receiver <receiver-address> \
   --amount 1 \
@@ -258,7 +313,7 @@ python3 ./scripts/run_transfer_test.py \
 In one-shot mode, `run_transfer_test.py` does this:
 
 1. probes the node and derives `chain_id`, `network`, and `genesis_hash`
-2. writes isolated `node-cli.toml` and `starmaskd.toml` files under a unique `.runtime/` directory
+2. writes isolated `node-cli.toml` and `starmaskd.toml` files under a unique `.starcoin-agents/` directory
 3. starts `starmaskd`
 4. starts `local-account-agent`
 5. talks directly to `starmaskd` for wallet discovery, request creation, and status polling
@@ -269,7 +324,7 @@ In one-shot mode, `run_transfer_test.py` does this:
 10. appends JSONL audit records under the active runtime directory unless `--audit-log-path` overrides it
 
 In supervisor-reuse mode, steps 3 and 4 are skipped. The script reads
-`$HOME/.runtime/wallet-runtime/wallet-runtime.json`, reuses the daemon socket and wallet instance, and
+`$HOME/.starcoin-agents/wallet-runtime/wallet-runtime.json`, reuses the daemon socket and wallet instance, and
 runs the same direct daemon + CLI host flow.
 
 `prepare_transfer.amount` is a raw on-chain integer. The test script accepts `--amount-unit stc`

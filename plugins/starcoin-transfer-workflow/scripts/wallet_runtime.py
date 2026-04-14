@@ -14,11 +14,20 @@ from pathlib import Path
 from typing import Any
 
 from runtime_layout import (
+    DEFAULT_LOCAL_ACCOUNT_DIR,
+    DEFAULT_WALLET_BACKEND_ID,
+    DEFAULT_WALLET_INSTANCE_LABEL,
+    DEFAULT_WALLET_RUNTIME_DIR,
     RUNTIME_METADATA_NAME,
     STARMASKD_MANIFEST_MARKERS,
     resolve_workspace_root,
     wallet_runtime_socket_path,
 )
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # pragma: no cover
+    import tomli as tomllib  # type: ignore
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -79,7 +88,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--runtime-dir",
-        default=str(Path.home() / ".runtime" / "wallet-runtime"),
+        default=str(DEFAULT_WALLET_RUNTIME_DIR),
         help="Directory for generated config, pid files, and logs.",
     )
     subparsers = parser.add_subparsers(dest="command", required=True)
@@ -87,7 +96,7 @@ def parse_args() -> argparse.Namespace:
     up = subparsers.add_parser("up", help="Start starmaskd and local-account-agent.")
     up.add_argument(
         "--wallet-dir",
-        default=str(Path.home() / ".runtime" / "devwallet"),
+        default=str(DEFAULT_LOCAL_ACCOUNT_DIR),
         help="Standalone local account vault directory used by local-account-agent.",
     )
     up.add_argument(
@@ -98,12 +107,12 @@ def parse_args() -> argparse.Namespace:
     )
     up.add_argument(
         "--backend-id",
-        default="local-dev",
+        default=DEFAULT_WALLET_BACKEND_ID,
         help="Backend id registered with starmaskd.",
     )
     up.add_argument(
         "--instance-label",
-        default="Local Dev Wallet",
+        default=DEFAULT_WALLET_INSTANCE_LABEL,
         help="Display label reported by the wallet backend.",
     )
     up.add_argument(
@@ -117,6 +126,27 @@ def parse_args() -> argparse.Namespace:
 
     down = subparsers.add_parser("down", help="Stop the supervised runtime.")
     down.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+
+    backup = subparsers.add_parser(
+        "backup",
+        help="Copy the local account vault into a backup directory.",
+    )
+    backup.add_argument(
+        "--wallet-dir",
+        default=None,
+        help="Explicit local account vault directory to back up. Defaults to the active runtime metadata or the standard local-account path.",
+    )
+    backup.add_argument(
+        "--backup-dir",
+        default=None,
+        help="Destination directory or parent directory for the backup copy. Prompts when omitted in an interactive shell.",
+    )
+    backup.add_argument(
+        "--allow-live",
+        action="store_true",
+        help="Allow a best-effort copy while the runtime is still running.",
+    )
+    backup.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
     return parser.parse_args()
 
@@ -185,6 +215,15 @@ def append_log_note(path: Path, message: str) -> None:
         handle.write(f"[wallet_runtime] {message}\n")
 
 
+def prompt_for_path(prompt: str) -> Path:
+    if not sys.stdin.isatty():
+        raise RuntimeError("backup destination must be provided with --backup-dir in non-interactive mode")
+    value = input(f"{prompt}: ").strip()
+    if not value:
+        raise RuntimeError("backup destination cannot be empty")
+    return Path(value).expanduser().resolve()
+
+
 def socket_reachable(path: Path) -> tuple[bool, str]:
     if not path.exists():
         return False, "socket file is missing"
@@ -213,6 +252,93 @@ def runtime_paths(runtime_dir: Path) -> dict[str, Path]:
         "starmaskd_log_path": logs_dir / "starmaskd.log",
         "agent_log_path": logs_dir / "local-account-agent.log",
     }
+
+
+def resolve_backup_wallet_dir(runtime_dir: Path, wallet_dir_arg: str | None) -> Path:
+    if wallet_dir_arg:
+        return Path(wallet_dir_arg).expanduser().resolve()
+
+    metadata = read_json(runtime_paths(runtime_dir)["metadata_path"])
+    if metadata is not None:
+        wallet_dir = metadata.get("wallet_dir")
+        if isinstance(wallet_dir, str) and wallet_dir.strip():
+            return Path(wallet_dir).expanduser().resolve()
+
+    config_path = runtime_paths(runtime_dir)["config_path"]
+    if config_path.exists():
+        with config_path.open("rb") as handle:
+            config = tomllib.load(handle)
+        for backend in config.get("wallet_backends", []):
+            if not isinstance(backend, dict):
+                continue
+            wallet_dir = backend.get("account_dir")
+            if isinstance(wallet_dir, str) and wallet_dir.strip():
+                return Path(wallet_dir).expanduser().resolve()
+
+    return DEFAULT_LOCAL_ACCOUNT_DIR.resolve()
+
+
+def resolve_backup_destination(
+    backup_dir_arg: str | None,
+    *,
+    source_wallet_dir: Path,
+) -> Path:
+    requested = (
+        Path(backup_dir_arg).expanduser().resolve()
+        if backup_dir_arg is not None
+        else prompt_for_path("Backup destination directory")
+    )
+    if requested.exists():
+        if not requested.is_dir():
+            raise RuntimeError(f"backup destination exists and is not a directory: {requested}")
+        timestamp = time.strftime("%Y%m%d-%H%M%S")
+        return requested / f"{source_wallet_dir.name}-backup-{timestamp}"
+    return requested
+
+
+def backup_wallet_dir(
+    *,
+    source_wallet_dir: Path,
+    destination_dir: Path,
+    runtime_dir: Path,
+) -> dict[str, Any]:
+    source_wallet_dir = source_wallet_dir.expanduser().resolve()
+    destination_dir = destination_dir.expanduser().resolve()
+    runtime_dir = runtime_dir.expanduser().resolve()
+    if not source_wallet_dir.exists():
+        raise FileNotFoundError(f"wallet_dir does not exist: {source_wallet_dir}")
+    if not source_wallet_dir.is_dir():
+        raise RuntimeError(f"wallet_dir is not a directory: {source_wallet_dir}")
+    if destination_dir.exists():
+        raise RuntimeError(f"backup destination already exists: {destination_dir}")
+    if destination_dir == source_wallet_dir or destination_dir.is_relative_to(source_wallet_dir):
+        raise RuntimeError(
+            "backup destination must not be the wallet directory or a child of it: "
+            f"{destination_dir}"
+        )
+    if source_wallet_dir.is_relative_to(destination_dir):
+        raise RuntimeError(
+            "wallet_dir must not be nested under the backup destination: "
+            f"{source_wallet_dir}"
+        )
+
+    destination_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(
+        source_wallet_dir,
+        destination_dir,
+        copy_function=shutil.copy2,
+        symlinks=True,
+    )
+    os.chmod(destination_dir, 0o700)
+    manifest_path = destination_dir / "backup-manifest.json"
+    manifest = {
+        "source_wallet_dir": str(source_wallet_dir),
+        "backup_dir": str(destination_dir),
+        "runtime_dir": str(runtime_dir),
+        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    write_json(manifest_path, manifest)
+    return manifest
 
 
 def toml_string(value: str) -> str:
@@ -389,6 +515,37 @@ def main() -> int:
         else:
             print_status(result)
             print("runtime stopped")
+        return 0
+
+    if args.command == "backup":
+        wallet_dir = resolve_backup_wallet_dir(runtime_dir, args.wallet_dir)
+        status = load_status(runtime_dir)
+        runtime_is_live = bool(status["starmaskd_running"] or status["agent_running"])
+        if runtime_is_live and not args.allow_live:
+            raise RuntimeError(
+                "wallet runtime is still running; stop it first with the down command or rerun backup with --allow-live for a best-effort copy"
+            )
+        destination_dir = resolve_backup_destination(
+            args.backup_dir,
+            source_wallet_dir=wallet_dir,
+        )
+        manifest = backup_wallet_dir(
+            source_wallet_dir=wallet_dir,
+            destination_dir=destination_dir,
+            runtime_dir=runtime_dir,
+        )
+        payload = {
+            **manifest,
+            "runtime_live": runtime_is_live,
+        }
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            print(f"wallet backup created: {destination_dir}")
+            print(f"source_wallet_dir:    {wallet_dir}")
+            print(f"backup_manifest:      {destination_dir / 'backup-manifest.json'}")
+            if runtime_is_live:
+                print("note: runtime was live, so this was a best-effort backup copy")
         return 0
 
     wallet_dir = Path(args.wallet_dir).resolve()

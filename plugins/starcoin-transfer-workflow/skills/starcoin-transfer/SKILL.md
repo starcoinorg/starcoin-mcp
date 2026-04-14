@@ -1,21 +1,21 @@
 ---
 name: starcoin-transfer
-description: Use when the user wants a user-in-the-loop Starcoin transfer through Codex. This skill orchestrates local wallet and chain scripts while keeping prepare, confirm, sign, submit, and watch steps bound together.
+description: Use when the user wants a user-in-the-loop Starcoin wallet workflow through an agentic host. This skill covers address creation, transfer preparation and confirmation, and local workflow audit trails.
 ---
 
 # Starcoin Transfer
 
-This skill turns Codex into the host-side transfer controller without depending on plugin-managed
+This skill turns an agentic host into the host-side transfer controller without depending on plugin-managed
 stdio adapters.
 
 The canonical execution path is:
 
 - wallet-side calls through `scripts/starmaskd_client.py`
 - chain-side calls through `scripts/node_cli_client.py`
-- host-side sequencing and state retention in Codex
+- host-side sequencing and state retention in the agentic host
 
 Use this skill when the user wants to transfer tokens, request a signature for a prepared transfer,
-or track the final transaction state.
+create a fresh wallet address before transfer, or inspect the local audit trail for those flows.
 
 ## CLI Quick Reference
 
@@ -26,6 +26,8 @@ script path itself has changed.
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_list_instances`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_list_accounts`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_get_public_key`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/run_create_account.py --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime --wallet-instance-id <wallet-instance-id>`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime call wallet_create_account`
 - Chain status and reads:
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/node_cli_client.py call chain_status`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/node_cli_client.py call node_health`
@@ -34,15 +36,19 @@ script path itself has changed.
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/doctor.py`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py status`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py up --replace`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py backup`
 - End-to-end test:
-  - `python3 ./plugins/starcoin-transfer-workflow/scripts/run_transfer_test.py --rpc-url http://127.0.0.1:9850 --wallet-runtime-dir $HOME/.runtime/wallet-runtime --sender <sender> --receiver <receiver> --amount 1 --amount-unit stc --vm-profile vm2_only --min-confirmed-blocks 3`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/run_transfer_test.py --rpc-url http://127.0.0.1:9850 --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime --sender <sender> --receiver <receiver> --amount 1 --amount-unit stc --vm-profile vm2_only --min-confirmed-blocks 3`
 
 Default runtime locations for this workflow:
 
-- wallet runtime: `$HOME/.runtime/wallet-runtime`
-- wallet dir: `$HOME/.runtime/devwallet`
-- node config: `$HOME/.runtime/node-cli.toml`
-- wallet config: `$HOME/.runtime/wallet-runtime/starmaskd.toml`
+- wallet runtime: `$HOME/.starcoin-agents/wallet-runtime`
+- wallet dir: `$HOME/.starcoin-agents/local-accounts/default`
+- node config: `$HOME/.starcoin-agents/node-cli.toml`
+- wallet config: `$HOME/.starcoin-agents/wallet-runtime/starmaskd.toml`
+
+Use `wallet_runtime.py backup` to copy the local account vault. If `--backup-dir` is omitted, the
+script prompts for a destination directory.
 
 Known important parameters:
 
@@ -56,6 +62,13 @@ Known important parameters:
 - `wallet_runtime.py`
   - `--runtime-dir <dir>`
   - `up --wallet-dir <dir> --chain-id <id> --backend-id <id> --replace`
+- `run_create_account.py`
+  - `--wallet-runtime-dir <dir>`
+  - `--wallet-instance-id <wallet-instance-id>`
+  - `--client-request-id <idempotency-key>`
+  - `--display-hint <hint>`
+  - `--ttl-seconds <seconds>`
+  - `--audit-log-path <create-account-audit.jsonl>`
 - `run_transfer_test.py`
   - `--rpc-url <http-rpc>`
   - `--wallet-runtime-dir <dir>` or `--wallet-dir <dir>`
@@ -68,17 +81,32 @@ Known important parameters:
 
 ## Workflow
 
-The current script path does not parse free-form transfer language by itself. Codex should resolve
-the transfer intent first, then use the scripts for deterministic execution.
+The current script path does not parse free-form wallet language by itself. The agentic host should resolve
+the user's intent first, then use the scripts for deterministic execution.
 
-### 1. Capture The Transfer Intent
+### 0. Decide Which Wallet Flow Is Needed
+
+- If the user wants a new local address, start with the create-account flow before any transfer preparation.
+- If the user wants to inspect what happened in a prior create-account or transfer run, read the local JSONL audit file and summarize it instead of replaying the workflow.
+- Only start chain-side transfer preparation after the sender, receiver, amount, token, and wallet instance are unambiguous.
+
+### 1. Create A Fresh Address When Needed
+
+- Discover wallet instances first with `wallet_list_instances`.
+- If there is exactly one viable wallet instance, you may auto-select it. Otherwise ask one precise follow-up question with the concrete candidates.
+- Prefer `run_create_account.py` for a user-facing guided flow. It creates the request, waits for approval, and writes a local audit record.
+- If you need lower-level control, call `wallet_create_account` through `starmaskd_client.py`, then poll `wallet_get_request_status`.
+- Do not claim the address exists until the request reaches `approved` and `result.address` is present.
+- Report the created address, whether it is default, and where the approval happened.
+
+### 2. Capture The Transfer Intent
 
 - Extract or confirm: network, sender account, receiver address, token code, amount, and wallet instance.
 - If a field is missing, ask one precise follow-up question instead of a broad prompt.
 - If routing is ambiguous, list the concrete candidates from `wallet_list_instances` and `wallet_list_accounts`.
 - Do not start chain-side preparation until the transfer intent is unambiguous.
 
-### 2. Validate The Resolved Inputs
+### 3. Validate The Resolved Inputs
 
 - Check that sender and receiver look like valid Starcoin addresses before preparation.
 - Check that the selected token code is explicit and consistent with the chosen `vm_profile`.
@@ -86,15 +114,15 @@ the transfer intent first, then use the scripts for deterministic execution.
 - Do not automatically switch between `0x1::STC::STC` and `0x1::starcoin_coin::STC`.
 - If the user gives a human-readable non-STC amount and decimals are not already known from trusted metadata, ask instead of guessing.
 
-### 3. Gather Chain And Wallet Context
+### 4. Gather Chain And Wallet Context
 
 - If the runtime might not be ready, stop early and ask the user to run `python3 ./plugins/starcoin-transfer-workflow/scripts/doctor.py`.
-- Use `wallet_list_instances` and `wallet_list_accounts` to discover wallet candidates.
-- Use `chain_status` to inspect chain identity.
-- Use `node_health` to inspect RPC availability, peer count, and lag warnings.
+- Discover wallet candidates with `wallet_list_instances` and `wallet_list_accounts`.
+- Inspect chain identity with `chain_status`.
+- Check RPC availability, peer count, and lag warnings through `node_health`.
 - If the sender public key is not already known, call `wallet_get_public_key`.
 
-### 4. Prepare The Transaction
+### 5. Prepare The Transaction
 
 - `prepare_transfer.amount` expects the raw on-chain integer amount.
 - If the user gives a human-readable STC amount and `token_code` is omitted or equals `0x1::STC::STC` or `0x1::starcoin_coin::STC`, normalize it with 9 decimals before preparation. `1 STC = 1_000_000_000` raw units.
@@ -117,7 +145,7 @@ the transfer intent first, then use the scripts for deterministic execution.
   - `next_action`
 - If preparation fails with `invalid_address`, `invalid_asset`, `invalid_amount`, `simulation_failed`, `invalid_chain_context`, or `rpc_unavailable`, stop and explain the failure instead of creating a signing request.
 
-### 5. Run Host Preflight
+### 6. Run Host Preflight
 
 - Query `get_account_overview` for the sender before signing so the host can see balance and `next_sequence_number_hint`.
 - Query `get_account_overview` for the receiver so the host can see whether the account already exists on-chain.
@@ -130,19 +158,19 @@ the transfer intent first, then use the scripts for deterministic execution.
   - sequence / nonce moving ahead after preparation
   - receiver account missing on-chain
 
-### 6. Show The Transaction Preview
+### 7. Show The Transaction Preview
 
-- Summarize the prepared transaction in Codex before creating a signing request.
+- Summarize the prepared transaction in the agentic host before creating a signing request.
 - Include network, sender, receiver, token, amount, raw amount, nonce, fee estimate, balance, and simulation outcome.
 - Show the generated risk labels separately from the happy-path preview.
 - If any blocking risk is present, stop before wallet signing.
 
-### 7. Require Host Confirmation
+### 8. Require Host Confirmation
 
 - Ask for explicit confirmation after the preview and risk labels are shown.
 - Do not ask the wallet to sign until the user has clearly confirmed the prepared transfer.
 
-### 8. Create The Signing Request
+### 9. Create The Signing Request
 
 - Call `wallet_request_sign_transaction` through `starmaskd_client.py` only after host confirmation.
 - Copy `raw_txn_bcs_hex` directly from `prepare_transfer.raw_txn_bcs_hex`.
@@ -151,7 +179,7 @@ the transfer intent first, then use the scripts for deterministic execution.
 - Tell the user where approval will happen.
   - For `local_account_dir`, approval appears in the CLI approval card.
 
-### 9. Wait For Wallet Approval
+### 10. Wait For Wallet Approval
 
 - Poll `wallet_get_request_status` through `starmaskd_client.py`.
 - Stop on terminal failure states:
@@ -161,7 +189,7 @@ the transfer intent first, then use the scripts for deterministic execution.
   - `failed`
 - When the request becomes `approved`, extract `result.signed_txn_bcs_hex`.
 
-### 10. Submit And Report Immediate Status
+### 11. Submit And Report Immediate Status
 
 - Call `submit_signed_transaction` through `node_cli_client.py`.
 - Use one confirmation-depth target for the whole transfer. The default is `min_confirmed_blocks = 2`, which means the inclusion block plus at least 1 additional observed block.
@@ -169,7 +197,7 @@ the transfer intent first, then use the scripts for deterministic execution.
 - Pass the same `min_confirmed_blocks` value to both `submit_signed_transaction` and any direct `watch_transaction` follow-up.
 - Report `txn_hash`, `submission_state`, `next_action`, and whether immediate confirmation data is already present.
 
-### 11. Track Confirmation
+### 12. Track Confirmation
 
 - Inspect `submit_signed_transaction.next_action`.
 - If `next_action = watch_transaction`, immediately call `watch_transaction`.
@@ -178,11 +206,14 @@ the transfer intent first, then use the scripts for deterministic execution.
 - If `status_summary.confirmed = true` but top-level `confirmed = false`, report that the transaction is included but has not yet reached the requested confirmation depth.
 - If submission is accepted but confirmation is still unavailable, report that the transaction is submitted but not yet confirmed. Do not present that state as final success.
 
-### 12. Write The Audit Record
+### 13. Write Or Inspect The Audit Record
 
+- `run_create_account.py` writes create-account audit records under `$HOME/.starcoin-agents/wallet-runtime/audit/create-account-audit.jsonl` by default.
+- `run_transfer_test.py` writes transfer audit records under the active runtime's `audit/transfer-audit.jsonl` by default.
 - Write a local JSONL audit record for the preflight preview, host decision, signing request lifecycle, and submit result.
 - The audit trail should include request id, payload hash, backend id, timestamps, and terminal decision.
 - Do not log plaintext passwords, private keys, raw signed payloads, or full signed transaction bytes.
+- When reading an existing audit file for the user, summarize request id, payload hash, backend id, txn hash, terminal status, and timestamps. Do not dump the whole file unless the user explicitly asks.
 
 ## Safety Rules
 

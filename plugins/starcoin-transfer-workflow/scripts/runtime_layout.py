@@ -8,7 +8,12 @@ from pathlib import Path
 from typing import Iterable, Mapping
 
 
-DEFAULT_WALLET_RUNTIME_DIR = Path.home() / ".runtime" / "wallet-runtime"
+AGENT_HOME_DIRNAME = ".starcoin-agents"
+DEFAULT_LOCAL_ACCOUNT_DIRNAME = "local-accounts"
+DEFAULT_LOCAL_ACCOUNT_PROFILE = "default"
+WORKSPACE_RUNTIME_DIRNAME = AGENT_HOME_DIRNAME
+DEFAULT_WALLET_BACKEND_ID = f"local-{DEFAULT_LOCAL_ACCOUNT_PROFILE}"
+DEFAULT_WALLET_INSTANCE_LABEL = "Local Default Wallet"
 RUNTIME_METADATA_NAME = "wallet-runtime.json"
 DAEMON_SOCKET_ENV_NAME = "STARMASKD_SOCKET_PATH"
 STARCOIN_NODE_CLI_MARKERS = (
@@ -31,6 +36,27 @@ class PlatformRuntimePaths:
     node_config_path: Path
     wallet_config_path: Path
     daemon_socket_path: Path
+
+
+def agent_home_root(home: Path | None = None) -> Path:
+    root_home = home if home is not None else home_dir()
+    return root_home / AGENT_HOME_DIRNAME
+
+
+def default_wallet_runtime_dir(home: Path | None = None) -> Path:
+    return agent_home_root(home) / "wallet-runtime"
+
+
+def default_local_account_dir(home: Path | None = None) -> Path:
+    return (
+        agent_home_root(home)
+        / DEFAULT_LOCAL_ACCOUNT_DIRNAME
+        / DEFAULT_LOCAL_ACCOUNT_PROFILE
+    )
+
+
+DEFAULT_WALLET_RUNTIME_DIR = default_wallet_runtime_dir(Path.home())
+DEFAULT_LOCAL_ACCOUNT_DIR = default_local_account_dir(Path.home())
 
 
 def first_env_value(*names: str) -> str | None:
@@ -91,10 +117,14 @@ def resolve_workspace_root(plugin_root: Path, marker_paths: Iterable[str]) -> Pa
 
 
 def resolve_wallet_runtime_dir(runtime_dir_arg: str | None) -> Path:
-    runtime_dir = runtime_dir_arg or os.environ.get(
-        "STARMASK_WALLET_RUNTIME_DIR", str(DEFAULT_WALLET_RUNTIME_DIR)
-    )
-    return Path(runtime_dir).expanduser()
+    if runtime_dir_arg:
+        return Path(runtime_dir_arg).expanduser()
+
+    env_runtime_dir = os.environ.get("STARMASK_WALLET_RUNTIME_DIR")
+    if env_runtime_dir:
+        return Path(env_runtime_dir).expanduser()
+
+    return default_wallet_runtime_dir()
 
 
 def wallet_runtime_metadata_path(runtime_dir: Path) -> Path:
@@ -138,7 +168,7 @@ def linux_runtime_dirs(home: Path) -> LinuxRuntimeDirs:
 
 def current_platform_paths() -> PlatformRuntimePaths:
     home = home_dir()
-    runtime_root = home / ".runtime"
+    runtime_root = agent_home_root(home)
     system = platform.system()
     if system == "Darwin":
         support_dir = home / "Library" / "Application Support"
@@ -186,7 +216,6 @@ def resolve_wallet_daemon_socket_path(
     runtime_dir: Path,
     *,
     metadata: Mapping[str, object] | None = None,
-    default_socket_path: Path | None = None,
 ) -> Path:
     metadata_socket_path = metadata_daemon_socket_path(metadata)
     if metadata_socket_path is not None:
@@ -196,8 +225,6 @@ def resolve_wallet_daemon_socket_path(
     if env_socket_path is not None:
         return env_socket_path
 
-    if default_socket_path is not None and runtime_dir == DEFAULT_WALLET_RUNTIME_DIR:
-        return default_socket_path
     return wallet_runtime_socket_path(runtime_dir)
 
 
@@ -215,8 +242,7 @@ def platform_wallet_config_candidates() -> list[Path]:
     paths = current_platform_paths()
     return dedupe_paths(
         [
-            DEFAULT_WALLET_RUNTIME_DIR / "starmaskd.toml",
-            paths.runtime_root / "config.toml",
+            default_wallet_runtime_dir() / "starmaskd.toml",
             paths.wallet_config_path,
         ]
     )
@@ -226,8 +252,7 @@ def platform_daemon_socket_candidates() -> list[Path]:
     paths = current_platform_paths()
     return dedupe_paths(
         [
-            wallet_runtime_socket_path(DEFAULT_WALLET_RUNTIME_DIR),
-            paths.runtime_root / "run" / "starmaskd.sock",
+            wallet_runtime_socket_path(default_wallet_runtime_dir()),
             paths.daemon_socket_path,
         ]
     )

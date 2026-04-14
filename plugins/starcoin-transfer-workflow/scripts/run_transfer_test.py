@@ -17,12 +17,15 @@ from urllib.request import Request, urlopen
 
 from node_cli_client import NodeCliClient
 from runtime_layout import (
+    DEFAULT_LOCAL_ACCOUNT_DIR,
+    DEFAULT_WALLET_BACKEND_ID,
+    DEFAULT_WALLET_INSTANCE_LABEL,
     STARMASKD_MANIFEST_MARKERS,
+    WORKSPACE_RUNTIME_DIRNAME,
     resolve_workspace_root,
     wallet_runtime_socket_path,
 )
 from starmaskd_client import StarmaskDaemonClient
-from transfer_host import TransferAuditLogger
 from transfer_controller import (
     TransferController,
     describe_confirmation_depth,
@@ -30,6 +33,7 @@ from transfer_controller import (
     normalize_min_confirmed_blocks,
     resolve_token_code,
 )
+from workflow_audit import WorkflowAuditLogger
 
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
@@ -134,7 +138,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--wallet-instance-id",
-        default="local-dev",
+        default=DEFAULT_WALLET_BACKEND_ID,
         help="Backend id used in the generated starmaskd config",
     )
     parser.add_argument(
@@ -321,7 +325,7 @@ def main() -> int:
     if runtime_dir_explicit:
         runtime_dir = Path(args.runtime_dir).resolve()
     else:
-        runtime_base_dir = (WORKSPACE_ROOT / ".runtime").resolve()
+        runtime_base_dir = (WORKSPACE_ROOT / WORKSPACE_RUNTIME_DIRNAME).resolve()
         runtime_base_dir.mkdir(parents=True, exist_ok=True)
         runtime_dir = Path(
             tempfile.mkdtemp(prefix="transfer-test-", dir=str(runtime_base_dir))
@@ -334,7 +338,7 @@ def main() -> int:
         runtime_dir=runtime_dir,
         wallet_runtime_dir=wallet_runtime_dir,
     )
-    audit_logger = TransferAuditLogger(audit_log_path)
+    audit_logger = WorkflowAuditLogger(audit_log_path)
     wallet_runtime = None
     wallet_dir: Path | None = None
     wallet_instance_id = args.wallet_instance_id
@@ -347,11 +351,15 @@ def main() -> int:
             )
         wallet_instance_id = str(wallet_runtime.get("wallet_instance_id") or wallet_instance_id)
     else:
-        if not args.wallet_dir:
+        if args.wallet_dir:
+            wallet_dir = Path(args.wallet_dir).resolve()
+        else:
+            wallet_dir = DEFAULT_LOCAL_ACCOUNT_DIR.resolve()
+        if not wallet_dir.exists():
             raise RuntimeError(
-                "--wallet-dir is required unless --wallet-runtime-dir is provided"
+                "--wallet-dir is required unless --wallet-runtime-dir is provided, or the default local account directory already exists at "
+                + str(wallet_dir)
             )
-        wallet_dir = Path(args.wallet_dir).resolve()
         ensure_private_wallet_dir(wallet_dir)
 
     node_info = wait_for_http_ready(args.rpc_url)
@@ -443,7 +451,7 @@ result_retention_seconds = 600
 backend_id = "{wallet_instance_id}"
 backend_kind = "local_account_dir"
 enabled = true
-instance_label = "Local Dev Wallet"
+instance_label = "{DEFAULT_WALLET_INSTANCE_LABEL}"
 approval_surface = "tty_prompt"
 prompt_mode = "tty_prompt"
 account_dir = "{wallet_dir}"

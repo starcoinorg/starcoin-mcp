@@ -189,7 +189,7 @@ id = "browser-default"
 backend_kind = "starmask_extension"
 
 [[wallet_backends]]
-id = "local-main"
+id = "local-default"
 backend_kind = "local_account_dir"
 ```
 

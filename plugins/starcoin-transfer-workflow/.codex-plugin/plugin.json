@@ -1,7 +1,7 @@
 {
   "name": "starcoin-transfer-workflow",
   "version": "0.1.0",
-  "description": "Codex plugin that packages a user-in-the-loop Starcoin transfer workflow.",
+  "description": "Plugin bundle that packages a user-in-the-loop Starcoin transfer workflow for an agentic host.",
   "author": {
     "name": "Starcoin",
     "email": "noreply@starcoin.org",
@@ -22,7 +22,7 @@
   "interface": {
     "displayName": "Starcoin Transfer",
     "shortDescription": "User-approved Starcoin transfers through local runtimes.",
-    "longDescription": "Uses a transfer skill plus local scripts and CLIs to keep prepare, confirm, sign, submit, and watch steps bound together without requiring plugin-managed MCP servers.",
+    "longDescription": "Uses a transfer skill plus local scripts and CLIs to keep prepare, confirm, sign, submit, and watch steps bound together for an agentic host without requiring plugin-managed MCP servers.",
     "developerName": "Starcoin",
     "category": "Developer Tools",
     "capabilities": [
