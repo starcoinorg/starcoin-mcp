@@ -28,14 +28,14 @@ Summary:
 | Subproject | Result | Notes |
 | --- | --- | --- |
 | `starcoin-node` | `40 passed`, `1 ignored` | the ignored test is `crates/starcoin-node-core/tests/live_read_only.rs` and requires `STARCOIN_NODE_E2E_RPC_URL` |
-| `starmask-runtime` | `134 passed` | all local Rust workspace tests passed after the phase-2 backend additions on this branch |
+| `starmask-runtime` | `152 passed` | all local Rust workspace tests passed after the phase-2 backend additions on this branch |
 
 Follow-up targeted runs on this branch:
 
 | Subproject | Result | Notes |
 | --- | --- | --- |
 | `starmask-local-account-agent` | `24 passed` | covers phase-2 signing, unlock success/failure/cancellation, prompt rendering, no-password-over-daemon proof, snapshot sync, and full local-stack restart flows |
-| `starmaskd` | `50 passed` | includes transport, config, schema-gate, recovery, and boundedness coverage for phase 2 |
+| `starmaskd` | `53 passed` | includes transport, config, schema-gate, recovery, and boundedness coverage for phase 2 |
 
 ## `starcoin-node`
 

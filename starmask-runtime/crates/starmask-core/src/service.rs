@@ -1537,7 +1537,7 @@ mod tests {
             CoordinatorCommand, CreateAccountCommand, CreateSignMessageCommand,
             CreateSignTransactionCommand, MarkRequestPresentedCommand, RegisterBackendCommand,
             RegisterExtensionCommand, RejectRequestCommand, ResolveRequestCommand,
-            UpdateBackendAccountsCommand, UpdateExtensionAccountsCommand,
+            SetAccountLabelCommand, UpdateBackendAccountsCommand, UpdateExtensionAccountsCommand,
         },
         policy::AllowAllPolicy,
         repo::{RepositoryError, RequestRepository, WalletRepository},
@@ -1826,6 +1826,38 @@ mod tests {
                 UpdateExtensionAccountsCommand {
                     wallet_instance_id: wallet_instance_id.clone(),
                     lock_state,
+                    accounts,
+                },
+            ))
+            .unwrap();
+    }
+
+    fn register_local_backend(
+        coordinator: &mut Coordinator<MemoryStore, AllowAllPolicy, FixedClock, SequentialIds>,
+        wallet_instance_id: &WalletInstanceId,
+        accounts: Vec<WalletAccountRecord>,
+    ) {
+        coordinator
+            .dispatch(CoordinatorCommand::RegisterBackend(
+                RegisterBackendCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    backend_kind: BackendKind::LocalAccountDir,
+                    transport_kind: TransportKind::LocalSocket,
+                    approval_surface: ApprovalSurface::TtyPrompt,
+                    instance_label: "Local Default Wallet".to_owned(),
+                    extension_id: String::new(),
+                    extension_version: String::new(),
+                    protocol_version: 2,
+                    capabilities: vec![
+                        WalletCapability::Unlock,
+                        WalletCapability::GetPublicKey,
+                        WalletCapability::SignMessage,
+                        WalletCapability::SignTransaction,
+                        WalletCapability::CreateAccount,
+                    ],
+                    backend_metadata: serde_json::json!({}),
+                    profile_hint: None,
+                    lock_state: LockState::Unlocked,
                     accounts,
                 },
             ))
@@ -2753,6 +2785,113 @@ mod tests {
         assert_eq!(created.wallet_instance_id, wallet_instance_id);
         assert_eq!(created.kind, RequestKind::CreateAccount);
         assert_eq!(created.status, RequestStatus::Created);
+    }
+
+    #[test]
+    fn local_backend_can_set_account_label() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-local-label").unwrap();
+        register_local_backend(
+            &mut coordinator,
+            &wallet_instance_id,
+            vec![wallet_account(&wallet_instance_id, "0x1", true)],
+        );
+
+        let response = coordinator
+            .dispatch(CoordinatorCommand::WalletSetAccountLabel(
+                SetAccountLabelCommand {
+                    wallet_instance_id: wallet_instance_id.clone(),
+                    address: "0x1".to_owned(),
+                    label: "main".to_owned(),
+                },
+            ))
+            .unwrap();
+
+        let CoordinatorResponse::WalletAccountLabelSet(result) = response else {
+            panic!("unexpected response");
+        };
+        assert_eq!(result.wallet_instance_id, wallet_instance_id);
+        assert_eq!(result.account.address, "0x1");
+        assert_eq!(result.account.label.as_deref(), Some("main"));
+    }
+
+    #[test]
+    fn set_account_label_rejects_extension_wallet() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-extension-label").unwrap();
+        register_wallet(
+            &mut coordinator,
+            &wallet_instance_id,
+            LockState::Unlocked,
+            vec![wallet_account(&wallet_instance_id, "0x1", true)],
+        );
+
+        let error = coordinator
+            .dispatch(CoordinatorCommand::WalletSetAccountLabel(
+                SetAccountLabelCommand {
+                    wallet_instance_id,
+                    address: "0x1".to_owned(),
+                    label: "main".to_owned(),
+                },
+            ))
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "unsupported_operation: wallet instance wallet-extension-label does not support daemon-managed account labels"
+        );
+    }
+
+    #[test]
+    fn set_account_label_rejects_empty_label() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-empty-label").unwrap();
+        register_local_backend(
+            &mut coordinator,
+            &wallet_instance_id,
+            vec![wallet_account(&wallet_instance_id, "0x1", true)],
+        );
+
+        let error = coordinator
+            .dispatch(CoordinatorCommand::WalletSetAccountLabel(
+                SetAccountLabelCommand {
+                    wallet_instance_id,
+                    address: "0x1".to_owned(),
+                    label: "   ".to_owned(),
+                },
+            ))
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "invalid_account: account label cannot be empty"
+        );
+    }
+
+    #[test]
+    fn set_account_label_rejects_missing_account() {
+        let mut coordinator = build_coordinator();
+        let wallet_instance_id = WalletInstanceId::new("wallet-missing-label-account").unwrap();
+        register_local_backend(
+            &mut coordinator,
+            &wallet_instance_id,
+            vec![wallet_account(&wallet_instance_id, "0x1", true)],
+        );
+
+        let error = coordinator
+            .dispatch(CoordinatorCommand::WalletSetAccountLabel(
+                SetAccountLabelCommand {
+                    wallet_instance_id,
+                    address: "0x9".to_owned(),
+                    label: "main".to_owned(),
+                },
+            ))
+            .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "invalid_account: account 0x9 was not found"
+        );
     }
 
     #[test]

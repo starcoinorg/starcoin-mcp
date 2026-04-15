@@ -1,9 +1,14 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
+import io
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
+import run_create_account
 from run_create_account import (
     account_count_for_instance,
     find_account_for_instance,
@@ -24,6 +29,76 @@ class FakeWalletClient:
         if len(self._responses) > 1:
             return self._responses.pop(0)
         return self._responses[0]
+
+
+class CreateAccountFlowWalletClient:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, dict[str, object]]] = []
+
+    def call_tool(
+        self, name: str, payload: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        payload = payload or {}
+        self.calls.append((name, payload))
+        if name == "wallet_list_instances":
+            return {
+                "wallet_instances": [
+                    {
+                        "wallet_instance_id": "local-default",
+                        "extension_connected": True,
+                        "profile_hint": "local_account_dir",
+                        "lock_state": "unlocked",
+                    }
+                ]
+            }
+        if name == "wallet_list_accounts":
+            list_call_count = sum(
+                1 for call_name, _payload in self.calls if call_name == name
+            )
+            accounts = (
+                []
+                if list_call_count == 1
+                else [{"address": "0xabc", "label": "account-1"}]
+            )
+            return {
+                "wallet_instances": [
+                    {
+                        "wallet_instance_id": "local-default",
+                        "accounts": accounts,
+                    }
+                ]
+            }
+        if name == "wallet_create_account":
+            return {"request_id": "req-1", "status": "created"}
+        if name == "wallet_get_request_status":
+            return {
+                "status": "approved",
+                "result": {
+                    "address": "0xabc",
+                    "is_default": False,
+                    "is_locked": False,
+                },
+            }
+        if name == "wallet_set_account_label":
+            self._assert_label_payload(payload)
+            return {
+                "wallet_instance_id": "local-default",
+                "account": {
+                    "address": "0xabc",
+                    "label": "savings",
+                    "is_read_only": False,
+                },
+            }
+        raise AssertionError(f"unexpected tool call: {name}")
+
+    def _assert_label_payload(self, payload: dict[str, object]) -> None:
+        expected = {
+            "wallet_instance_id": "local-default",
+            "address": "0xabc",
+            "label": "savings",
+        }
+        if payload != expected:
+            raise AssertionError(f"unexpected label payload: {payload!r}")
 
 
 class CreateAccountWorkflowTests(unittest.TestCase):
@@ -187,6 +262,48 @@ class CreateAccountWorkflowTests(unittest.TestCase):
 
         self.assertEqual(status["status"], "approved")
         self.assertEqual(status["result"], {"address": "0x1"})
+
+    def test_main_sets_custom_account_name_after_approved_create_account(self) -> None:
+        client = CreateAccountFlowWalletClient()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args = argparse.Namespace(
+                socket_path=None,
+                wallet_runtime_dir=None,
+                wallet_instance_id=None,
+                client_request_id="client-create",
+                display_hint="Create local account",
+                account_name="savings",
+                client_context="test-create-account",
+                ttl_seconds=300,
+                poll_interval_seconds=0.01,
+                request_timeout_seconds=None,
+                audit_log_path=str(Path(tmpdir) / "audit.jsonl"),
+            )
+            with (
+                patch("run_create_account.parse_args", return_value=args),
+                patch(
+                    "run_create_account.resolve_socket_path",
+                    return_value=Path(tmpdir) / "sock",
+                ),
+                patch("run_create_account.StarmaskDaemonClient", return_value=client),
+                patch("sys.stdout", io.StringIO()) as stdout,
+            ):
+                exit_code = run_create_account.main()
+
+        self.assertEqual(exit_code, 0)
+        self.assertIn(
+            (
+                "wallet_set_account_label",
+                {
+                    "wallet_instance_id": "local-default",
+                    "address": "0xabc",
+                    "label": "savings",
+                },
+            ),
+            client.calls,
+        )
+        self.assertIn("Account Name:", stdout.getvalue())
+        self.assertIn("savings", stdout.getvalue())
 
     def test_wait_for_terminal_request_raises_timeout_and_notifies(self) -> None:
         client = FakeWalletClient([{"status": "pending"}])
