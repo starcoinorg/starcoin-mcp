@@ -35,7 +35,6 @@ script path itself has changed.
 - Runtime checks:
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/doctor.py`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py status`
-  - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py up --replace`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py backup`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/workflow_audit.py summary --path $HOME/.starcoin-agents/wallet-runtime/audit/transfer-audit.jsonl`
 - End-to-end test:
@@ -86,6 +85,22 @@ Known important parameters:
 The current script path does not parse free-form wallet language by itself. The agentic host should resolve
 the user's intent first, then use the scripts for deterministic execution.
 
+### Audit-First Transfer Rule
+
+- For any real transfer that can reach wallet signing or chain submission, use the audited transfer workflow by default:
+  - Prefer `run_transfer_test.py` with explicit `--audit-log-path` and `--state-path`, or
+  - Use `TransferController` with `WorkflowAuditLogger` and `TransferStateStore` from the bundled scripts.
+- Do not manually stitch together `prepare_transfer`, `wallet_request_sign_transaction`,
+  `submit_signed_transaction`, and `watch_transaction` for a real transfer unless you also write equivalent
+  structured audit records and persisted transfer state before signing/submission.
+- The transfer audit record must cover: resolved intent, prepared transaction summary, simulation result,
+  host preview and decision, signing request id and terminal status, submission result, confirmation result,
+  payload hash, backend id, timestamps, and terminal outcome.
+- The transfer state file must persist the prepared payload hash and any unresolved submission `txn_hash` so
+  a retry can reconcile before resubmitting.
+- Low-level direct tool calls are acceptable for read-only discovery, diagnostics, previews that stop before
+  signing, or recovery queries, but not as the normal path for signed/submitted transfers.
+
 ### 0. Decide Which Wallet Flow Is Needed
 
 - If the user wants a new local address, start with the create-account flow before any transfer preparation.
@@ -118,7 +133,9 @@ the user's intent first, then use the scripts for deterministic execution.
 
 ### 4. Gather Chain And Wallet Context
 
-- If the runtime might not be ready, stop early and ask the user to run `python3 ./plugins/starcoin-transfer-workflow/scripts/doctor.py`.
+- If the runtime might not be ready, check it with `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py status` or `python3 ./plugins/starcoin-transfer-workflow/scripts/doctor.py`.
+- If the `starmaskd` socket is missing or the wallet daemon is not running, stop the transfer flow and ask the user to start the wallet runtime manually. Do not run `wallet_runtime.py up --replace` on the user's behalf.
+- Give the user the manual startup command, usually `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py up --replace`, and explain that the transfer can continue after the socket is available.
 - Discover wallet candidates with `wallet_list_instances` and `wallet_list_accounts`.
 - Inspect chain identity with `chain_status`.
 - Check RPC availability, peer count, and lag warnings through `node_health`.
@@ -172,6 +189,7 @@ the user's intent first, then use the scripts for deterministic execution.
 
 - Ask for explicit confirmation after the preview and risk labels are shown.
 - Do not ask the wallet to sign until the user has clearly confirmed the prepared transfer.
+- Record the host preview and the user's explicit decision in the transfer audit log before creating the signing request.
 
 ### 9. Create The Signing Request
 
@@ -181,6 +199,7 @@ the user's intent first, then use the scripts for deterministic execution.
 - `display_hint` may be derived from the chain-side summary, but it is only supportive context.
 - Tell the user where approval will happen.
   - For `local_account_dir`, approval appears in the CLI approval card.
+- Record the signing request id, wallet instance id, payload hash, and request status in the transfer audit log.
 
 ### 10. Wait For Wallet Approval
 
@@ -191,6 +210,7 @@ the user's intent first, then use the scripts for deterministic execution.
   - `expired`
   - `failed`
 - When the request becomes `approved`, extract `result.signed_txn_bcs_hex`.
+- Record the terminal signing status in the transfer audit log. Do not log full signed transaction bytes.
 
 ### 11. Submit And Report Immediate Status
 
@@ -200,6 +220,7 @@ the user's intent first, then use the scripts for deterministic execution.
 - Pass the same `min_confirmed_blocks` value to both `submit_signed_transaction` and any direct `watch_transaction` follow-up.
 - Use the persisted transfer state next to the audit log to verify the prepared payload hash before submission.
 - Report `txn_hash`, `submission_state`, `next_action`, and whether immediate confirmation data is already present.
+- Record the submit result and any unresolved submission state before returning control to the user.
 
 ### 12. Track Confirmation
 
@@ -210,15 +231,17 @@ the user's intent first, then use the scripts for deterministic execution.
 - If `next_action = reprepare_then_resign`, discard the old signed bytes and restart from `prepare_transfer`.
 - If `status_summary.confirmed = true` but top-level `confirmed = false`, report that the transaction is included but has not yet reached the requested confirmation depth.
 - If submission is accepted but confirmation is still unavailable, report that the transaction is submitted but not yet confirmed. Do not present that state as final success.
+- Record the final watch or reconciliation outcome in the transfer audit log.
 
 ### 13. Write Or Inspect The Audit Record
 
 - `run_create_account.py` writes create-account audit records under `$HOME/.starcoin-agents/wallet-runtime/audit/create-account-audit.jsonl` by default.
 - `run_transfer_test.py` writes transfer audit records under the active runtime's `audit/transfer-audit.jsonl` by default.
 - `run_transfer_test.py` writes transfer state under the active runtime's `audit/transfer-state.json` by default.
-- Write a local JSONL audit record for the preflight preview, host decision, signing request lifecycle, and submit result.
+- Write a local JSONL audit record for the resolved intent, preflight preview, host decision, signing request lifecycle, submit result, and confirmation result.
 - The audit trail should include request id, payload hash, backend id, timestamps, and terminal decision.
 - Do not log plaintext passwords, private keys, raw signed payloads, or full signed transaction bytes.
+- If a real transfer completed without these audit records, say so explicitly and reconstruct a minimal audit note from available facts rather than claiming full audit coverage.
 - When reading an existing audit file for the user, prefer `workflow_audit.py summary`; summarize request id, payload hash, backend id, txn hash, terminal status, and timestamps. Do not dump the whole file unless the user explicitly asks.
 
 ## Safety Rules
