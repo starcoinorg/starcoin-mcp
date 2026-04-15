@@ -9,6 +9,10 @@ repository.workspace = true
 name = "local-account-agent"
 path = "src/main.rs"
 
+[[bin]]
+name = "local-account-export"
+path = "src/export_account.rs"
+
 [dependencies]
 anyhow.workspace = true
 bcs-ext.workspace = true
@@ -20,6 +24,7 @@ serde_json.workspace = true
 starcoin-account.workspace = true
 starcoin-account-api.workspace = true
 starcoin-config.workspace = true
+starcoin-crypto.workspace = true
 starcoin-types.workspace = true
 starmask-types = { path = "../starmask-types" }
 starmaskd = { path = "../starmaskd" }

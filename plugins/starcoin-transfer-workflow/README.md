@@ -160,6 +160,13 @@ address on approval, and writes an audit record under
 For lower-level debugging, you can still call `wallet_create_account` directly through
 `starmaskd_client.py` and poll `wallet_get_request_status` yourself.
 
+The low-level clients accept tool arguments either as stdin JSON or as a final inline JSON object:
+
+```bash
+python3 ./scripts/node_cli_client.py call get_account_overview '{"address":"<address>"}'
+python3 ./scripts/starmaskd_client.py call wallet_get_public_key '{"wallet_instance_id":"local-default","address":"<address>"}'
+```
+
 Those `starcoin` CLI examples are still useful for local funding. The transfer flow itself should
 use the script-driven `starmaskd` + `starcoin-node-cli` path.
 
@@ -180,6 +187,8 @@ accepts these overrides:
   - use an installed `starmaskd` binary
 - `LOCAL_ACCOUNT_AGENT_BIN`
   - use an installed `local-account-agent` binary
+- `LOCAL_ACCOUNT_EXPORT_BIN`
+  - use an installed `local-account-export` binary for single-address private-key exports
 
 ## Wallet Runtime
 
@@ -207,15 +216,17 @@ python3 ./scripts/wallet_runtime.py up \
 The supervisor writes `wallet-runtime.json` under `$HOME/.starcoin-agents/wallet-runtime/` by default and keeps
 `local-account-agent` attached to the current terminal so `tty_prompt` approvals still work.
 
-To back up the local account vault, use:
+To export the private key for one local account address, stop the wallet runtime first:
 
 ```bash
-python3 ./scripts/wallet_runtime.py backup
+python3 ./scripts/wallet_runtime.py down
+python3 ./scripts/wallet_runtime.py export-account --address <account-address> --output-file ./account.key
 ```
 
-If `--backup-dir` is omitted, the command prompts for a destination directory. It backs up the
-local account vault, not the wallet runtime socket or sqlite state. If the runtime is still
-running, stop it first or pass `--allow-live` for a best-effort copy.
+If `--output-file` is omitted, the command prompts for a destination file or an existing directory.
+This exports only the private key for the requested address using Starcoin account export semantics;
+it does not copy the full local account vault, wallet runtime socket, or sqlite state. In
+non-interactive mode, pass the account password through `--password-stdin`.
 
 ## Create Account Flow
 
@@ -392,4 +403,4 @@ By default the transfer state file is written next to that audit file as `transf
 
 - This plugin example is repo-local. It lives under the current workspace so you can inspect and modify it directly.
 - If you want a global plugin instead, move the same files under `~/plugins/starcoin-transfer-workflow/` and mirror the marketplace entry into `~/.agents/plugins/marketplace.json`.
-- In global mode, put `starcoin-node-cli`, `starmaskd`, and `local-account-agent` somewhere on PATH.
+- In global mode, put `starcoin-node-cli`, `starmaskd`, `local-account-agent`, and `local-account-export` somewhere on PATH.

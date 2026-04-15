@@ -22,20 +22,23 @@ create a fresh wallet address before transfer, or inspect the local audit trail 
 Use these forms directly. Do not call `--help` first unless one of these commands fails or the
 script path itself has changed.
 
+- Client wrappers accept tool arguments either as a final inline JSON object or on stdin. Prefer
+  inline JSON for one-off reads so the command is self-contained:
+  `python3 ./plugins/starcoin-transfer-workflow/scripts/node_cli_client.py call get_account_overview '{"address":"<address>"}'`
 - Wallet status and discovery:
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_list_instances`
-  - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_list_accounts`
-  - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_get_public_key`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_list_accounts '{"wallet_instance_id":"<wallet-instance-id>","include_public_key":true}'`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_get_public_key '{"wallet_instance_id":"<wallet-instance-id>","address":"<address>"}'`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/run_create_account.py --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime --wallet-instance-id <wallet-instance-id>`
-  - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime call wallet_create_account`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime call wallet_create_account '{"client_request_id":"create-<unique-id>","wallet_instance_id":"<wallet-instance-id>"}'`
 - Chain status and reads:
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/node_cli_client.py call chain_status`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/node_cli_client.py call node_health`
-  - `python3 ./plugins/starcoin-transfer-workflow/scripts/node_cli_client.py call get_account_overview`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/node_cli_client.py call get_account_overview '{"address":"<address>"}'`
 - Runtime checks:
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/doctor.py`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py status`
-  - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py backup`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py export-account --address <account-address> --output-file <output-file>`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/workflow_audit.py summary --path $HOME/.starcoin-agents/wallet-runtime/audit/transfer-audit.jsonl`
 - End-to-end test:
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/run_transfer_test.py --rpc-url http://127.0.0.1:9850 --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime --sender <sender> --receiver <receiver> --amount 1 --amount-unit stc --vm-profile vm2_only --min-confirmed-blocks 3`
@@ -47,8 +50,9 @@ Default runtime locations for this workflow:
 - node config: `$HOME/.starcoin-agents/node-cli.toml`
 - wallet config: `$HOME/.starcoin-agents/wallet-runtime/starmaskd.toml`
 
-Use `wallet_runtime.py backup` to copy the local account vault. If `--backup-dir` is omitted, the
-script prompts for a destination directory.
+Use `wallet_runtime.py export-account --address <account-address>` only when the private key for one
+specific local address must be exported. It does not copy the local account vault. Stop the wallet
+runtime before exporting, and use `--password-stdin` for non-interactive runs.
 
 Known important parameters:
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import argparse
+import getpass
 import json
 import os
 import signal
@@ -127,26 +128,43 @@ def parse_args() -> argparse.Namespace:
     down = subparsers.add_parser("down", help="Stop the supervised runtime.")
     down.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
-    backup = subparsers.add_parser(
-        "backup",
-        help="Copy the local account vault into a backup directory.",
+    export_account = subparsers.add_parser(
+        "export-account",
+        help="Export one local account private key into a file.",
     )
-    backup.add_argument(
+    export_account.add_argument(
         "--wallet-dir",
         default=None,
-        help="Explicit local account vault directory to back up. Defaults to the active runtime metadata or the standard local-account path.",
+        help="Explicit local account vault directory. Defaults to the active runtime metadata or the standard local-account path.",
     )
-    backup.add_argument(
-        "--backup-dir",
+    export_account.add_argument(
+        "--address",
+        required=True,
+        help="Account address to export.",
+    )
+    export_account.add_argument(
+        "--output-file",
+        dest="output_file",
         default=None,
-        help="Destination directory or parent directory for the backup copy. Prompts when omitted in an interactive shell.",
+        help="Destination file, or an existing directory where a timestamped private-key file will be written. Prompts when omitted in an interactive shell.",
     )
-    backup.add_argument(
-        "--allow-live",
+    export_account.add_argument(
+        "--chain-id",
+        type=int,
+        default=None,
+        help="Chain id for opening the account manager. Defaults to runtime metadata, runtime config, or 254.",
+    )
+    export_account.add_argument(
+        "--password-stdin",
         action="store_true",
-        help="Allow a best-effort copy while the runtime is still running.",
+        help="Read the account password from stdin instead of prompting.",
     )
-    backup.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+    export_account.add_argument(
+        "--force",
+        action="store_true",
+        help="Overwrite an existing output file.",
+    )
+    export_account.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
     return parser.parse_args()
 
@@ -217,10 +235,10 @@ def append_log_note(path: Path, message: str) -> None:
 
 def prompt_for_path(prompt: str) -> Path:
     if not sys.stdin.isatty():
-        raise RuntimeError("backup destination must be provided with --backup-dir in non-interactive mode")
+        raise RuntimeError("output file must be provided with --output-file in non-interactive mode")
     value = input(f"{prompt}: ").strip()
     if not value:
-        raise RuntimeError("backup destination cannot be empty")
+        raise RuntimeError("output file cannot be empty")
     return Path(value).expanduser().resolve()
 
 
@@ -254,7 +272,7 @@ def runtime_paths(runtime_dir: Path) -> dict[str, Path]:
     }
 
 
-def resolve_backup_wallet_dir(runtime_dir: Path, wallet_dir_arg: str | None) -> Path:
+def resolve_account_export_wallet_dir(runtime_dir: Path, wallet_dir_arg: str | None) -> Path:
     if wallet_dir_arg:
         return Path(wallet_dir_arg).expanduser().resolve()
 
@@ -278,67 +296,140 @@ def resolve_backup_wallet_dir(runtime_dir: Path, wallet_dir_arg: str | None) -> 
     return DEFAULT_LOCAL_ACCOUNT_DIR.resolve()
 
 
-def resolve_backup_destination(
-    backup_dir_arg: str | None,
+def resolve_account_export_chain_id(runtime_dir: Path, chain_id_arg: int | None) -> int:
+    if chain_id_arg is not None:
+        return validate_chain_id(chain_id_arg)
+
+    metadata = read_json(runtime_paths(runtime_dir)["metadata_path"])
+    if metadata is not None:
+        metadata_chain_id = metadata.get("chain_id")
+        if metadata_chain_id is not None:
+            return validate_chain_id(metadata_chain_id)
+
+    config_path = runtime_paths(runtime_dir)["config_path"]
+    if config_path.exists():
+        with config_path.open("rb") as handle:
+            config = tomllib.load(handle)
+        for backend in config.get("wallet_backends", []):
+            if not isinstance(backend, dict):
+                continue
+            config_chain_id = backend.get("chain_id")
+            if config_chain_id is not None:
+                return validate_chain_id(config_chain_id)
+
+    return 254
+
+
+def validate_chain_id(value: Any) -> int:
+    if isinstance(value, bool):
+        raise RuntimeError(f"chain_id must be an integer from 0 to 255, got {value!r}")
+    try:
+        chain_id = int(value)
+    except (TypeError, ValueError) as error:
+        raise RuntimeError(f"chain_id must be an integer from 0 to 255, got {value!r}") from error
+    if chain_id < 0 or chain_id > 255:
+        raise RuntimeError(f"chain_id must be an integer from 0 to 255, got {chain_id}")
+    return chain_id
+
+
+def account_export_filename(account_address: str) -> str:
+    address = account_address.strip()
+    if address.startswith(("0x", "0X")):
+        address = address[2:]
+    safe_address = "".join(char.lower() if char.isalnum() else "-" for char in address)
+    if not safe_address:
+        safe_address = "account"
+    timestamp = time.strftime("%Y%m%d-%H%M%S")
+    return f"{safe_address}-private-key-export-{timestamp}.txt"
+
+
+def resolve_account_export_output_file(
+    output_file_arg: str | None,
     *,
-    source_wallet_dir: Path,
+    account_address: str,
 ) -> Path:
     requested = (
-        Path(backup_dir_arg).expanduser().resolve()
-        if backup_dir_arg is not None
-        else prompt_for_path("Backup destination directory")
+        Path(output_file_arg).expanduser().resolve()
+        if output_file_arg is not None
+        else prompt_for_path("Account export output file or directory")
     )
     if requested.exists():
-        if not requested.is_dir():
-            raise RuntimeError(f"backup destination exists and is not a directory: {requested}")
-        timestamp = time.strftime("%Y%m%d-%H%M%S")
-        return requested / f"{source_wallet_dir.name}-backup-{timestamp}"
+        if requested.is_dir():
+            return requested / account_export_filename(account_address)
     return requested
 
 
-def backup_wallet_dir(
-    *,
-    source_wallet_dir: Path,
-    destination_dir: Path,
-    runtime_dir: Path,
-) -> dict[str, Any]:
-    source_wallet_dir = source_wallet_dir.expanduser().resolve()
-    destination_dir = destination_dir.expanduser().resolve()
-    runtime_dir = runtime_dir.expanduser().resolve()
-    if not source_wallet_dir.exists():
-        raise FileNotFoundError(f"wallet_dir does not exist: {source_wallet_dir}")
-    if not source_wallet_dir.is_dir():
-        raise RuntimeError(f"wallet_dir is not a directory: {source_wallet_dir}")
-    if destination_dir.exists():
-        raise RuntimeError(f"backup destination already exists: {destination_dir}")
-    if destination_dir == source_wallet_dir or destination_dir.is_relative_to(source_wallet_dir):
+def read_account_export_password(password_stdin: bool) -> str:
+    if password_stdin:
+        password = sys.stdin.read()
+        if not password.strip():
+            raise RuntimeError("account password cannot be empty")
+        return password
+    if not sys.stdin.isatty():
         raise RuntimeError(
-            "backup destination must not be the wallet directory or a child of it: "
-            f"{destination_dir}"
+            "account password must be provided with --password-stdin in non-interactive mode"
         )
-    if source_wallet_dir.is_relative_to(destination_dir):
-        raise RuntimeError(
-            "wallet_dir must not be nested under the backup destination: "
-            f"{source_wallet_dir}"
-        )
+    password = getpass.getpass("Account password: ")
+    if not password:
+        raise RuntimeError("account password cannot be empty")
+    return password
 
-    destination_dir.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copytree(
-        source_wallet_dir,
-        destination_dir,
-        copy_function=shutil.copy2,
-        symlinks=True,
+
+def export_account_private_key(
+    *,
+    wallet_dir: Path,
+    destination_file: Path,
+    runtime_dir: Path,
+    account_address: str,
+    chain_id: int,
+    password: str,
+    force: bool,
+) -> dict[str, Any]:
+    wallet_dir = wallet_dir.expanduser().resolve()
+    destination_file = destination_file.expanduser().resolve()
+    runtime_dir = runtime_dir.expanduser().resolve()
+    if not wallet_dir.exists():
+        raise FileNotFoundError(f"wallet_dir does not exist: {wallet_dir}")
+    if not wallet_dir.is_dir():
+        raise RuntimeError(f"wallet_dir is not a directory: {wallet_dir}")
+
+    program_args = [
+        "--wallet-dir",
+        str(wallet_dir),
+        "--address",
+        account_address,
+        "--chain-id",
+        str(chain_id),
+        "--output-file",
+        str(destination_file),
+        "--password-stdin",
+        "--json",
+    ]
+    if force:
+        program_args.append("--force")
+    command, launch = launch_command(
+        env_name="LOCAL_ACCOUNT_EXPORT_BIN",
+        binary_name="local-account-export",
+        manifest_path=LOCAL_AGENT_MANIFEST,
+        cargo_bin_name="local-account-export",
+        program_args=program_args,
     )
-    os.chmod(destination_dir, 0o700)
-    manifest_path = destination_dir / "backup-manifest.json"
-    manifest = {
-        "source_wallet_dir": str(source_wallet_dir),
-        "backup_dir": str(destination_dir),
-        "runtime_dir": str(runtime_dir),
-        "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-    }
-    write_json(manifest_path, manifest)
-    return manifest
+    completed = subprocess.run(
+        command,
+        cwd=str(WORKSPACE_ROOT),
+        input=password,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if completed.returncode != 0:
+        error_output = (completed.stderr or completed.stdout).strip()
+        raise RuntimeError(error_output or "account private-key export failed")
+
+    result = json.loads(completed.stdout)
+    result["runtime_dir"] = str(runtime_dir)
+    result["export_launch"] = launch
+    return result
 
 
 def toml_string(value: str) -> str:
@@ -517,35 +608,36 @@ def main() -> int:
             print("runtime stopped")
         return 0
 
-    if args.command == "backup":
-        wallet_dir = resolve_backup_wallet_dir(runtime_dir, args.wallet_dir)
+    if args.command == "export-account":
+        wallet_dir = resolve_account_export_wallet_dir(runtime_dir, args.wallet_dir)
+        chain_id = resolve_account_export_chain_id(runtime_dir, args.chain_id)
         status = load_status(runtime_dir)
         runtime_is_live = bool(status["starmaskd_running"] or status["agent_running"])
-        if runtime_is_live and not args.allow_live:
+        if runtime_is_live:
             raise RuntimeError(
-                "wallet runtime is still running; stop it first with the down command or rerun backup with --allow-live for a best-effort copy"
+                "wallet runtime is still running; stop it first with the down command before exporting an account private key"
             )
-        destination_dir = resolve_backup_destination(
-            args.backup_dir,
-            source_wallet_dir=wallet_dir,
+        destination_file = resolve_account_export_output_file(
+            args.output_file,
+            account_address=args.address,
         )
-        manifest = backup_wallet_dir(
-            source_wallet_dir=wallet_dir,
-            destination_dir=destination_dir,
+        password = read_account_export_password(args.password_stdin)
+        payload = export_account_private_key(
+            wallet_dir=wallet_dir,
+            destination_file=destination_file,
             runtime_dir=runtime_dir,
+            account_address=args.address,
+            chain_id=chain_id,
+            password=password,
+            force=args.force,
         )
-        payload = {
-            **manifest,
-            "runtime_live": runtime_is_live,
-        }
         if args.json:
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
-            print(f"wallet backup created: {destination_dir}")
-            print(f"source_wallet_dir:    {wallet_dir}")
-            print(f"backup_manifest:      {destination_dir / 'backup-manifest.json'}")
-            if runtime_is_live:
-                print("note: runtime was live, so this was a best-effort backup copy")
+            print(f"account private-key export created: {destination_file}")
+            print(f"address:                {args.address}")
+            print(f"wallet_dir:             {wallet_dir}")
+            print(f"chain_id:               {chain_id}")
         return 0
 
     wallet_dir = Path(args.wallet_dir).resolve()
