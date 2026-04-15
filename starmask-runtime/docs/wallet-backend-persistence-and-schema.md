@@ -2,24 +2,22 @@
 
 ## Status
 
-This document is the phase-2 persistence and schema contract for the planned multi-backend
+This document is the persistence and schema contract for the current pre-release multi-backend
 implementation.
 
-It is not part of the current `v1` release contract. The current extension-backed persistence model
-remains defined by:
+The baseline SQLite schema remains defined by:
 
-- `docs/persistence-and-recovery.md`
 - `docs/sqlite-schema-and-migrations.md`
 
 ## 1. Purpose
 
-This document defines the minimum persistence and migration rules needed to implement:
+This document defines the minimum persistence and schema rules needed to implement:
 
 - generic backend registration
 - backend-aware routing
 - same-instance recovery across backend kinds
 
-It is intended to remove schema ambiguity before coding starts.
+It is intended to keep schema behavior explicit before the first release.
 
 ## 2. Scope
 
@@ -36,28 +34,21 @@ Phase 2 does not yet add:
 
 Those remain phase-3 work.
 
-## 3. Migration Strategy
+## 3. Baseline Schema Strategy
 
-Phase-2 should add one new migration:
+This version has not been released, so the implementation does not maintain compatibility migrations
+for older development databases.
 
-- `0002_generic_wallet_backends.sql`
+Current rules:
 
-The phase-2 schema version becomes:
-
-- `2`
-
-Migration rules:
-
-1. the migration must be additive
-2. existing `v1` rows must remain readable
-3. existing extension-backed rows must be backfilled into the new generic fields
-4. no destructive column removal is allowed in the phase-2 migration
+1. `crates/starmaskd/schema.sql` is the current baseline schema
+2. new empty databases are initialized directly from that schema
+3. non-current schema versions are rejected instead of upgraded
+4. unversioned non-empty databases are rejected instead of inferred or backfilled
 
 ## 4. `wallet_instances` Table Evolution
 
-Phase-2 keeps the current `v1` columns and adds generic ones.
-
-Existing retained columns:
+Current retained compatibility-facing columns:
 
 - `wallet_instance_id`
 - `extension_id`
@@ -68,7 +59,7 @@ Existing retained columns:
 - `connected`
 - `last_seen_at`
 
-New columns:
+Generic backend columns:
 
 - `backend_kind`
 - `transport_kind`
@@ -77,33 +68,20 @@ New columns:
 - `capabilities_json`
 - `backend_metadata_json`
 
-Phase-2 storage rules:
+Storage rules:
 
 1. `backend_kind`, `transport_kind`, `approval_surface`, and `instance_label` are authoritative
    routing metadata
 2. `capabilities_json` stores a canonical sorted JSON array
 3. `backend_metadata_json` stores an opaque JSON object
 4. `backend_metadata_json` is not query-critical and must not drive core routing by itself
-5. schema DDL, v2 backfill, and the `user_version` bump must commit in one transaction
-
-Backfill rules for existing extension rows:
-
-- `backend_kind = "starmask_extension"`
-- `transport_kind = "native_messaging"`
-- `approval_surface = "browser_ui"`
-- `instance_label = profile_hint` when available, otherwise `wallet_instance_id`
-- `capabilities_json = ["get_public_key", "sign_message", "sign_transaction"]`
-- `backend_metadata_json` includes `extension_id`, `extension_version`, and `profile_hint`
+5. schema DDL and the `user_version` bump must commit in one transaction
 
 ## 5. `wallet_accounts` Table Evolution
 
-Phase-2 adds:
+Current schema includes:
 
 - `is_read_only`
-
-Backfill rule:
-
-- existing rows default to `false`
 
 Routing rule:
 
@@ -123,13 +101,13 @@ Current request fields remain sufficient for:
 5. presentation lease
 6. result retention
 
-Phase-2 design choice:
+Design choice:
 
 - backend capability is derived from request kind, not stored as a separate request column
 
 ## 7. Repository and Index Requirements
 
-Phase-2 repository access must support:
+Repository access must support:
 
 1. load wallet instance by `wallet_instance_id`
 2. list connected wallet instances with generic metadata
@@ -169,7 +147,7 @@ For `local_account_dir`, deterministic recovery depends on:
 
 ## 9. Metadata Size and Boundedness
 
-Phase-2 persistence must stay bounded.
+Persistence must stay bounded.
 
 Required rules:
 
@@ -180,22 +158,19 @@ Required rules:
 
 ## 10. Compatibility Story
 
-Phase-2 migration must preserve two paths:
+There is no database upgrade compatibility story before first release. The daemon preserves only two
+runtime compatibility paths inside the current schema:
 
-1. existing extension-backed `v1` rows continue to work after migration
-2. new generic backend rows can coexist with migrated extension rows in the same database
+1. extension-backed wallet instances are represented as `starmask_extension` backend rows
+2. local account-dir wallet instances are represented as `local_account_dir` backend rows
 
-The daemon must not require an empty database to adopt phase 2.
+Existing development databases with older schema versions should be recreated.
 
 ## 11. Phase-3 Reserved Delta
 
 Phase-2 deliberately does not add unlock persistence.
 
-When explicit unlock flows land later, the expected follow-on migration is:
-
-- `0003_unlock_requests.sql`
-
-That future migration may add:
+When explicit unlock flows land later, the expected schema delta may add:
 
 - unlock request rows or request-kind support
 - unlock expiry metadata

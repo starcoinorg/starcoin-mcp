@@ -33,7 +33,7 @@ The harness should make it easy to:
 
 1. give each acceptance item one obvious test home
 2. keep `v1` extension-path coverage distinct from phase-2 backend-path coverage
-3. keep migration and compatibility checks explicit
+3. keep schema-version gates and compatibility checks explicit
 4. keep browser- and UI-dependent checks out of routine local automation
 
 ## Test Layers
@@ -60,7 +60,7 @@ Cover:
 - lock-state and capability routing
 - same-instance recovery and non-redelivery rules
 
-### Layer 2: Repository And Migration Tests
+### Layer 2: Repository And Schema Tests
 
 Target:
 
@@ -70,7 +70,7 @@ Use:
 
 - temporary directories
 - real SQLite files
-- migration bootstrap from `v1` and `v2` entry states
+- empty-database bootstrap and unsupported-schema entry states
 
 Cover:
 
@@ -78,9 +78,9 @@ Cover:
 - unique constraints
 - startup recovery queries
 - result eviction
-- positive `v1 -> v2` migration behavior
-- rollback safety when migration backfill fails
-- post-migration compatibility reads
+- current schema creation
+- rejection of non-current schema versions
+- rejection of unversioned non-empty databases
 
 ### Layer 3: Daemon Transport Tests
 
@@ -193,7 +193,7 @@ Cover:
 - cancel while approval is active
 - restart before presentation
 - restart after presentation with same-instance resume
-- migration and compatibility smoke paths
+- schema-version gate and compatibility smoke paths
 
 ### Layer 8: Real-Environment Validation
 
@@ -266,7 +266,7 @@ records current evidence status. This document defines where missing coverage sh
 Implement or expand tests in this order:
 
 1. keep `v1` extension-backed regression coverage green
-2. add positive `v1 -> v2` migration and compatibility tests
+2. add current-schema creation and unsupported-schema rejection tests
 3. add local-account sign-message and sign-transaction integration tests
 4. add `backend.heartbeat`, `backend.updateAccounts`, and backend-path recovery tests
 5. add dedicated phase-2 end-to-end local stack scenarios

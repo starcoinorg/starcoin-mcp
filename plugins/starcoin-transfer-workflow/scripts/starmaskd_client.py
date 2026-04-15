@@ -57,6 +57,16 @@ class StarmaskDaemonClient:
                     "wallet_instance_id": params.get("wallet_instance_id"),
                 },
             )
+        if name == "wallet_set_account_label":
+            return self._call(
+                "wallet.setAccountLabel",
+                {
+                    "protocol_version": DAEMON_PROTOCOL_VERSION,
+                    "wallet_instance_id": params["wallet_instance_id"],
+                    "address": params["address"],
+                    "label": params["label"],
+                },
+            )
         if name in {"wallet_request_create_account", "wallet_create_account"}:
             return self._call(
                 "request.createAccount",

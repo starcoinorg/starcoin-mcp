@@ -1,4 +1,4 @@
-CREATE TABLE IF NOT EXISTS requests (
+CREATE TABLE requests (
   request_id TEXT PRIMARY KEY,
   client_request_id TEXT NOT NULL,
   kind TEXT NOT NULL,
@@ -25,43 +25,69 @@ CREATE TABLE IF NOT EXISTS requests (
   presentation_expires_at INTEGER
 );
 
-CREATE TABLE IF NOT EXISTS wallet_instances (
+CREATE TABLE wallet_instances (
   wallet_instance_id TEXT PRIMARY KEY,
+  backend_kind TEXT NOT NULL,
+  transport_kind TEXT NOT NULL,
+  approval_surface TEXT NOT NULL,
+  instance_label TEXT NOT NULL,
   extension_id TEXT NOT NULL,
   extension_version TEXT NOT NULL,
   protocol_version INTEGER NOT NULL,
+  capabilities_json TEXT NOT NULL,
+  backend_metadata_json TEXT NOT NULL,
   profile_hint TEXT,
   lock_state TEXT NOT NULL,
   connected INTEGER NOT NULL,
   last_seen_at INTEGER NOT NULL
 );
 
-CREATE TABLE IF NOT EXISTS wallet_accounts (
+CREATE TABLE wallet_accounts (
   wallet_instance_id TEXT NOT NULL,
   address TEXT NOT NULL,
   label TEXT,
   public_key TEXT,
   is_default INTEGER NOT NULL,
+  is_read_only INTEGER NOT NULL,
   is_locked INTEGER NOT NULL,
   last_seen_at INTEGER NOT NULL,
   PRIMARY KEY (wallet_instance_id, address),
   FOREIGN KEY (wallet_instance_id) REFERENCES wallet_instances(wallet_instance_id) ON DELETE CASCADE
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS idx_requests_client_request_id
+CREATE TABLE wallet_account_labels (
+  wallet_instance_id TEXT NOT NULL,
+  address TEXT NOT NULL,
+  label TEXT NOT NULL,
+  account_order INTEGER NOT NULL,
+  updated_at INTEGER NOT NULL,
+  PRIMARY KEY (wallet_instance_id, address),
+  FOREIGN KEY (wallet_instance_id) REFERENCES wallet_instances(wallet_instance_id) ON DELETE CASCADE
+);
+
+CREATE UNIQUE INDEX idx_requests_client_request_id
   ON requests(client_request_id);
 
-CREATE INDEX IF NOT EXISTS idx_requests_status_expires_at
+CREATE INDEX idx_requests_status_expires_at
   ON requests(status, expires_at);
 
-CREATE INDEX IF NOT EXISTS idx_requests_wallet_instance_status
+CREATE INDEX idx_requests_wallet_instance_status
   ON requests(wallet_instance_id, status);
 
-CREATE INDEX IF NOT EXISTS idx_requests_result_expires_at
+CREATE INDEX idx_requests_result_expires_at
   ON requests(result_expires_at);
 
-CREATE INDEX IF NOT EXISTS idx_wallet_instances_connected_last_seen_at
+CREATE INDEX idx_wallet_instances_connected_last_seen_at
   ON wallet_instances(connected, last_seen_at);
 
-CREATE INDEX IF NOT EXISTS idx_wallet_accounts_address
+CREATE INDEX idx_wallet_accounts_address
   ON wallet_accounts(address);
+
+CREATE INDEX idx_wallet_instances_backend_kind_connected
+  ON wallet_instances(backend_kind, connected);
+
+CREATE INDEX idx_wallet_instances_last_seen_at
+  ON wallet_instances(last_seen_at);
+
+CREATE INDEX idx_wallet_account_labels_wallet_instance_order
+  ON wallet_account_labels(wallet_instance_id, account_order);

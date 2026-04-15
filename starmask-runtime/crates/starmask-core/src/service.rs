@@ -11,7 +11,7 @@ use starmask_types::{
     RequestStatus, ResultKind, SharedErrorCode, SystemGetInfoResult, SystemPingResult, TimestampMs,
     TransactionPayload, TransportKind, WalletAccountGroup, WalletCapability,
     WalletGetPublicKeyResult, WalletInstanceId, WalletInstanceRecord, WalletListAccountsResult,
-    WalletListInstancesResult, WalletStatusResult,
+    WalletListInstancesResult, WalletSetAccountLabelResult, WalletStatusResult,
 };
 
 use crate::{
@@ -19,8 +19,8 @@ use crate::{
         CoordinatorCommand, CreateAccountCommand, CreateSignMessageCommand,
         CreateSignTransactionCommand, HeartbeatBackendCommand, HeartbeatExtensionCommand,
         MarkRequestPresentedCommand, RegisterBackendCommand, RegisterExtensionCommand,
-        RejectRequestCommand, ResolveRequestCommand, UpdateBackendAccountsCommand,
-        UpdateExtensionAccountsCommand,
+        RejectRequestCommand, ResolveRequestCommand, SetAccountLabelCommand,
+        UpdateBackendAccountsCommand, UpdateExtensionAccountsCommand,
     },
     error::{CoreError, CoreResult},
     policy::PolicyEngine,
@@ -46,7 +46,7 @@ impl Default for CoordinatorConfig {
         Self {
             daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
             socket_scope: "local-user".to_owned(),
-            db_schema_version: 2,
+            db_schema_version: 3,
             default_request_ttl: DurationSeconds::new(300),
             min_request_ttl: DurationSeconds::new(30),
             max_request_ttl: DurationSeconds::new(3600),
@@ -105,6 +105,7 @@ pub enum CoordinatorResponse {
     WalletInstances(WalletListInstancesResult),
     WalletAccounts(WalletListAccountsResult),
     WalletPublicKey(WalletGetPublicKeyResult),
+    WalletAccountLabelSet(WalletSetAccountLabelResult),
     RequestCreated(CreateRequestResult),
     RequestStatus(GetRequestStatusResult),
     RequestHasAvailable(RequestHasAvailableResult),
@@ -168,6 +169,9 @@ where
             } => Ok(CoordinatorResponse::WalletPublicKey(
                 self.wallet_get_public_key(&address, wallet_instance_id.as_ref())?,
             )),
+            CoordinatorCommand::WalletSetAccountLabel(command) => Ok(
+                CoordinatorResponse::WalletAccountLabelSet(self.wallet_set_account_label(command)?),
+            ),
             CoordinatorCommand::CreateAccount(command) => Ok(CoordinatorResponse::RequestCreated(
                 self.create_account_request(command)?,
             )),
@@ -295,6 +299,7 @@ where
         let instances = self.store.list_wallet_instances(false)?;
         let accounts = self.store.list_wallet_accounts(wallet_instance_id)?;
         let mut grouped: BTreeMap<WalletInstanceId, WalletAccountGroup> = BTreeMap::new();
+        let mut ordered_instance_ids = Vec::new();
 
         for instance in instances {
             if let Some(target) = wallet_instance_id
@@ -302,10 +307,12 @@ where
             {
                 continue;
             }
+            ordered_instance_ids.push(instance.wallet_instance_id.clone());
             grouped.insert(
                 instance.wallet_instance_id.clone(),
                 WalletAccountGroup {
                     wallet_instance_id: instance.wallet_instance_id.clone(),
+                    instance_label: instance.instance_label.clone(),
                     extension_connected: instance.connected,
                     lock_state: instance.lock_state,
                     accounts: Vec::new(),
@@ -325,13 +332,17 @@ where
                     label: account.label,
                     public_key,
                     is_default: account.is_default,
+                    is_read_only: account.is_read_only,
                     is_locked: account.is_locked,
                 });
             }
         }
 
         Ok(WalletListAccountsResult {
-            wallet_instances: grouped.into_values().collect(),
+            wallet_instances: ordered_instance_ids
+                .into_iter()
+                .filter_map(|wallet_instance_id| grouped.remove(&wallet_instance_id))
+                .collect(),
         })
     }
 
@@ -367,6 +378,61 @@ where
                 "Public key is not cached for this account",
             )),
         }
+    }
+
+    fn wallet_set_account_label(
+        &mut self,
+        command: SetAccountLabelCommand,
+    ) -> CoreResult<WalletSetAccountLabelResult> {
+        let wallet_instance = self
+            .store
+            .get_wallet_instance(&command.wallet_instance_id)?
+            .ok_or_else(|| {
+                CoreError::shared(
+                    SharedErrorCode::WalletInstanceNotFound,
+                    format!(
+                        "wallet instance {} was not found",
+                        command.wallet_instance_id
+                    ),
+                )
+            })?;
+        if wallet_instance.backend_kind != BackendKind::LocalAccountDir {
+            return Err(CoreError::shared(
+                SharedErrorCode::UnsupportedOperation,
+                format!(
+                    "wallet instance {} does not support daemon-managed account labels",
+                    command.wallet_instance_id
+                ),
+            ));
+        }
+
+        let label = command.label.trim();
+        if label.is_empty() {
+            return Err(CoreError::shared(
+                SharedErrorCode::InvalidAccount,
+                "account label cannot be empty",
+            ));
+        }
+        if self
+            .store
+            .get_wallet_account(&command.wallet_instance_id, &command.address)?
+            .is_none()
+        {
+            return Err(CoreError::shared(
+                SharedErrorCode::InvalidAccount,
+                format!("account {} was not found", command.address),
+            ));
+        }
+
+        let account = self.store.set_wallet_account_label(
+            &command.wallet_instance_id,
+            &command.address,
+            label,
+        )?;
+        Ok(WalletSetAccountLabelResult {
+            wallet_instance_id: command.wallet_instance_id,
+            account: (&account).into(),
+        })
     }
 
     fn create_sign_transaction_request(
@@ -1657,6 +1723,23 @@ mod tests {
                 .wallet_accounts
                 .get(&(wallet_instance_id.to_string(), address.to_owned()))
                 .cloned())
+        }
+
+        fn set_wallet_account_label(
+            &mut self,
+            wallet_instance_id: &WalletInstanceId,
+            address: &str,
+            label: &str,
+        ) -> Result<WalletAccountRecord, RepositoryError> {
+            let key = (wallet_instance_id.to_string(), address.to_owned());
+            let account = self.wallet_accounts.get_mut(&key).ok_or_else(|| {
+                RepositoryError::Storage(format!(
+                    "wallet account {}:{} was not found",
+                    wallet_instance_id, address
+                ))
+            })?;
+            account.label = Some(label.to_owned());
+            Ok(account.clone())
         }
     }
 

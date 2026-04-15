@@ -29,7 +29,8 @@ script path itself has changed.
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_list_instances`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_list_accounts '{"wallet_instance_id":"<wallet-instance-id>","include_public_key":true}'`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_get_public_key '{"wallet_instance_id":"<wallet-instance-id>","address":"<address>"}'`
-  - `python3 ./plugins/starcoin-transfer-workflow/scripts/run_create_account.py --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime --wallet-instance-id <wallet-instance-id>`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_set_account_label '{"wallet_instance_id":"<wallet-instance-id>","address":"<address>","label":"<account-name>"}'`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/run_create_account.py --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime --wallet-instance-id <wallet-instance-id> --account-name <account-name>`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime call wallet_create_account '{"client_request_id":"create-<unique-id>","wallet_instance_id":"<wallet-instance-id>"}'`
 - Chain status and reads:
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/node_cli_client.py call chain_status`
@@ -69,6 +70,7 @@ Known important parameters:
 - `run_create_account.py`
   - `--wallet-runtime-dir <dir>`
   - `--wallet-instance-id <wallet-instance-id>`
+  - `--account-name <account-name>`
   - `--client-request-id <idempotency-key>`
   - `--display-hint <hint>`
   - `--ttl-seconds <seconds>`
@@ -116,6 +118,7 @@ the user's intent first, then use the scripts for deterministic execution.
 - Discover wallet instances first with `wallet_list_instances`.
 - If there is exactly one viable wallet instance, you may auto-select it. Otherwise ask one precise follow-up question with the concrete candidates.
 - Prefer `run_create_account.py` for a user-facing guided flow. It creates the request, waits for approval, and writes a local audit record.
+- Local account labels come from the daemon-side metadata layer instead of Starcoin account storage. If a local address has no custom name yet, `wallet_list_accounts` assigns and returns `account-1`, `account-2`, and so on in first-seen order.
 - If you need lower-level control, call `wallet_create_account` through `starmaskd_client.py`, then poll `wallet_get_request_status`.
 - Do not claim the address exists until the request reaches `approved` and `result.address` is present.
 - Report the created address, whether it is default, and where the approval happened.

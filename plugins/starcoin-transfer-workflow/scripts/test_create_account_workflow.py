@@ -6,6 +6,7 @@ from unittest.mock import patch
 
 from run_create_account import (
     account_count_for_instance,
+    find_account_for_instance,
     resolve_wallet_instance,
     wait_for_terminal_request,
 )
@@ -133,6 +134,41 @@ class CreateAccountWorkflowTests(unittest.TestCase):
         )
 
         self.assertEqual(count, 0)
+
+    def test_find_account_for_instance_returns_matching_account(self) -> None:
+        account = find_account_for_instance(
+            {
+                "wallet_instances": [
+                    {
+                        "wallet_instance_id": "local-default",
+                        "accounts": [
+                            {"address": "0x1", "label": "account-1"},
+                            {"address": "0x2", "label": "savings"},
+                        ],
+                    }
+                ]
+            },
+            "local-default",
+            "0x2",
+        )
+
+        self.assertEqual(account, {"address": "0x2", "label": "savings"})
+
+    def test_find_account_for_instance_returns_none_when_missing(self) -> None:
+        account = find_account_for_instance(
+            {
+                "wallet_instances": [
+                    {
+                        "wallet_instance_id": "local-default",
+                        "accounts": [{"address": "0x1", "label": "account-1"}],
+                    }
+                ]
+            },
+            "local-default",
+            "0x9",
+        )
+
+        self.assertIsNone(account)
 
     def test_wait_for_terminal_request_returns_terminal_status(self) -> None:
         client = FakeWalletClient(

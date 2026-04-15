@@ -101,6 +101,20 @@ pub struct WalletGetPublicKeyResult {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct WalletSetAccountLabelParams {
+    pub protocol_version: u32,
+    pub wallet_instance_id: WalletInstanceId,
+    pub address: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct WalletSetAccountLabelResult {
+    pub wallet_instance_id: WalletInstanceId,
+    pub account: WalletAccountSummary,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct CreateAccountParams {
     pub protocol_version: u32,
     pub client_request_id: ClientRequestId,
@@ -408,12 +422,14 @@ pub struct WalletAccountSummary {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub public_key: Option<String>,
     pub is_default: bool,
+    pub is_read_only: bool,
     pub is_locked: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct WalletAccountGroup {
     pub wallet_instance_id: WalletInstanceId,
+    pub instance_label: String,
     pub extension_connected: bool,
     pub lock_state: LockState,
     pub accounts: Vec<WalletAccountSummary>,
@@ -438,6 +454,7 @@ impl From<&WalletAccountRecord> for WalletAccountSummary {
             label: value.label.clone(),
             public_key: value.public_key.clone(),
             is_default: value.is_default,
+            is_read_only: value.is_read_only,
             is_locked: value.is_locked,
         }
     }

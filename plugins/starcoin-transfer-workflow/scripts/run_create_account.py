@@ -47,6 +47,11 @@ def parse_args() -> argparse.Namespace:
         help="Human-readable hint shown on the wallet approval surface.",
     )
     parser.add_argument(
+        "--account-name",
+        default=None,
+        help="Optional user-facing account name. If omitted, the daemon assigns the next default account-N label.",
+    )
+    parser.add_argument(
         "--client-context",
         default=DEFAULT_CLIENT_CONTEXT,
         help="Client context string stored with the wallet request.",
@@ -117,11 +122,32 @@ def format_wallet_candidates(instances: list[dict[str, Any]]) -> str:
     return ", ".join(rendered)
 
 
-def account_count_for_instance(wallet_accounts: dict[str, Any], wallet_instance_id: str) -> int:
+def accounts_for_instance(
+    wallet_accounts: dict[str, Any], wallet_instance_id: str
+) -> list[dict[str, Any]]:
     for group in wallet_accounts.get("wallet_instances", []):
         if group.get("wallet_instance_id") == wallet_instance_id:
-            return len(group.get("accounts") or [])
-    return 0
+            return [
+                account
+                for account in group.get("accounts") or []
+                if isinstance(account, dict)
+            ]
+    return []
+
+
+def account_count_for_instance(wallet_accounts: dict[str, Any], wallet_instance_id: str) -> int:
+    return len(accounts_for_instance(wallet_accounts, wallet_instance_id))
+
+
+def find_account_for_instance(
+    wallet_accounts: dict[str, Any],
+    wallet_instance_id: str,
+    address: str,
+) -> dict[str, Any] | None:
+    for account in accounts_for_instance(wallet_accounts, wallet_instance_id):
+        if account.get("address") == address:
+            return account
+    return None
 
 
 def resolve_audit_log_path(
@@ -287,13 +313,33 @@ def main() -> int:
     )
     accounts_after = account_count_for_instance(refreshed_accounts, wallet_instance_id)
     result = status.get("result") or {}
+    created_address = str(result.get("address"))
+    created_account = find_account_for_instance(
+        refreshed_accounts,
+        wallet_instance_id,
+        created_address,
+    )
+    if args.account_name is not None:
+        renamed = wallet_client.call_tool(
+            "wallet_set_account_label",
+            {
+                "wallet_instance_id": wallet_instance_id,
+                "address": created_address,
+                "label": args.account_name,
+            },
+        )
+        created_account = renamed.get("account")
     print()
     print(
         render_card(
             "Created Account",
             [
                 ("Wallet Instance", wallet_instance_id),
-                ("Address", str(result.get("address"))),
+                ("Address", created_address),
+                (
+                    "Account Name",
+                    str((created_account or {}).get("label") or "<unlabeled>"),
+                ),
                 ("Is Default", str(result.get("is_default"))),
                 ("Is Locked", str(result.get("is_locked"))),
                 ("Accounts After", str(accounts_after)),

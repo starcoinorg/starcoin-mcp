@@ -150,15 +150,18 @@ If the wallet runtime is already up, bootstrap can also stay inside the daemon r
 python3 ./scripts/run_create_account.py \
   --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime \
   --wallet-instance-id local-default \
+  --account-name account-1 \
   --display-hint "Bootstrap local account"
 ```
 
 `run_create_account.py` creates the request, polls `wallet_get_request_status`, prints the created
-address on approval, and writes an audit record under
+address plus the resolved account name on approval, and writes an audit record under
 `$HOME/.starcoin-agents/wallet-runtime/audit/create-account-audit.jsonl` by default.
 
 For lower-level debugging, you can still call `wallet_create_account` directly through
-`starmaskd_client.py` and poll `wallet_get_request_status` yourself.
+`starmaskd_client.py` and poll `wallet_get_request_status` yourself. To rename an existing local
+address without touching the Starcoin account storage, call `wallet_set_account_label` through the
+same client.
 
 The low-level clients accept tool arguments either as stdin JSON or as a final inline JSON object:
 

@@ -35,7 +35,7 @@ Follow-up targeted runs on this branch:
 | Subproject | Result | Notes |
 | --- | --- | --- |
 | `starmask-local-account-agent` | `24 passed` | covers phase-2 signing, unlock success/failure/cancellation, prompt rendering, no-password-over-daemon proof, snapshot sync, and full local-stack restart flows |
-| `starmaskd` | `45 passed` | includes transport, config, migration, compatibility, recovery, and boundedness coverage for phase 2 |
+| `starmaskd` | `50 passed` | includes transport, config, schema-gate, recovery, and boundedness coverage for phase 2 |
 
 ## `starcoin-node`
 
@@ -100,13 +100,12 @@ Current evidence:
 - daemon restart and persistence tests in `crates/starmaskd/tests/recovery.rs`
 - phase-2 local-backend recovery tests in `crates/starmaskd/tests/local_backend_recovery.rs`
 - daemon transport tests in `crates/starmaskd/tests/transport.rs`
-- migration compatibility tests in `crates/starmaskd/tests/migration_compatibility.rs`
 - Native Messaging framing and bridge tests in `crates/starmask-native-host/src/*`
 - local-account signing, unlock, snapshot, and heartbeat tests in `crates/starmask-local-account-agent/src/agent.rs`
 - full local-stack daemon-plus-agent tests in `crates/starmask-local-account-agent/src/agent/stack_tests.rs`
 - local prompt rendering tests in `crates/starmask-local-account-agent/src/prompt.rs`
 - daemon config validation tests in `crates/starmaskd/src/config.rs`
-- positive and rollback-safety migration tests in `crates/starmaskd/src/sqlite_store.rs`
+- current-schema creation and unsupported-schema rejection tests in `crates/starmaskd/src/sqlite_store.rs`
 
 ### `v1` Extension-Backed Contract
 
@@ -126,9 +125,9 @@ Current evidence:
 | Backend-local unlock behavior | `strong` | `crates/starmask-local-account-agent/src/agent.rs` covers unlock success, wrong-password rejection, cancellation rejection, fail-closed behavior without `unlock`, user rejection for both request kinds, and an explicit proof that the unlock password does not appear in the daemon RPC transcript. | This now covers the backend-local unlock contract. |
 | Filesystem and security checks | `strong` | `crates/starmaskd/src/config.rs` covers insecure-permission rejection and symlink-escape rejection; `crates/starmask-local-account-agent/src/prompt.rs` covers canonical payload rendering and keeps host-provided display fields labeled as untrusted; `crates/starmask-local-account-agent/src/agent.rs` proves the unlock password does not cross the daemon RPC boundary; `crates/starmask-local-account-agent/src/agent/stack_tests.rs` now captures daemon logs during unlock plus signing flows and proves default logs omit the unlock password, exported private key bytes, canonical message text, and raw transaction payload bytes. | No major automated security-evidence gap remains in the repository. |
 | Phase-2 recovery | `strong` | `crates/starmaskd/tests/local_backend_recovery.rs` now covers restart with a generic backend registration record present, plus `created`, `dispatched`, and `pending_user_approval` local-backend requests; `crates/starmask-local-account-agent/src/agent/stack_tests.rs` covers backend restart before and after `request.presented`, including same-instance resume. | No major automated gap remains in phase-2 recovery. |
-| Migration and compatibility | `strong` | `crates/starmaskd/src/sqlite_store.rs` covers positive `v1 -> v2` backfill/readability and rollback safety; `crates/starmaskd/tests/migration_compatibility.rs` proves migrated extension-backed rows still route requests and still respect result retention; `crates/starmaskd/tests/transport.rs` proves `protocol_version = 1` clients are rejected rather than silently treated as generic `v2` clients. | No major automated compatibility gap remains. |
+| Schema initialization | `strong` | `crates/starmaskd/src/sqlite_store.rs` covers current-schema creation and rejects non-current or unversioned non-empty databases; `crates/starmaskd/tests/transport.rs` proves `protocol_version = 1` clients are rejected rather than silently treated as generic `v2` clients. | No compatibility migration is maintained before release; existing development databases should be recreated. |
 | Configuration acceptance | `strong` | `crates/starmaskd/src/config.rs` now explicitly covers legacy implicit-backend translation, legacy-field conflicts, duplicate backend IDs, prompt-mode validation, invalid local-account paths, missing `chain_id`, strict permissions, and symlink escape rejection. | No major automated gap remains in config validation. |
-| Performance and boundedness | `strong` | `crates/starmaskd/tests/transport.rs` proves repeated empty `request.pullNext` stays stable, `crates/starmaskd/tests/transport.rs` proves account snapshot replacement is atomic, `crates/starmaskd/tests/migration_compatibility.rs` proves result retention remains bounded after migration, and `crates/starmaskd/tests/local_backend_recovery.rs` proves one backend cannot resume another backend's presented request. | No major automated boundedness gap remains. |
+| Performance and boundedness | `strong` | `crates/starmaskd/tests/transport.rs` proves repeated empty `request.pullNext` stays stable and account snapshot replacement is atomic; `crates/starmaskd/tests/recovery.rs` proves result retention remains bounded after restart; `crates/starmaskd/tests/local_backend_recovery.rs` proves one backend cannot resume another backend's presented request. | No major automated boundedness gap remains. |
 | Phase-2 release gate | `strong` | Phase-2 acceptance areas now have direct automated evidence in one obvious test layer, including explicit default-log redaction coverage for sensitive signing material. | No major automated release-gate gap remains inside this repository. |
 
 Conclusion:
@@ -136,7 +135,7 @@ Conclusion:
 - `starmask-runtime` is in a split state: the `v1` extension-backed implementation has strong local
   automated coverage, while phase 2 is now close to its documented release gate.
 - This branch adds the missing structural layers that were previously absent: phase-2 backend-path
-  recovery tests, full daemon-plus-agent local-stack tests, migration compatibility smoke tests,
+  recovery tests, full daemon-plus-agent local-stack tests, current-schema initialization checks,
   and explicit boundedness checks.
 - The remaining release work is now mostly external or environment-specific validation rather than
   core phase-2 correctness or security evidence inside this repository.

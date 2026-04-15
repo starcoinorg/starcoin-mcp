@@ -391,7 +391,7 @@ impl RuntimeConfig {
         let coordinator = CoordinatorConfig {
             daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
             socket_scope: "local-user".to_owned(),
-            db_schema_version: 2,
+            db_schema_version: 3,
             default_request_ttl: DurationSeconds::new(
                 env_u64("STARMASKD_DEFAULT_REQUEST_TTL_SECONDS")
                     .or(file_config.default_request_ttl_seconds)
