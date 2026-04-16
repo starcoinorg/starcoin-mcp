@@ -65,12 +65,10 @@ class TransferStateStore:
         self.max_prepared_records = max_prepared_records
         self.max_unresolved_records = max_unresolved_records
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        if not self.path.exists():
-            self._write_unlocked(state_default())
-        if not self.lock_path.exists():
-            self.lock_path.touch(mode=0o600)
-        self._chmod_private(self.path)
+        self.lock_path.touch(mode=0o600, exist_ok=True)
         self._chmod_private(self.lock_path)
+        self._initialize_state_file()
+        self._chmod_private(self.path)
 
     def record_prepared(self, session: TransferSession) -> None:
         payload_hash = session_payload_sha256(session)
@@ -219,6 +217,15 @@ class TransferStateStore:
 
     def _locked_state(self) -> LockedState:
         return LockedState(self)
+
+    def _initialize_state_file(self) -> None:
+        with self.lock_path.open("a", encoding="utf-8") as lock_handle:
+            fcntl.flock(lock_handle.fileno(), fcntl.LOCK_EX)
+            try:
+                if not self.path.exists():
+                    self._write_unlocked(state_default())
+            finally:
+                fcntl.flock(lock_handle.fileno(), fcntl.LOCK_UN)
 
     def _prepared_records(self, state: dict[str, Any]) -> dict[str, Any]:
         value = state.setdefault("prepared_transactions", {})

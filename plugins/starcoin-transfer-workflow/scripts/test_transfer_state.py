@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import fcntl
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -175,6 +177,30 @@ class TransferStateTests(unittest.TestCase):
 
             self.assertEqual(state_path.read_text(encoding="utf-8"), original)
             self.assertEqual(list(state_path.parent.glob(f".{state_path.name}.*.tmp")), [])
+
+    def test_constructor_does_not_overwrite_state_created_while_waiting_for_lock(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "transfer-state.json"
+            state_created_by_peer = {
+                **state_default(),
+                "prepared_transactions": {"payload": {"txn": "prepared"}},
+            }
+
+            def create_state_before_lock_returns(_fd: int, operation: int) -> None:
+                if operation != fcntl.LOCK_EX or state_path.exists():
+                    return
+                state_path.write_text(
+                    json.dumps(state_created_by_peer, indent=2, sort_keys=True) + "\n",
+                    encoding="utf-8",
+                )
+
+            with patch("transfer_state.fcntl.flock", create_state_before_lock_returns):
+                store = TransferStateStore(state_path)
+
+            self.assertEqual(
+                store.read()["prepared_transactions"],
+                state_created_by_peer["prepared_transactions"],
+            )
 
 
 if __name__ == "__main__":
