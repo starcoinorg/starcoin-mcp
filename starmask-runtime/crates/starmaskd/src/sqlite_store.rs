@@ -679,7 +679,7 @@ mod tests {
         WalletInstanceRecord,
     };
 
-    use super::SqliteStore;
+    use super::{SCHEMA_VERSION, SqliteStore};
 
     fn raw_wallet_account_label(
         database_path: &std::path::Path,
@@ -716,13 +716,42 @@ mod tests {
         let tempdir = tempdir().unwrap();
         let database_path = tempdir.path().join("starmaskd.sqlite");
         let connection = Connection::open(&database_path).unwrap();
-        connection.pragma_update(None, "user_version", 2).unwrap();
+        connection.pragma_update(None, "user_version", 1).unwrap();
         drop(connection);
 
         let error = SqliteStore::open(&database_path)
             .err()
             .expect("old schema should be rejected");
-        assert!(error.to_string().contains("unsupported schema version: 2"));
+        assert!(error.to_string().contains("unsupported schema version: 1"));
+    }
+
+    #[test]
+    fn initializes_empty_database_to_current_schema_version() {
+        let tempdir = tempdir().unwrap();
+        let database_path = tempdir.path().join("starmaskd.sqlite");
+        let store = SqliteStore::open(&database_path).unwrap();
+
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn rejects_current_version_missing_required_tables() {
+        let tempdir = tempdir().unwrap();
+        let database_path = tempdir.path().join("starmaskd.sqlite");
+        let connection = Connection::open(&database_path).unwrap();
+        connection
+            .pragma_update(None, "user_version", i64::from(SCHEMA_VERSION))
+            .unwrap();
+        drop(connection);
+
+        let error = SqliteStore::open(&database_path)
+            .err()
+            .expect("current version missing tables should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("missing required table requests")
+        );
     }
 
     #[test]

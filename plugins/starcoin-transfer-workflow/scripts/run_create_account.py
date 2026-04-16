@@ -14,6 +14,7 @@ from workflow_audit import WorkflowAuditLogger
 
 DEFAULT_TTL_SECONDS = 300
 DEFAULT_CLIENT_CONTEXT = "starcoin-create-account"
+DEFAULT_ACCOUNT_RENAME_TIMEOUT_SECONDS = 5.0
 TERMINAL_REQUEST_STATUSES = {"approved", "rejected", "cancelled", "expired", "failed"}
 
 
@@ -166,7 +167,9 @@ def wait_for_account(
     poll_interval_seconds: float = 1.0,
     timeout_seconds: float | None = None,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+    if timeout_seconds is None:
+        timeout_seconds = DEFAULT_ACCOUNT_RENAME_TIMEOUT_SECONDS
+    deadline = time.monotonic() + max(0.0, timeout_seconds)
     wallet_accounts = initial_accounts
     while True:
         if wallet_accounts is None:
@@ -180,12 +183,18 @@ def wait_for_account(
         account = find_account_for_instance(wallet_accounts, wallet_instance_id, address)
         if account is not None:
             return account, wallet_accounts
-        if deadline is not None and time.monotonic() >= deadline:
+        if time.monotonic() >= deadline:
             raise TimeoutError(
                 f"created account {address} was not visible in wallet {wallet_instance_id}"
             )
         wallet_accounts = None
         time.sleep(poll_interval_seconds)
+
+
+def account_rename_timeout(request_timeout_seconds: float | None) -> float:
+    if request_timeout_seconds is None:
+        return DEFAULT_ACCOUNT_RENAME_TIMEOUT_SECONDS
+    return max(0.0, min(request_timeout_seconds, DEFAULT_ACCOUNT_RENAME_TIMEOUT_SECONDS))
 
 
 def resolve_audit_log_path(
@@ -359,43 +368,52 @@ def main() -> int:
         wallet_instance_id,
         created_address,
     )
+    rename_warning = None
     if args.account_name is not None:
-        if created_account is None:
-            created_account, refreshed_accounts = wait_for_account(
-                wallet_client,
-                wallet_instance_id=wallet_instance_id,
-                address=created_address,
-                initial_accounts=refreshed_accounts,
-                poll_interval_seconds=args.poll_interval_seconds,
-                timeout_seconds=args.request_timeout_seconds,
+        try:
+            if created_account is None:
+                created_account, refreshed_accounts = wait_for_account(
+                    wallet_client,
+                    wallet_instance_id=wallet_instance_id,
+                    address=created_address,
+                    initial_accounts=refreshed_accounts,
+                    poll_interval_seconds=args.poll_interval_seconds,
+                    timeout_seconds=account_rename_timeout(args.request_timeout_seconds),
+                )
+                accounts_after = account_count_for_instance(
+                    refreshed_accounts, wallet_instance_id
+                )
+            renamed = wallet_client.call_tool(
+                "wallet_set_account_label",
+                {
+                    "wallet_instance_id": wallet_instance_id,
+                    "address": created_address,
+                    "label": args.account_name,
+                },
             )
-            accounts_after = account_count_for_instance(
-                refreshed_accounts, wallet_instance_id
-            )
-        renamed = wallet_client.call_tool(
-            "wallet_set_account_label",
-            {
-                "wallet_instance_id": wallet_instance_id,
-                "address": created_address,
-                "label": args.account_name,
-            },
-        )
-        created_account = renamed.get("account")
+            renamed_account = renamed.get("account")
+            if isinstance(renamed_account, dict):
+                created_account = renamed_account
+        except (RuntimeError, OSError, TimeoutError, ValueError, KeyError) as exc:
+            rename_warning = f"rename skipped ({type(exc).__name__})"
     print()
+    rows = [
+        ("Wallet Instance", wallet_instance_id),
+        ("Address", created_address),
+        (
+            "Account Name",
+            str((created_account or {}).get("label") or "<unlabeled>"),
+        ),
+        ("Is Default", str(result.get("is_default"))),
+        ("Is Locked", str(result.get("is_locked"))),
+        ("Accounts After", str(accounts_after)),
+    ]
+    if rename_warning is not None:
+        rows.append(("Account Name Warning", rename_warning))
     print(
         render_card(
             "Created Account",
-            [
-                ("Wallet Instance", wallet_instance_id),
-                ("Address", created_address),
-                (
-                    "Account Name",
-                    str((created_account or {}).get("label") or "<unlabeled>"),
-                ),
-                ("Is Default", str(result.get("is_default"))),
-                ("Is Locked", str(result.get("is_locked"))),
-                ("Accounts After", str(accounts_after)),
-            ],
+            rows,
         )
     )
     return 0

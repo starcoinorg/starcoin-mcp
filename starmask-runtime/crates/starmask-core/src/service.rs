@@ -8,10 +8,11 @@ use starmask_types::{
     GetRequestStatusResult, LockState, PayloadHash, PresentationLease, PulledRequest,
     RejectReasonCode, RequestHasAvailableResult, RequestId, RequestKind, RequestPayload,
     RequestPullNextResult as DaemonPullNextRequestResult, RequestRecord, RequestResult,
-    RequestStatus, ResultKind, SharedErrorCode, SystemGetInfoResult, SystemPingResult, TimestampMs,
-    TransactionPayload, TransportKind, WalletAccountGroup, WalletCapability,
-    WalletGetPublicKeyResult, WalletInstanceId, WalletInstanceRecord, WalletListAccountsResult,
-    WalletListInstancesResult, WalletSetAccountLabelResult, WalletStatusResult,
+    RequestStatus, ResultKind, STARMASKD_DB_SCHEMA_VERSION, SharedErrorCode, SystemGetInfoResult,
+    SystemPingResult, TimestampMs, TransactionPayload, TransportKind, WalletAccountGroup,
+    WalletCapability, WalletGetPublicKeyResult, WalletInstanceId, WalletInstanceRecord,
+    WalletListAccountsResult, WalletListInstancesResult, WalletSetAccountLabelResult,
+    WalletStatusResult,
 };
 
 use crate::{
@@ -46,7 +47,7 @@ impl Default for CoordinatorConfig {
         Self {
             daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
             socket_scope: "local-user".to_owned(),
-            db_schema_version: 1,
+            db_schema_version: STARMASKD_DB_SCHEMA_VERSION,
             default_request_ttl: DurationSeconds::new(300),
             min_request_ttl: DurationSeconds::new(30),
             max_request_ttl: DurationSeconds::new(3600),

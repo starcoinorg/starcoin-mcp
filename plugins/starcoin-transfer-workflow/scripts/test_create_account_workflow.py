@@ -11,9 +11,11 @@ from unittest.mock import patch
 import run_create_account
 from run_create_account import (
     account_count_for_instance,
+    account_rename_timeout,
     created_account_address,
     find_account_for_instance,
     resolve_wallet_instance,
+    wait_for_account,
     wait_for_terminal_request,
 )
 
@@ -100,6 +102,33 @@ class CreateAccountFlowWalletClient:
         }
         if payload != expected:
             raise AssertionError(f"unexpected label payload: {payload!r}")
+
+
+class RenameFailureWalletClient(CreateAccountFlowWalletClient):
+    def call_tool(
+        self, name: str, payload: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        if name == "wallet_set_account_label":
+            payload = payload or {}
+            self.calls.append((name, payload))
+            raise RuntimeError("daemon rejected rename")
+        return super().call_tool(name, payload)
+
+
+class MissingAccountWalletClient:
+    def call_tool(
+        self, name: str, payload: dict[str, object] | None = None
+    ) -> dict[str, object]:
+        if name != "wallet_list_accounts":
+            raise AssertionError(f"unexpected tool call: {name}")
+        return {
+            "wallet_instances": [
+                {
+                    "wallet_instance_id": "local-default",
+                    "accounts": [],
+                }
+            ]
+        }
 
 
 class CreateAccountWorkflowTests(unittest.TestCase):
@@ -270,6 +299,28 @@ class CreateAccountWorkflowTests(unittest.TestCase):
         ):
             created_account_address({"address": None})
 
+    def test_wait_for_account_uses_bounded_default_timeout(self) -> None:
+        with (
+            patch("run_create_account.time.monotonic", side_effect=[10.0, 16.0]),
+            patch("run_create_account.time.sleep", return_value=None),
+        ):
+            with self.assertRaisesRegex(
+                TimeoutError,
+                "created account 0xmissing was not visible in wallet local-default",
+            ):
+                wait_for_account(
+                    MissingAccountWalletClient(),
+                    wallet_instance_id="local-default",
+                    address="0xmissing",
+                    poll_interval_seconds=0.01,
+                    timeout_seconds=None,
+                )
+
+    def test_account_rename_timeout_is_bounded(self) -> None:
+        self.assertEqual(account_rename_timeout(None), 5.0)
+        self.assertEqual(account_rename_timeout(60.0), 5.0)
+        self.assertEqual(account_rename_timeout(-1.0), 0.0)
+
     def test_main_sets_custom_account_name_after_approved_create_account(self) -> None:
         client = CreateAccountFlowWalletClient()
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -311,6 +362,40 @@ class CreateAccountWorkflowTests(unittest.TestCase):
         )
         self.assertIn("Account Name:", stdout.getvalue())
         self.assertIn("savings", stdout.getvalue())
+
+    def test_main_keeps_created_account_success_when_optional_rename_fails(self) -> None:
+        client = RenameFailureWalletClient()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            args = argparse.Namespace(
+                socket_path=None,
+                wallet_runtime_dir=None,
+                wallet_instance_id=None,
+                client_request_id="client-create",
+                display_hint="Create local account",
+                account_name="savings",
+                client_context="test-create-account",
+                ttl_seconds=300,
+                poll_interval_seconds=0.01,
+                request_timeout_seconds=None,
+                audit_log_path=str(Path(tmpdir) / "audit.jsonl"),
+            )
+            with (
+                patch("run_create_account.parse_args", return_value=args),
+                patch(
+                    "run_create_account.resolve_socket_path",
+                    return_value=Path(tmpdir) / "sock",
+                ),
+                patch("run_create_account.StarmaskDaemonClient", return_value=client),
+                patch("sys.stdout", io.StringIO()) as stdout,
+            ):
+                exit_code = run_create_account.main()
+
+        output = stdout.getvalue()
+        self.assertEqual(exit_code, 0)
+        self.assertIn("Address:", output)
+        self.assertIn("0xabc", output)
+        self.assertIn("Account Name Warning:", output)
+        self.assertIn("rename skipped (RuntimeError)", output)
 
     def test_wait_for_terminal_request_raises_timeout_and_notifies(self) -> None:
         client = FakeWalletClient([{"status": "pending"}])

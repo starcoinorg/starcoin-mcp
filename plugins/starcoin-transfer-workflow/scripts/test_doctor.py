@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from doctor import live_rpc_checks, redacted_url_repr, select_socket_candidate
+from doctor import json_rpc, live_rpc_checks, redacted_url_repr, select_socket_candidate
 
 
 class DoctorSocketSelectionTests(unittest.TestCase):
@@ -97,6 +97,32 @@ class DoctorSocketSelectionTests(unittest.TestCase):
         self.assertTrue(all(item["ok"] for item in results))
         self.assertIn("node.info responded", results[0]["detail"])
 
+    def test_live_rpc_checks_reads_network_from_node_chain_info(self) -> None:
+        def fake_json_rpc(_url: str, method: str):
+            if method == "node.info":
+                return {
+                    "peer_info": {
+                        "chain_info": {
+                            "chain_id": 254,
+                            "network": "dev",
+                            "genesis_hash": "0xabc",
+                        }
+                    },
+                }
+            if method == "chain.info":
+                raise RuntimeError("chain.info disabled")
+            raise AssertionError(f"unexpected method {method}")
+
+        with patch("doctor.json_rpc", side_effect=fake_json_rpc):
+            results = live_rpc_checks(
+                "http://127.0.0.1:9850",
+                expected_chain_id=254,
+                expected_network="dev",
+                expected_genesis_hash="0xabc",
+            )
+
+        self.assertTrue(all(item["ok"] for item in results))
+
     def test_live_rpc_checks_fail_when_required_identity_is_missing(self) -> None:
         def fake_json_rpc(_url: str, method: str):
             if method == "node.info":
@@ -123,6 +149,33 @@ class DoctorSocketSelectionTests(unittest.TestCase):
             redacted,
             "'http://<redacted>@node.example:9850/rpc?<redacted>#<redacted>'",
         )
+
+    def test_json_rpc_rejects_non_http_urls_before_urlopen(self) -> None:
+        with patch("doctor.urlopen") as urlopen:
+            with self.assertRaisesRegex(ValueError, "http or https URL"):
+                json_rpc("file:///tmp/socket", "node.info")
+
+        urlopen.assert_not_called()
+
+    def test_live_rpc_failure_detail_does_not_echo_sensitive_url(self) -> None:
+        secret_url = "http://user:secret@node.local:9850/rpc?token=abc"
+
+        with patch(
+            "doctor.json_rpc",
+            side_effect=RuntimeError(f"could not reach {secret_url}"),
+        ):
+            results = live_rpc_checks(
+                secret_url,
+                expected_chain_id=254,
+                expected_network="dev",
+                expected_genesis_hash="0xabc",
+            )
+
+        detail = results[0]["detail"]
+        self.assertIn("error_type=RuntimeError", detail)
+        self.assertNotIn("secret", detail)
+        self.assertNotIn("token=abc", detail)
+        self.assertNotIn("user:", detail)
 
     def test_live_rpc_checks_report_identity_mismatch(self) -> None:
         def fake_json_rpc(_url: str, method: str):

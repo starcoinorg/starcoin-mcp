@@ -45,7 +45,7 @@ The current implementation creates the baseline schema from `crates/starmaskd/sc
 
 Rules:
 
-1. schema version is `1` until the first release creates a compatibility requirement
+1. schema version is `2` for the current pre-release baseline
 2. empty databases are initialized directly to the current baseline schema
 3. non-current schema versions are rejected instead of upgraded
 4. unversioned non-empty databases are rejected instead of being guessed or backfilled

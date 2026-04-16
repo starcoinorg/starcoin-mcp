@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import fcntl
 import json
+import os
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -188,10 +190,31 @@ class TransferStateStore:
 
     def _write_unlocked(self, state: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.path.write_text(
-            json.dumps(state, ensure_ascii=True, indent=2, sort_keys=True) + "\n",
-            encoding="utf-8",
-        )
+        payload = json.dumps(state, ensure_ascii=True, indent=2, sort_keys=True) + "\n"
+        temp_path: Path | None = None
+        try:
+            with tempfile.NamedTemporaryFile(
+                "w",
+                encoding="utf-8",
+                dir=self.path.parent,
+                prefix=f".{self.path.name}.",
+                suffix=".tmp",
+                delete=False,
+            ) as handle:
+                temp_path = Path(handle.name)
+                handle.write(payload)
+                handle.flush()
+                os.fsync(handle.fileno())
+            self._chmod_private(temp_path)
+            os.replace(temp_path, self.path)
+            temp_path = None
+            self._fsync_directory(self.path.parent)
+        finally:
+            if temp_path is not None:
+                try:
+                    temp_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
         self._chmod_private(self.path)
 
     def _locked_state(self) -> LockedState:
@@ -217,6 +240,22 @@ class TransferStateStore:
             path.chmod(0o600)
         except OSError:
             pass
+
+    @staticmethod
+    def _fsync_directory(path: Path) -> None:
+        flags = os.O_RDONLY
+        if hasattr(os, "O_DIRECTORY"):
+            flags |= os.O_DIRECTORY
+        try:
+            fd = os.open(path, flags)
+        except OSError:
+            return
+        try:
+            os.fsync(fd)
+        except OSError:
+            pass
+        finally:
+            os.close(fd)
 
 
 class LockedState:

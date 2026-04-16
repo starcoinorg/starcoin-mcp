@@ -107,7 +107,7 @@ def parse_toml(path: Path) -> dict:
     try:
         with path.open("rb") as handle:
             return tomllib.load(handle)
-    except Exception as exc:
+    except (OSError, tomllib.TOMLDecodeError) as exc:
         return {"_parse_error": str(exc)}
 
 
@@ -123,6 +123,7 @@ def parse_json(path: Path) -> dict | None:
 def json_rpc(
     url: str, method: str, params: list[Any] | dict[str, Any] | None = None
 ) -> Any:
+    validate_rpc_url(url)
     payload = {
         "jsonrpc": "2.0",
         "id": 1,
@@ -141,6 +142,12 @@ def json_rpc(
     return body["result"]
 
 
+def validate_rpc_url(url: str) -> None:
+    parts = urlsplit(url)
+    if parts.scheme not in {"http", "https"} or not parts.netloc:
+        raise ValueError("RPC endpoint must be an http or https URL with a host")
+
+
 def extract_chain_field(value: Any, field: str) -> Any:
     if isinstance(value, dict):
         if field in value:
@@ -150,6 +157,15 @@ def extract_chain_field(value: Any, field: str) -> Any:
             chain_info = peer_info.get("chain_info")
             if isinstance(chain_info, dict) and field in chain_info:
                 return chain_info[field]
+    return None
+
+
+def first_chain_field(payloads: tuple[Any, ...], fields: tuple[str, ...]) -> Any:
+    for payload in payloads:
+        for field in fields:
+            value = extract_chain_field(payload, field)
+            if value is not None:
+                return value
     return None
 
 
@@ -178,7 +194,7 @@ def live_rpc_checks(
             check(
                 "node rpc live",
                 False,
-                f"rpc_endpoint_url={redacted_rpc}, error={exc}",
+                f"rpc_endpoint_url={redacted_rpc}, error_type={type(exc).__name__}",
                 "Start the Starcoin RPC node or fix rpc_endpoint_url in node-cli.toml.",
             )
         ]
@@ -187,15 +203,13 @@ def live_rpc_checks(
     except (OSError, TimeoutError, RuntimeError, ValueError, KeyError, URLError):
         chain_info = {}
 
-    observed_chain_id = extract_chain_field(chain_info, "chain_id")
-    if observed_chain_id is None:
-        observed_chain_id = extract_chain_field(node_info, "chain_id")
-    observed_network = extract_chain_field(node_info, "net")
-    if observed_network is None:
-        observed_network = extract_chain_field(chain_info, "network")
-    observed_genesis_hash = extract_chain_field(chain_info, "genesis_hash")
-    if observed_genesis_hash is None:
-        observed_genesis_hash = extract_chain_field(node_info, "genesis_hash")
+    observed_chain_id = first_chain_field((chain_info, node_info), ("chain_id",))
+    observed_network = first_chain_field(
+        (node_info, chain_info), ("net", "network")
+    )
+    observed_genesis_hash = first_chain_field(
+        (chain_info, node_info), ("genesis_hash",)
+    )
 
     results = [
         check(

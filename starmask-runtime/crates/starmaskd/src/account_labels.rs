@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::{
     collections::HashMap,
     time::{SystemTime, UNIX_EPOCH},

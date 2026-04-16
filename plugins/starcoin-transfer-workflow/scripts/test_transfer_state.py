@@ -4,10 +4,11 @@ from __future__ import annotations
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from test_transfer_confirmation import FakeToolClient, sample_session
 from transfer_controller import TransferController
-from transfer_state import TransferStateStore, session_payload_sha256
+from transfer_state import TransferStateStore, session_payload_sha256, state_default
 
 
 class TransferStateTests(unittest.TestCase):
@@ -156,6 +157,24 @@ class TransferStateTests(unittest.TestCase):
                 ],
             )
             self.assertIsNone(store.unresolved_for_session(session))
+
+    def test_failed_state_replace_keeps_existing_state_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            state_path = Path(temp_dir) / "transfer-state.json"
+            store = TransferStateStore(state_path)
+            original = state_path.read_text(encoding="utf-8")
+
+            with patch("transfer_state.os.replace", side_effect=OSError("replace failed")):
+                with self.assertRaisesRegex(OSError, "replace failed"):
+                    store._write_unlocked(
+                        {
+                            **state_default(),
+                            "prepared_transactions": {"payload": {"txn": "prepared"}},
+                        }
+                    )
+
+            self.assertEqual(state_path.read_text(encoding="utf-8"), original)
+            self.assertEqual(list(state_path.parent.glob(f".{state_path.name}.*.tmp")), [])
 
 
 if __name__ == "__main__":

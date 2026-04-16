@@ -16,6 +16,7 @@ use crate::{
 
 pub const DAEMON_PROTOCOL_VERSION: u32 = 1;
 pub const GENERIC_BACKEND_PROTOCOL_VERSION: u32 = 2;
+pub const STARMASKD_DB_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct SystemPingParams {
