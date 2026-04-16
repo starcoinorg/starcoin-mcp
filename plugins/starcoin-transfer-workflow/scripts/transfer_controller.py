@@ -474,8 +474,6 @@ class TransferController:
                         "min_confirmed_blocks": normalized_min_confirmed_blocks,
                     },
                 )
-                if bool(watch_result.get("confirmed")):
-                    self.state_store.clear_unresolved_submission(session)
                 submit_result = {
                     "txn_hash": unresolved.txn_hash,
                     "submission_state": "unknown",
@@ -483,6 +481,19 @@ class TransferController:
                     "next_action": "reconcile_by_txn_hash",
                     "error_code": "submission_unknown",
                 }
+                if bool(watch_result.get("confirmed")):
+                    submit_result.update(
+                        {
+                            "submission_state": "accepted",
+                            "submitted": True,
+                            "next_action": None,
+                            "error_code": None,
+                            "reconciled_from_unresolved": True,
+                        }
+                    )
+                    self.state_store.clear_unresolved_submission(session)
+                session.submit_result = submit_result
+                session.watch_result = watch_result
                 return TransferSubmitOutcome(
                     submit_result=submit_result,
                     watch_result=watch_result,

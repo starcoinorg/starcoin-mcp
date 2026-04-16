@@ -46,7 +46,7 @@ impl Default for CoordinatorConfig {
         Self {
             daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
             socket_scope: "local-user".to_owned(),
-            db_schema_version: 3,
+            db_schema_version: 1,
             default_request_ttl: DurationSeconds::new(300),
             min_request_ttl: DurationSeconds::new(30),
             max_request_ttl: DurationSeconds::new(3600),

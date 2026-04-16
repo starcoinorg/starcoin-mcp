@@ -11,6 +11,8 @@ import stat
 import sys
 from pathlib import Path
 from typing import Any
+from urllib.error import URLError
+from urllib.parse import urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 from runtime_layout import (
@@ -158,28 +160,32 @@ def live_rpc_checks(
     expected_network: object,
     expected_genesis_hash: object,
 ) -> list[dict]:
+    redacted_rpc = redacted_url_repr(node_rpc)
     if looks_like_placeholder_rpc(node_rpc):
         return [
             check(
                 "node rpc live",
                 False,
-                f"rpc_endpoint_url={node_rpc!r}",
+                f"rpc_endpoint_url={redacted_rpc}",
                 "Set rpc_endpoint_url before running the live RPC probe.",
             )
         ]
     assert isinstance(node_rpc, str)
     try:
         node_info = json_rpc(node_rpc, "node.info")
-        chain_info = json_rpc(node_rpc, "chain.info")
-    except Exception as exc:
+    except (OSError, TimeoutError, RuntimeError, ValueError, KeyError, URLError) as exc:
         return [
             check(
                 "node rpc live",
                 False,
-                f"{node_rpc} ({exc})",
+                f"rpc_endpoint_url={redacted_rpc}, error={exc}",
                 "Start the Starcoin RPC node or fix rpc_endpoint_url in node-cli.toml.",
             )
         ]
+    try:
+        chain_info = json_rpc(node_rpc, "chain.info")
+    except (OSError, TimeoutError, RuntimeError, ValueError, KeyError, URLError):
+        chain_info = {}
 
     observed_chain_id = extract_chain_field(chain_info, "chain_id")
     if observed_chain_id is None:
@@ -195,27 +201,27 @@ def live_rpc_checks(
         check(
             "node rpc live",
             True,
-            f"{node_rpc} node.info and chain.info responded",
+            f"rpc_endpoint_url={redacted_rpc}, node.info responded",
         )
     ]
-    if expected_chain_id is not None:
-        results.append(
-            check(
-                "node rpc chain id",
-                str(observed_chain_id) == str(expected_chain_id),
-                f"observed={observed_chain_id!r}, expected={expected_chain_id!r}",
-                "Use the RPC endpoint that matches expected_chain_id, or update node-cli.toml after verifying the target chain.",
-            )
+    results.append(
+        check(
+            "node rpc chain id",
+            expected_chain_id is not None and str(observed_chain_id) == str(expected_chain_id),
+            f"observed={observed_chain_id!r}, expected={expected_chain_id!r}",
+            "Set expected_chain_id and use the RPC endpoint that matches it.",
         )
-    if expected_network is not None:
-        results.append(
-            check(
-                "node rpc network",
-                str(observed_network or "").lower() == str(expected_network or "").lower(),
-                f"observed={observed_network!r}, expected={expected_network!r}",
-                "Use the RPC endpoint that matches expected_network, or update node-cli.toml after verifying the target chain.",
-            )
+    )
+    expected_network_text = str(expected_network or "").strip()
+    results.append(
+        check(
+            "node rpc network",
+            bool(expected_network_text)
+            and str(observed_network or "").lower() == expected_network_text.lower(),
+            f"observed={observed_network!r}, expected={expected_network!r}",
+            "Set expected_network and use the RPC endpoint that matches it.",
         )
+    )
     if not looks_like_placeholder_hash(expected_genesis_hash):
         results.append(
             check(
@@ -312,6 +318,21 @@ def looks_like_placeholder_rpc(node_rpc: object) -> bool:
     if not lowered:
         return True
     return "example" in lowered or "replace" in lowered
+
+
+def redacted_url_repr(value: object) -> str:
+    if not isinstance(value, str):
+        return repr(value)
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return repr(value)
+    netloc = parts.netloc
+    if "@" in netloc:
+        netloc = "<redacted>@" + netloc.rsplit("@", 1)[1]
+    query = "<redacted>" if parts.query else ""
+    fragment = "<redacted>" if parts.fragment else ""
+    return repr(urlunsplit((parts.scheme, netloc, parts.path, query, fragment)))
 
 
 def looks_like_placeholder_hash(expected_genesis_hash: object) -> bool:
@@ -480,6 +501,9 @@ def main() -> int:
 
     node_mode = node_config.get("mode") if isinstance(node_config, dict) else None
     node_rpc = node_config.get("rpc_endpoint_url") if isinstance(node_config, dict) else None
+    expected_chain_id = (
+        node_config.get("expected_chain_id") if isinstance(node_config, dict) else None
+    )
     expected_network = (
         node_config.get("expected_network") if isinstance(node_config, dict) else None
     )
@@ -505,7 +529,7 @@ def main() -> int:
             check(
                 "node rpc endpoint",
                 not looks_like_placeholder_rpc(node_rpc),
-                f"rpc_endpoint_url={node_rpc!r}",
+                f"rpc_endpoint_url={redacted_url_repr(node_rpc)}",
                 f"Set rpc_endpoint_url in the copied template from {NODE_EXAMPLE_PATH}.",
             ),
             check(
@@ -532,7 +556,7 @@ def main() -> int:
         results.extend(
             live_rpc_checks(
                 node_rpc,
-                expected_chain_id=node_config.get("expected_chain_id"),
+                expected_chain_id=expected_chain_id,
                 expected_network=expected_network,
                 expected_genesis_hash=expected_genesis_hash,
             )

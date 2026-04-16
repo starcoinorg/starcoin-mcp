@@ -273,6 +273,8 @@ def iter_audit_records(path: Path) -> list[dict[str, Any]]:
 
 
 def summarize_audit_records(path: Path, *, limit: int = 20) -> list[dict[str, Any]]:
+    if limit < 0:
+        raise ValueError("limit must be >= 0")
     records = iter_audit_records(path)
     selected = records[-max(0, limit) :] if limit else records
     summary: list[dict[str, Any]] = []

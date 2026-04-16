@@ -82,6 +82,17 @@ class WorkflowAuditTests(unittest.TestCase):
         self.assertNotIn("raw_txn_bcs_hex", summary[0])
         self.assertNotIn("signed_txn_bcs_hex", summary[0])
 
+    def test_audit_summary_rejects_negative_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "audit.jsonl"
+            log_path.write_text(
+                json.dumps({"event": "one", "request_id": "req-1"}) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "limit must be >= 0"):
+                summarize_audit_records(log_path, limit=-1)
+
 
 if __name__ == "__main__":
     unittest.main()

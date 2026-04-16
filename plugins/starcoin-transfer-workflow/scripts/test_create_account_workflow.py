@@ -11,6 +11,7 @@ from unittest.mock import patch
 import run_create_account
 from run_create_account import (
     account_count_for_instance,
+    created_account_address,
     find_account_for_instance,
     resolve_wallet_instance,
     wait_for_terminal_request,
@@ -262,6 +263,12 @@ class CreateAccountWorkflowTests(unittest.TestCase):
 
         self.assertEqual(status["status"], "approved")
         self.assertEqual(status["result"], {"address": "0x1"})
+
+    def test_created_account_address_rejects_missing_address(self) -> None:
+        with self.assertRaisesRegex(
+            RuntimeError, "approved create-account result did not include an address"
+        ):
+            created_account_address({"address": None})
 
     def test_main_sets_custom_account_name_after_approved_create_account(self) -> None:
         client = CreateAccountFlowWalletClient()

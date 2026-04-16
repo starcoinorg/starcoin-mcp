@@ -150,6 +150,44 @@ def find_account_for_instance(
     return None
 
 
+def created_account_address(result: dict[str, Any]) -> str:
+    address = result.get("address")
+    if not isinstance(address, str) or not address.strip():
+        raise RuntimeError("approved create-account result did not include an address")
+    return address.strip()
+
+
+def wait_for_account(
+    wallet_client: StarmaskDaemonClient,
+    *,
+    wallet_instance_id: str,
+    address: str,
+    initial_accounts: dict[str, Any] | None = None,
+    poll_interval_seconds: float = 1.0,
+    timeout_seconds: float | None = None,
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    deadline = None if timeout_seconds is None else time.monotonic() + timeout_seconds
+    wallet_accounts = initial_accounts
+    while True:
+        if wallet_accounts is None:
+            wallet_accounts = wallet_client.call_tool(
+                "wallet_list_accounts",
+                {
+                    "wallet_instance_id": wallet_instance_id,
+                    "include_public_key": False,
+                },
+            )
+        account = find_account_for_instance(wallet_accounts, wallet_instance_id, address)
+        if account is not None:
+            return account, wallet_accounts
+        if deadline is not None and time.monotonic() >= deadline:
+            raise TimeoutError(
+                f"created account {address} was not visible in wallet {wallet_instance_id}"
+            )
+        wallet_accounts = None
+        time.sleep(poll_interval_seconds)
+
+
 def resolve_audit_log_path(
     audit_log_path_arg: str | None,
     *,
@@ -313,13 +351,27 @@ def main() -> int:
     )
     accounts_after = account_count_for_instance(refreshed_accounts, wallet_instance_id)
     result = status.get("result") or {}
-    created_address = str(result.get("address"))
+    if not isinstance(result, dict):
+        result = {}
+    created_address = created_account_address(result)
     created_account = find_account_for_instance(
         refreshed_accounts,
         wallet_instance_id,
         created_address,
     )
     if args.account_name is not None:
+        if created_account is None:
+            created_account, refreshed_accounts = wait_for_account(
+                wallet_client,
+                wallet_instance_id=wallet_instance_id,
+                address=created_address,
+                initial_accounts=refreshed_accounts,
+                poll_interval_seconds=args.poll_interval_seconds,
+                timeout_seconds=args.request_timeout_seconds,
+            )
+            accounts_after = account_count_for_instance(
+                refreshed_accounts, wallet_instance_id
+            )
         renamed = wallet_client.call_tool(
             "wallet_set_account_label",
             {

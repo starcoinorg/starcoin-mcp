@@ -225,7 +225,7 @@ the user's intent first, then use the scripts for deterministic execution.
 - Use one confirmation-depth target for the whole transfer. The default is `min_confirmed_blocks = 2`, which means the inclusion block plus at least 1 additional observed block.
 - Pass the `chain_context` from the same preparation result that produced the signed transaction.
 - Pass the same `min_confirmed_blocks` value to both `submit_signed_transaction` and any direct `watch_transaction` follow-up.
-- Use the persisted transfer state next to the audit log to verify the prepared payload hash before submission.
+- Use the persisted transfer state from the configured state path (defaults next to the audit log) to verify the prepared payload hash before submission.
 - Report `txn_hash`, `submission_state`, `next_action`, and whether immediate confirmation data is already present.
 - Record the submit result and any unresolved submission state before returning control to the user.
 

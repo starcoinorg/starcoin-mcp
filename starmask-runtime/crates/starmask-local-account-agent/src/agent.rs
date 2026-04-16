@@ -163,7 +163,7 @@ impl LocalAccountAgent {
     }
 
     fn snapshot(&self) -> Result<Snapshot> {
-        let accounts: Vec<_> = self
+        let mut accounts: Vec<_> = self
             .manager
             .list_account_infos()
             .context("failed to list local accounts")?
@@ -171,6 +171,7 @@ impl LocalAccountAgent {
             .filter(|account| self.config.allow_read_only_accounts() || !account.is_readonly)
             .map(account_info_to_backend_account)
             .collect();
+        accounts.sort_by(|left, right| left.address.cmp(&right.address));
 
         let has_signable = accounts.iter().any(|account| !account.is_read_only);
         let any_unlocked_signable = accounts

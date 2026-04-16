@@ -232,10 +232,12 @@ class LockedState:
         return self.state
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
-        assert self.lock_handle is not None
+        if self.lock_handle is None:
+            raise RuntimeError("LockedState exited without lock_handle")
         try:
             if exc_type is None:
-                assert self.state is not None
+                if self.state is None:
+                    raise RuntimeError("LockedState state is unexpectedly None on clean exit")
                 self.store._write_unlocked(self.state)
         finally:
             fcntl.flock(self.lock_handle.fileno(), fcntl.LOCK_UN)

@@ -138,6 +138,10 @@ class TransferStateTests(unittest.TestCase):
 
             self.assertTrue(outcome.success)
             self.assertEqual(outcome.watch_source, "pre-submit reconcile")
+            self.assertEqual(outcome.submit_result["submission_state"], "accepted")
+            self.assertIsNone(outcome.submit_result["next_action"])
+            self.assertEqual(session.submit_result, outcome.submit_result)
+            self.assertEqual(session.watch_result, outcome.watch_result)
             self.assertEqual(
                 node_client.calls,
                 [

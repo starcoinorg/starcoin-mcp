@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from doctor import live_rpc_checks, select_socket_candidate
+from doctor import live_rpc_checks, redacted_url_repr, select_socket_candidate
 
 
 class DoctorSocketSelectionTests(unittest.TestCase):
@@ -69,6 +69,60 @@ class DoctorSocketSelectionTests(unittest.TestCase):
             )
 
         self.assertTrue(all(item["ok"] for item in results))
+
+    def test_live_rpc_checks_treat_chain_info_as_optional(self) -> None:
+        def fake_json_rpc(_url: str, method: str):
+            if method == "node.info":
+                return {
+                    "net": "dev",
+                    "peer_info": {
+                        "chain_info": {
+                            "chain_id": 254,
+                            "genesis_hash": "0xabc",
+                        }
+                    },
+                }
+            if method == "chain.info":
+                raise RuntimeError("chain.info disabled")
+            raise AssertionError(f"unexpected method {method}")
+
+        with patch("doctor.json_rpc", side_effect=fake_json_rpc):
+            results = live_rpc_checks(
+                "http://127.0.0.1:9850",
+                expected_chain_id=254,
+                expected_network="dev",
+                expected_genesis_hash="0xabc",
+            )
+
+        self.assertTrue(all(item["ok"] for item in results))
+        self.assertIn("node.info responded", results[0]["detail"])
+
+    def test_live_rpc_checks_fail_when_required_identity_is_missing(self) -> None:
+        def fake_json_rpc(_url: str, method: str):
+            if method == "node.info":
+                return {"net": "dev", "peer_info": {"chain_info": {"chain_id": 254}}}
+            if method == "chain.info":
+                return {}
+            raise AssertionError(f"unexpected method {method}")
+
+        with patch("doctor.json_rpc", side_effect=fake_json_rpc):
+            results = live_rpc_checks(
+                "http://127.0.0.1:9850",
+                expected_chain_id=None,
+                expected_network=None,
+                expected_genesis_hash=None,
+            )
+
+        failures = {item["name"] for item in results if not item["ok"]}
+        self.assertEqual(failures, {"node rpc chain id", "node rpc network"})
+
+    def test_redacted_url_repr_strips_credentials_query_and_fragment(self) -> None:
+        redacted = redacted_url_repr("http://user:secret@node.example:9850/rpc?token=abc#frag")
+
+        self.assertEqual(
+            redacted,
+            "'http://<redacted>@node.example:9850/rpc?<redacted>#<redacted>'",
+        )
 
     def test_live_rpc_checks_report_identity_mismatch(self) -> None:
         def fake_json_rpc(_url: str, method: str):

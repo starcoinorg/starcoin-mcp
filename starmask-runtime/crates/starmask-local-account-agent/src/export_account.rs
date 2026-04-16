@@ -4,7 +4,7 @@ use std::{
     convert::TryFrom,
     fs::OpenOptions,
     io::{self, Read, Write},
-    path::PathBuf,
+    path::{Path, PathBuf},
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -107,7 +107,7 @@ fn read_password(password_stdin: bool) -> Result<String> {
     Ok(password)
 }
 
-fn write_private_key_file(path: &PathBuf, encoded: &str, force: bool) -> Result<()> {
+fn write_private_key_file(path: &Path, encoded: &str, force: bool) -> Result<()> {
     if path.exists() && !force {
         bail!(
             "output file already exists: {}; pass --force to overwrite it",

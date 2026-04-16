@@ -1,15 +1,23 @@
-use std::{collections::HashMap, fs, path::Path};
+use std::{fs, path::Path};
 
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Serialize, de::DeserializeOwned};
 
+use crate::{
+    account_labels::{
+        current_timestamp_ms, ensure_local_account_labels, existing_account_order,
+        is_local_account_wallet, next_account_order, normalize_account_label,
+        upsert_wallet_account_label,
+    },
+    schema::ensure_current_schema,
+};
 use starmask_core::{RepositoryError, RequestRepository, WalletRepository};
 use starmask_types::{
-    BackendKind, ClientRequestId, DeliveryLease, DeliveryLeaseId, PresentationId, RequestId,
-    RequestRecord, TimestampMs, WalletAccountRecord, WalletInstanceId, WalletInstanceRecord,
+    ClientRequestId, DeliveryLease, DeliveryLeaseId, PresentationId, RequestId, RequestRecord,
+    TimestampMs, WalletAccountRecord, WalletInstanceId, WalletInstanceRecord,
 };
 
-pub const SCHEMA_VERSION: u32 = 1;
+pub use crate::schema::SCHEMA_VERSION;
 
 pub struct SqliteStore {
     connection: Connection,
@@ -335,210 +343,12 @@ impl WalletRepository for SqliteStore {
             address,
             &normalized_label,
             account_order,
-            account.last_seen_at.as_millis(),
+            current_timestamp_ms(),
         )?;
         account.label = Some(normalized_label);
         transaction.commit().map_err(sql_error)?;
         Ok(account)
     }
-}
-
-fn ensure_current_schema(connection: &mut Connection) -> Result<(), RepositoryError> {
-    let current: i64 = connection
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .map_err(sql_error)?;
-    match current {
-        0 if database_has_user_tables(connection)? => Err(RepositoryError::Storage(format!(
-            "database has no schema version but is not empty; recreate it with schema version {SCHEMA_VERSION}"
-        ))),
-        0 => create_current_schema(connection),
-        value if value == i64::from(SCHEMA_VERSION) => Ok(()),
-        other => Err(RepositoryError::Storage(format!(
-            "unsupported schema version: {other}; recreate the database with schema version {SCHEMA_VERSION}"
-        ))),
-    }
-}
-
-fn database_has_user_tables(connection: &Connection) -> Result<bool, RepositoryError> {
-    let table_count: i64 = connection
-        .query_row(
-            "SELECT COUNT(*)
-             FROM sqlite_schema
-             WHERE type = 'table'
-               AND name NOT LIKE 'sqlite_%'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(sql_error)?;
-    Ok(table_count > 0)
-}
-
-fn create_current_schema(connection: &mut Connection) -> Result<(), RepositoryError> {
-    let transaction = connection.transaction().map_err(sql_error)?;
-    transaction
-        .execute_batch(CURRENT_SCHEMA_SQL)
-        .map_err(sql_error)?;
-    transaction
-        .pragma_update(None, "user_version", i64::from(SCHEMA_VERSION))
-        .map_err(sql_error)?;
-    transaction.commit().map_err(sql_error)?;
-    Ok(())
-}
-
-const CURRENT_SCHEMA_SQL: &str = include_str!("../schema.sql");
-
-fn is_local_account_wallet(
-    connection: &Connection,
-    wallet_instance_id: &WalletInstanceId,
-) -> Result<bool, RepositoryError> {
-    let backend_kind = connection
-        .query_row(
-            "SELECT backend_kind FROM wallet_instances WHERE wallet_instance_id = ?1",
-            params![wallet_instance_id.as_str()],
-            |row| row.get::<_, String>(0),
-        )
-        .optional()
-        .map_err(sql_error)?
-        .ok_or_else(|| {
-            RepositoryError::Storage(format!(
-                "wallet instance {} was not found",
-                wallet_instance_id
-            ))
-        })?;
-    Ok(
-        decode_string_enum::<BackendKind>(&backend_kind).map_err(sql_error)?
-            == BackendKind::LocalAccountDir,
-    )
-}
-
-fn ensure_local_account_labels(
-    connection: &Connection,
-    wallet_instance_id: &WalletInstanceId,
-    accounts: &[WalletAccountRecord],
-) -> Result<(), RepositoryError> {
-    let known_labels = list_wallet_account_labels(connection, wallet_instance_id)?;
-    let mut next_order = next_account_order(connection, wallet_instance_id)?;
-
-    for account in accounts {
-        if known_labels.contains_key(&account.address) {
-            continue;
-        }
-        let label = account
-            .label
-            .as_deref()
-            .map(normalize_account_label)
-            .transpose()?
-            .unwrap_or_else(|| format!("account-{next_order}"));
-        upsert_wallet_account_label(
-            connection,
-            wallet_instance_id,
-            &account.address,
-            &label,
-            next_order,
-            account.last_seen_at.as_millis(),
-        )?;
-        next_order += 1;
-    }
-
-    Ok(())
-}
-
-fn list_wallet_account_labels(
-    connection: &Connection,
-    wallet_instance_id: &WalletInstanceId,
-) -> Result<HashMap<String, String>, RepositoryError> {
-    let mut statement = connection
-        .prepare(
-            "SELECT address, label
-               FROM wallet_account_labels
-              WHERE wallet_instance_id = ?1",
-        )
-        .map_err(sql_error)?;
-    let rows = statement
-        .query_map(params![wallet_instance_id.as_str()], |row| {
-            Ok((
-                row.get::<_, String>("address")?,
-                row.get::<_, String>("label")?,
-            ))
-        })
-        .map_err(sql_error)?;
-    let labels = rows
-        .collect::<Result<Vec<_>, _>>()
-        .map_err(sql_error)?
-        .into_iter()
-        .collect();
-    Ok(labels)
-}
-
-fn next_account_order(
-    connection: &Connection,
-    wallet_instance_id: &WalletInstanceId,
-) -> Result<i64, RepositoryError> {
-    let max_order = connection
-        .query_row(
-            "SELECT MAX(account_order) FROM wallet_account_labels WHERE wallet_instance_id = ?1",
-            params![wallet_instance_id.as_str()],
-            |row| row.get::<_, Option<i64>>(0),
-        )
-        .map_err(sql_error)?
-        .unwrap_or(0);
-    Ok(max_order + 1)
-}
-
-fn existing_account_order(
-    connection: &Connection,
-    wallet_instance_id: &WalletInstanceId,
-    address: &str,
-) -> Result<Option<i64>, RepositoryError> {
-    connection
-        .query_row(
-            "SELECT account_order
-               FROM wallet_account_labels
-              WHERE wallet_instance_id = ?1 AND address = ?2",
-            params![wallet_instance_id.as_str(), address],
-            |row| row.get(0),
-        )
-        .optional()
-        .map_err(sql_error)
-}
-
-fn upsert_wallet_account_label(
-    connection: &Connection,
-    wallet_instance_id: &WalletInstanceId,
-    address: &str,
-    label: &str,
-    account_order: i64,
-    updated_at: i64,
-) -> Result<(), RepositoryError> {
-    connection
-        .execute(
-            "INSERT INTO wallet_account_labels (
-                wallet_instance_id, address, label, account_order, updated_at
-             ) VALUES (?1, ?2, ?3, ?4, ?5)
-             ON CONFLICT(wallet_instance_id, address) DO UPDATE SET
-                label = excluded.label,
-                account_order = excluded.account_order,
-                updated_at = excluded.updated_at",
-            params![
-                wallet_instance_id.as_str(),
-                address,
-                label,
-                account_order,
-                updated_at
-            ],
-        )
-        .map_err(sql_error)?;
-    Ok(())
-}
-
-fn normalize_account_label(label: &str) -> Result<String, RepositoryError> {
-    let normalized = label.trim();
-    if normalized.is_empty() {
-        return Err(RepositoryError::Storage(
-            "account label cannot be empty".to_owned(),
-        ));
-    }
-    Ok(normalized.to_owned())
 }
 
 fn query_requests<P>(
@@ -886,6 +696,21 @@ mod tests {
             .unwrap()
     }
 
+    fn label_row_updated_at(
+        database_path: &std::path::Path,
+        wallet_instance_id: &WalletInstanceId,
+        address: &str,
+    ) -> i64 {
+        let connection = Connection::open(database_path).unwrap();
+        connection
+            .query_row(
+                "SELECT updated_at FROM wallet_account_labels WHERE wallet_instance_id = ?1 AND address = ?2",
+                params![wallet_instance_id.as_str(), address],
+                |row| row.get(0),
+            )
+            .unwrap()
+    }
+
     #[test]
     fn rejects_old_schema_versions_instead_of_migrating() {
         let tempdir = tempdir().unwrap();
@@ -954,7 +779,7 @@ mod tests {
                     starmask_types::WalletAccountRecord {
                         wallet_instance_id: wallet_instance_id.clone(),
                         address: "0x2".to_owned(),
-                        label: None,
+                        label: Some("   ".to_owned()),
                         public_key: Some("0xdef".to_owned()),
                         is_default: false,
                         is_read_only: false,
@@ -986,6 +811,7 @@ mod tests {
             .set_wallet_account_label(&wallet_instance_id, "0x3", "savings")
             .unwrap();
         assert_eq!(renamed.label.as_deref(), Some("savings"));
+        assert!(label_row_updated_at(&database_path, &wallet_instance_id, "0x3") > 102);
         let fetched = store
             .get_wallet_account(&wallet_instance_id, "0x3")
             .unwrap()
@@ -1052,5 +878,6 @@ mod tests {
             raw_wallet_account_label(&database_path, &wallet_instance_id, "0x4"),
             None
         );
+        assert!(label_row_updated_at(&database_path, &wallet_instance_id, "0x4") > 105);
     }
 }

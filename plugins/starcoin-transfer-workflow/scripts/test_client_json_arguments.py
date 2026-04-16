@@ -79,6 +79,8 @@ class ClientJsonArgumentsTests(unittest.TestCase):
     def test_inline_arguments_must_be_json_object(self) -> None:
         with self.assertRaisesRegex(RuntimeError, "tool arguments must be a JSON object"):
             node_cli_client.read_json_arguments('["0x1"]')
+        with self.assertRaisesRegex(RuntimeError, "tool arguments must be a JSON object"):
+            starmaskd_client.read_json_arguments('["0x1"]')
 
 
 if __name__ == "__main__":
