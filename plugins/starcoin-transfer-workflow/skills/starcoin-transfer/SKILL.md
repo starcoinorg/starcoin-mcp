@@ -97,11 +97,13 @@ the user's intent first, then use the scripts for deterministic execution.
   - Prefer `run_transfer_test.py` with explicit `--audit-log-path` and `--state-path`, or
   - Use `TransferController` with `WorkflowAuditLogger` and `TransferStateStore` from the bundled scripts.
 - Do not manually stitch together `prepare_transfer`, `wallet_request_sign_transaction`,
-  `submit_signed_transaction`, and `watch_transaction` for a real transfer unless you also write equivalent
-  structured audit records and persisted transfer state before signing/submission.
+  `submit_signed_transaction`, and `watch_transaction` for a real transfer unless that path uses
+  `WorkflowAuditLogger` and `TransferStateStore`, or a custom implementation that programmatically emits
+  the same audit schema and persisted transfer-state records before signing/submission.
 - The transfer audit record must cover: resolved intent, prepared transaction summary, simulation result,
   host preview and decision, signing request id and terminal status, submission result, confirmation result,
   payload hash, backend id, timestamps, and terminal outcome.
+- Custom audit/state implementations must validate those same fields before they are treated as equivalent.
 - The transfer state file must persist the prepared payload hash and any unresolved submission `txn_hash` so
   a retry can reconcile before resubmitting.
 - Low-level direct tool calls are acceptable for read-only discovery, diagnostics, previews that stop before
@@ -234,10 +236,10 @@ the user's intent first, then use the scripts for deterministic execution.
 - Inspect `submit_signed_transaction.next_action`.
 - If `next_action = watch_transaction`, immediately call `watch_transaction`.
 - If `next_action = reconcile_by_txn_hash`, reconcile by `txn_hash` through `watch_transaction` instead of blindly resubmitting.
-- If the persisted transfer state already has an unresolved submission for the prepared payload, reconcile that `txn_hash` before any new submit attempt.
-- If `next_action = reprepare_then_resign`, discard the old signed bytes and restart from `prepare_transfer`.
-- If `status_summary.confirmed = true` but top-level `confirmed = false`, report that the transaction is included but has not yet reached the requested confirmation depth.
-- If submission is accepted but confirmation is still unavailable, report that the transaction is submitted but not yet confirmed. Do not present that state as final success.
+- When the persisted transfer state already has an unresolved submission for the prepared payload, reconcile that `txn_hash` before any new submit attempt.
+- Should `next_action = reprepare_then_resign`, discard the old signed bytes and restart from `prepare_transfer`.
+- Where `status_summary.confirmed = true` but top-level `confirmed = false`, report that the transaction is included but has not yet reached the requested confirmation depth.
+- When submission is accepted but confirmation is still unavailable, report that the transaction is submitted but not yet confirmed. Do not present that state as final success.
 - Record the final watch or reconciliation outcome in the transfer audit log.
 
 ### 13. Write Or Inspect The Audit Record

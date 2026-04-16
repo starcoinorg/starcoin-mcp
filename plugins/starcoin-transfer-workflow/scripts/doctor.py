@@ -144,7 +144,7 @@ def json_rpc(
 
 def validate_rpc_url(url: str) -> None:
     parts = urlsplit(url)
-    if parts.scheme not in {"http", "https"} or not parts.netloc:
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
         raise ValueError("RPC endpoint must be an http or https URL with a host")
 
 
@@ -340,13 +340,44 @@ def redacted_url_repr(value: object) -> str:
     try:
         parts = urlsplit(value)
     except ValueError:
-        return repr(value)
+        return repr(redact_unparseable_url(value))
     netloc = parts.netloc
     if "@" in netloc:
         netloc = "<redacted>@" + netloc.rsplit("@", 1)[1]
     query = "<redacted>" if parts.query else ""
     fragment = "<redacted>" if parts.fragment else ""
     return repr(urlunsplit((parts.scheme, netloc, parts.path, query, fragment)))
+
+
+def redact_unparseable_url(value: str) -> str:
+    base = value
+    fragment = ""
+    query = ""
+    if "#" in base:
+        base, _ = base.split("#", 1)
+        fragment = "#<redacted>"
+    if "?" in base:
+        base, _ = base.split("?", 1)
+        query = "?<redacted>"
+
+    scheme_end = base.find("://")
+    if scheme_end >= 0:
+        prefix = base[: scheme_end + 3]
+        rest = base[scheme_end + 3 :]
+    else:
+        prefix = ""
+        rest = base
+
+    path_start = rest.find("/")
+    if path_start >= 0:
+        authority = rest[:path_start]
+        path = rest[path_start:]
+    else:
+        authority = rest
+        path = ""
+    if "@" in authority:
+        authority = "<redacted>@" + authority.rsplit("@", 1)[1]
+    return f"{prefix}{authority}{path}{query}{fragment}"
 
 
 def looks_like_placeholder_hash(expected_genesis_hash: object) -> bool:

@@ -17,7 +17,7 @@ const REQUIRED_CURRENT_TABLES: &[&str] = &[
 
 pub(crate) fn ensure_current_schema(connection: &mut Connection) -> Result<(), RepositoryError> {
     let current: i64 = connection
-        .pragma_query_value(None, "user_version", |row| row.get(0))
+        .pragma_query_value(/*schema*/ None, "user_version", |row| row.get(0))
         .map_err(sql_error)?;
     match current {
         0 if database_has_user_tables(connection)? => Err(RepositoryError::Storage(format!(
@@ -76,7 +76,11 @@ fn create_current_schema(connection: &mut Connection) -> Result<(), RepositoryEr
         .execute_batch(CURRENT_SCHEMA_SQL)
         .map_err(sql_error)?;
     transaction
-        .pragma_update(None, "user_version", i64::from(SCHEMA_VERSION))
+        .pragma_update(
+            /*schema*/ None,
+            "user_version",
+            i64::from(SCHEMA_VERSION),
+        )
         .map_err(sql_error)?;
     transaction.commit().map_err(sql_error)?;
     Ok(())

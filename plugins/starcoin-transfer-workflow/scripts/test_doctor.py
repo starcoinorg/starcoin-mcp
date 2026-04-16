@@ -157,6 +157,23 @@ class DoctorSocketSelectionTests(unittest.TestCase):
 
         urlopen.assert_not_called()
 
+    def test_json_rpc_rejects_missing_hostname_before_urlopen(self) -> None:
+        with patch("doctor.urlopen") as urlopen:
+            for url in ("http://user:pass@", "http://:9850"):
+                with self.subTest(url=url):
+                    with self.assertRaisesRegex(ValueError, "http or https URL"):
+                        json_rpc(url, "node.info")
+
+        urlopen.assert_not_called()
+
+    def test_redacted_url_repr_strips_credentials_when_url_parse_fails(self) -> None:
+        redacted = redacted_url_repr("http://user:secret@[::1/rpc?token=abc#frag")
+
+        self.assertIn("<redacted>", redacted)
+        self.assertNotIn("user:secret", redacted)
+        self.assertNotIn("token=abc", redacted)
+        self.assertNotIn("frag", redacted)
+
     def test_live_rpc_failure_detail_does_not_echo_sensitive_url(self) -> None:
         secret_url = "http://user:secret@node.local:9850/rpc?token=abc"
 

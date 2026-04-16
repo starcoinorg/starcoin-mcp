@@ -6,6 +6,7 @@ import fcntl
 import hashlib
 import json
 import sys
+from collections import deque
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -254,29 +255,31 @@ class WorkflowAuditLogger:
 TransferAuditLogger = WorkflowAuditLogger
 
 
-def iter_audit_records(path: Path) -> list[dict[str, Any]]:
+def iter_audit_records(path: Path, *, limit: int = 0) -> list[dict[str, Any]]:
+    if limit < 0:
+        raise ValueError("limit must be >= 0")
+    records: list[dict[str, Any]] | deque[dict[str, Any]]
+    records = deque(maxlen=limit) if limit else []
     try:
-        lines = path.expanduser().read_text(encoding="utf-8").splitlines()
+        with path.expanduser().open("r", encoding="utf-8") as handle:
+            for line in handle:
+                if not line.strip():
+                    continue
+                try:
+                    value = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if isinstance(value, dict):
+                    records.append(value)
     except FileNotFoundError:
         return []
-    records: list[dict[str, Any]] = []
-    for line in lines:
-        if not line.strip():
-            continue
-        try:
-            value = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(value, dict):
-            records.append(value)
-    return records
+    return list(records)
 
 
 def summarize_audit_records(path: Path, *, limit: int = 20) -> list[dict[str, Any]]:
     if limit < 0:
         raise ValueError("limit must be >= 0")
-    records = iter_audit_records(path)
-    selected = records[-max(0, limit) :] if limit else records
+    selected = iter_audit_records(path, limit=limit)
     summary: list[dict[str, Any]] = []
     for record in selected:
         summary.append(
@@ -287,6 +290,16 @@ def summarize_audit_records(path: Path, *, limit: int = 20) -> list[dict[str, An
             }
         )
     return summary
+
+
+def non_negative_int(value: str) -> int:
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("--limit must be an integer") from exc
+    if parsed < 0:
+        raise argparse.ArgumentTypeError("--limit must be >= 0")
+    return parsed
 
 
 def format_audit_summary(records: list[dict[str, Any]]) -> str:
@@ -310,7 +323,7 @@ def parse_args() -> argparse.Namespace:
     )
     summary.add_argument(
         "--limit",
-        type=int,
+        type=non_negative_int,
         default=20,
         help="Number of most recent records to summarize. Use 0 for all records.",
     )
