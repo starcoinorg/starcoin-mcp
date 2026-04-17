@@ -26,7 +26,7 @@ use crate::{
     client::{DaemonRpc, LocalDaemonClient, daemon_protocol_version},
     request_support::{
         RequestRejection, account_info_to_backend_account, create_account, fulfill_request,
-        parse_account_address,
+        import_account, parse_account_address,
     },
     tty_prompt::{ApprovalPrompt, TtyApprovalPrompt},
 };
@@ -192,14 +192,20 @@ impl LocalAccountAgent {
                 WalletCapability::SignMessage,
                 WalletCapability::SignTransaction,
                 WalletCapability::CreateAccount,
+                WalletCapability::ExportAccount,
+                WalletCapability::ImportAccount,
             ]
         } else if accounts.iter().any(|account| account.public_key.is_some()) {
             vec![
                 WalletCapability::GetPublicKey,
                 WalletCapability::CreateAccount,
+                WalletCapability::ImportAccount,
             ]
         } else {
-            vec![WalletCapability::CreateAccount]
+            vec![
+                WalletCapability::CreateAccount,
+                WalletCapability::ImportAccount,
+            ]
         };
 
         Ok(Snapshot {
@@ -221,6 +227,9 @@ impl LocalAccountAgent {
     fn handle_request(&mut self, request: PulledRequest, snapshot: &Snapshot) -> Result<()> {
         if request.kind == starmask_types::RequestKind::CreateAccount {
             return self.handle_create_account_request(request, snapshot);
+        }
+        if request.kind == starmask_types::RequestKind::ImportAccount {
+            return self.handle_import_account_request(request, snapshot);
         }
         let account_address = parse_account_address(&request.account_address)?;
         let active_presentation_id = request.presentation_id.as_ref();
@@ -338,6 +347,55 @@ impl LocalAccountAgent {
         }
     }
 
+    fn handle_import_account_request(
+        &mut self,
+        request: PulledRequest,
+        snapshot: &Snapshot,
+    ) -> Result<()> {
+        let presentation_id = request
+            .presentation_id
+            .clone()
+            .unwrap_or_else(new_presentation_id);
+        self.client
+            .request_presented(starmask_types::RequestPresentedParams {
+                protocol_version: daemon_protocol_version(),
+                wallet_instance_id: self.wallet_instance_id.clone(),
+                request_id: request.request_id.clone(),
+                delivery_lease_id: request.delivery_lease_id.clone(),
+                presentation_id: presentation_id.clone(),
+            })?;
+        self.push_presented_request(request.request_id.clone())?;
+
+        let result = (|| {
+            let approval = self
+                .prompt
+                .prompt_for_import_account(&request, &snapshot.capabilities)?;
+            if !approval.approved() {
+                return Err(RequestRejection {
+                    reason_code: RejectReasonCode::RequestRejected,
+                    message: Some("User rejected the account-import request".to_owned()),
+                });
+            }
+            let password = approval.password().ok_or_else(|| RequestRejection {
+                reason_code: RejectReasonCode::BackendPolicyBlocked,
+                message: Some("Account import requires a password".to_owned()),
+            })?;
+            import_account(&self.manager, &request, password)
+        })();
+
+        self.pop_presented_request(&request.request_id)?;
+
+        match result {
+            Ok(result) => self.resolve_request(&request, &presentation_id, result),
+            Err(rejection) => self.reject_request(
+                &request,
+                Some(&presentation_id),
+                rejection.reason_code,
+                rejection.message,
+            ),
+        }
+    }
+
     fn load_signing_account_info(
         &self,
         account_address: starcoin_types::account_address::AccountAddress,
@@ -386,6 +444,13 @@ impl LocalAccountAgent {
                 created_account_curve: None,
                 created_account_is_default: None,
                 created_account_is_locked: None,
+                exported_account_address: None,
+                exported_account_output_file: None,
+                imported_account_address: None,
+                imported_account_public_key: None,
+                imported_account_curve: None,
+                imported_account_is_default: None,
+                imported_account_is_locked: None,
             },
             RequestResult::SignedMessage { signature } => RequestResolveParams {
                 protocol_version: daemon_protocol_version(),
@@ -400,6 +465,13 @@ impl LocalAccountAgent {
                 created_account_curve: None,
                 created_account_is_default: None,
                 created_account_is_locked: None,
+                exported_account_address: None,
+                exported_account_output_file: None,
+                imported_account_address: None,
+                imported_account_public_key: None,
+                imported_account_curve: None,
+                imported_account_is_default: None,
+                imported_account_is_locked: None,
             },
             RequestResult::CreatedAccount {
                 address,
@@ -420,6 +492,64 @@ impl LocalAccountAgent {
                 created_account_curve: Some(curve),
                 created_account_is_default: Some(is_default),
                 created_account_is_locked: Some(is_locked),
+                exported_account_address: None,
+                exported_account_output_file: None,
+                imported_account_address: None,
+                imported_account_public_key: None,
+                imported_account_curve: None,
+                imported_account_is_default: None,
+                imported_account_is_locked: None,
+            },
+            RequestResult::ExportedAccount {
+                address,
+                output_file,
+            } => RequestResolveParams {
+                protocol_version: daemon_protocol_version(),
+                wallet_instance_id: self.wallet_instance_id.clone(),
+                request_id: request.request_id.clone(),
+                presentation_id: presentation_id.clone(),
+                result_kind: ResultKind::ExportedAccount,
+                signed_txn_bcs_hex: None,
+                signature: None,
+                created_account_address: None,
+                created_account_public_key: None,
+                created_account_curve: None,
+                created_account_is_default: None,
+                created_account_is_locked: None,
+                exported_account_address: Some(address),
+                exported_account_output_file: Some(output_file),
+                imported_account_address: None,
+                imported_account_public_key: None,
+                imported_account_curve: None,
+                imported_account_is_default: None,
+                imported_account_is_locked: None,
+            },
+            RequestResult::ImportedAccount {
+                address,
+                public_key,
+                curve,
+                is_default,
+                is_locked,
+            } => RequestResolveParams {
+                protocol_version: daemon_protocol_version(),
+                wallet_instance_id: self.wallet_instance_id.clone(),
+                request_id: request.request_id.clone(),
+                presentation_id: presentation_id.clone(),
+                result_kind: ResultKind::ImportedAccount,
+                signed_txn_bcs_hex: None,
+                signature: None,
+                created_account_address: None,
+                created_account_public_key: None,
+                created_account_curve: None,
+                created_account_is_default: None,
+                created_account_is_locked: None,
+                exported_account_address: None,
+                exported_account_output_file: None,
+                imported_account_address: Some(address),
+                imported_account_public_key: Some(public_key),
+                imported_account_curve: Some(curve),
+                imported_account_is_default: Some(is_default),
+                imported_account_is_locked: Some(is_locked),
             },
         };
         self.client.request_resolve(params)?;
@@ -563,6 +693,7 @@ mod stack_tests;
 mod tests {
     use std::{
         collections::VecDeque,
+        convert::TryFrom,
         path::PathBuf,
         str::FromStr,
         sync::{Arc, Mutex},
@@ -572,8 +703,9 @@ mod tests {
     use pretty_assertions::assert_eq;
     use serde::Serialize;
     use starcoin_account::{AccountManager, account_storage::AccountStorage};
-    use starcoin_account_api::AccountInfo;
+    use starcoin_account_api::{AccountInfo, AccountPrivateKey};
     use starcoin_config::RocksdbConfig;
+    use starcoin_crypto::ValidCryptoMaterialStringExt;
     use starcoin_types::{
         account_address::AccountAddress,
         genesis_config::ChainId,
@@ -738,6 +870,14 @@ mod tests {
         ) -> std::result::Result<PromptApproval, RequestRejection> {
             self.response.lock().unwrap().clone()
         }
+
+        fn prompt_for_import_account(
+            &self,
+            _request: &PulledRequest,
+            _capabilities: &[WalletCapability],
+        ) -> std::result::Result<PromptApproval, RequestRejection> {
+            self.response.lock().unwrap().clone()
+        }
     }
 
     struct TestHarness {
@@ -805,6 +945,9 @@ mod tests {
                 raw_txn_bcs_hex: None,
                 message: Some(message.to_owned()),
                 message_format: Some(format),
+                output_file: None,
+                force: false,
+                private_key_file: None,
             }
         }
 
@@ -837,6 +980,9 @@ mod tests {
                 raw_txn_bcs_hex: Some(raw_txn_bcs_hex),
                 message: None,
                 message_format: None,
+                output_file: None,
+                force: false,
+                private_key_file: None,
             }
         }
 
@@ -857,6 +1003,55 @@ mod tests {
                 raw_txn_bcs_hex: None,
                 message: None,
                 message_format: None,
+                output_file: None,
+                force: false,
+                private_key_file: None,
+            }
+        }
+
+        fn export_account_request(&self, output_file: PathBuf) -> PulledRequest {
+            PulledRequest {
+                request_id: RequestId::new("req-export-account").unwrap(),
+                client_request_id: ClientRequestId::new("client-export-account").unwrap(),
+                kind: RequestKind::ExportAccount,
+                account_address: self.account_address.to_string(),
+                payload_hash: PayloadHash::new("payload-export-account").unwrap(),
+                display_hint: Some("Export account".to_owned()),
+                client_context: Some("phase2-test".to_owned()),
+                resume_required: false,
+                delivery_lease_id: Some(DeliveryLeaseId::new("lease-export-account").unwrap()),
+                lease_expires_at: None,
+                presentation_id: None,
+                presentation_expires_at: None,
+                raw_txn_bcs_hex: None,
+                message: None,
+                message_format: None,
+                output_file: Some(output_file.to_string_lossy().into_owned()),
+                force: false,
+                private_key_file: None,
+            }
+        }
+
+        fn import_account_request(&self, private_key_file: PathBuf) -> PulledRequest {
+            PulledRequest {
+                request_id: RequestId::new("req-import-account").unwrap(),
+                client_request_id: ClientRequestId::new("client-import-account").unwrap(),
+                kind: RequestKind::ImportAccount,
+                account_address: String::new(),
+                payload_hash: PayloadHash::new("payload-import-account").unwrap(),
+                display_hint: Some("Import account".to_owned()),
+                client_context: Some("phase2-test".to_owned()),
+                resume_required: false,
+                delivery_lease_id: Some(DeliveryLeaseId::new("lease-import-account").unwrap()),
+                lease_expires_at: None,
+                presentation_id: None,
+                presentation_expires_at: None,
+                raw_txn_bcs_hex: None,
+                message: None,
+                message_format: None,
+                output_file: None,
+                force: false,
+                private_key_file: Some(private_key_file.to_string_lossy().into_owned()),
             }
         }
     }
@@ -911,6 +1106,8 @@ mod tests {
                 WalletCapability::SignMessage,
                 WalletCapability::SignTransaction,
                 WalletCapability::CreateAccount,
+                WalletCapability::ExportAccount,
+                WalletCapability::ImportAccount,
             ]
         );
         assert_eq!(snapshot.accounts.len(), 1);
@@ -982,6 +1179,66 @@ mod tests {
         );
         assert_eq!(state.resolved[0].created_account_is_default, Some(false));
         assert_eq!(state.resolved[0].created_account_is_locked, Some(true));
+    }
+
+    #[test]
+    fn handle_request_resolves_exported_account_to_local_file() {
+        let mut harness = TestHarness::new(false, StubPrompt::approve(Some("hello")));
+        let output_file = harness._tempdir.path().join("exports/account.key");
+        let request = harness.export_account_request(output_file.clone());
+        let snapshot = harness.snapshot();
+
+        harness.agent.handle_request(request, &snapshot).unwrap();
+
+        let state = harness.client.snapshot();
+        assert_eq!(state.presented.len(), 1);
+        assert_eq!(state.resolved.len(), 1);
+        assert!(state.rejected.is_empty());
+        assert_eq!(state.resolved[0].result_kind, ResultKind::ExportedAccount);
+        assert_eq!(
+            state.resolved[0].exported_account_address.as_deref(),
+            Some(harness.account_address.to_string().as_str())
+        );
+        assert_eq!(
+            state.resolved[0].exported_account_output_file.as_deref(),
+            Some(output_file.to_string_lossy().as_ref())
+        );
+        assert!(output_file.exists());
+    }
+
+    #[test]
+    fn handle_request_resolves_imported_account_from_local_file() {
+        let mut harness = TestHarness::new(false, StubPrompt::approve(Some("imported")));
+        let source_dir = tempdir().unwrap();
+        let source_storage =
+            AccountStorage::create_from_path(source_dir.path(), RocksdbConfig::default()).unwrap();
+        let source_manager = AccountManager::new(source_storage, ChainId::test()).unwrap();
+        let source_account = source_manager.create_account("source").unwrap();
+        let private_key_bytes = source_manager
+            .export_account(*source_account.address(), "source")
+            .unwrap();
+        let private_key = AccountPrivateKey::try_from(private_key_bytes.as_slice()).unwrap();
+        let private_key_file = harness._tempdir.path().join("import.key");
+        std::fs::write(
+            &private_key_file,
+            private_key.to_encoded_string().unwrap() + "\n",
+        )
+        .unwrap();
+        let request = harness.import_account_request(private_key_file.clone());
+        let snapshot = harness.snapshot();
+
+        harness.agent.handle_request(request, &snapshot).unwrap();
+
+        let state = harness.client.snapshot();
+        assert_eq!(state.presented.len(), 1);
+        assert_eq!(state.resolved.len(), 1);
+        assert!(state.rejected.is_empty());
+        assert_eq!(state.resolved[0].result_kind, ResultKind::ImportedAccount);
+        assert_eq!(
+            state.resolved[0].imported_account_address.as_deref(),
+            Some(source_account.address().to_string().as_str())
+        );
+        assert!(state.resolved[0].imported_account_public_key.is_some());
     }
 
     #[test]
@@ -1159,7 +1416,8 @@ mod tests {
             snapshot.capabilities,
             vec![
                 WalletCapability::GetPublicKey,
-                WalletCapability::CreateAccount
+                WalletCapability::CreateAccount,
+                WalletCapability::ImportAccount
             ]
         );
         assert_eq!(snapshot.accounts.len(), 1);
@@ -1181,6 +1439,9 @@ mod tests {
             raw_txn_bcs_hex: None,
             message: Some("hello".to_owned()),
             message_format: Some(MessageFormat::Utf8),
+            output_file: None,
+            force: false,
+            private_key_file: None,
         };
 
         agent.handle_request(request, &snapshot).unwrap();

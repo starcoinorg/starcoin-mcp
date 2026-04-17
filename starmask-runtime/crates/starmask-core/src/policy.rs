@@ -1,5 +1,8 @@
 use crate::{
-    commands::{CreateAccountCommand, CreateSignMessageCommand, CreateSignTransactionCommand},
+    commands::{
+        CreateAccountCommand, CreateExportAccountCommand, CreateImportAccountCommand,
+        CreateSignMessageCommand, CreateSignTransactionCommand,
+    },
     error::CoreResult,
 };
 
@@ -24,6 +27,14 @@ pub trait PolicyEngine {
     }
 
     fn check_create_account(&self, _command: &CreateAccountCommand) -> CoreResult<()> {
+        Ok(())
+    }
+
+    fn check_create_export_account(&self, _command: &CreateExportAccountCommand) -> CoreResult<()> {
+        Ok(())
+    }
+
+    fn check_create_import_account(&self, _command: &CreateImportAccountCommand) -> CoreResult<()> {
         Ok(())
     }
 }

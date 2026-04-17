@@ -129,6 +129,40 @@ pub struct CreateAccountParams {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct CreateExportAccountParams {
+    pub protocol_version: u32,
+    pub client_request_id: ClientRequestId,
+    pub account_address: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wallet_instance_id: Option<WalletInstanceId>,
+    pub output_file: String,
+    #[serde(default)]
+    pub force: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl_seconds: Option<DurationSeconds>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct CreateImportAccountParams {
+    pub protocol_version: u32,
+    pub client_request_id: ClientRequestId,
+    pub wallet_instance_id: WalletInstanceId,
+    pub private_key_file: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub account_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_context: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ttl_seconds: Option<DurationSeconds>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct CreateSignTransactionParams {
     pub protocol_version: u32,
     pub client_request_id: ClientRequestId,
@@ -351,6 +385,12 @@ pub struct PulledRequest {
     pub message: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub message_format: Option<MessageFormat>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub output_file: Option<String>,
+    #[serde(default)]
+    pub force: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub private_key_file: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -391,6 +431,20 @@ pub struct RequestResolveParams {
     pub created_account_is_default: Option<bool>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub created_account_is_locked: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exported_account_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub exported_account_output_file: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub imported_account_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub imported_account_public_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub imported_account_curve: Option<Curve>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub imported_account_is_default: Option<bool>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub imported_account_is_locked: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]

@@ -133,6 +133,7 @@ should live under `local-accounts/<name>/`. The default local-account location i
 Example standalone wallet bootstrap:
 
 ```bash
+mkdir -p <repo-root>/.starcoin-agents/local-accounts/default
 chmod 700 <repo-root>/.starcoin-agents/local-accounts/default
 starcoin --connect ws://127.0.0.1:9870 --local-account-dir <repo-root>/.starcoin-agents/local-accounts/default account create -p test123
 starcoin --connect ws://127.0.0.1:9870 --local-account-dir <repo-root>/.starcoin-agents/local-accounts/default account create -p test123
@@ -190,8 +191,6 @@ accepts these overrides:
   - use an installed `starmaskd` binary
 - `LOCAL_ACCOUNT_AGENT_BIN`
   - use an installed `local-account-agent` binary
-- `LOCAL_ACCOUNT_EXPORT_BIN`
-  - use an installed `local-account-export` binary for single-address private-key exports
 
 ## Wallet Runtime
 
@@ -219,17 +218,25 @@ python3 ./scripts/wallet_runtime.py up \
 The supervisor writes `wallet-runtime.json` under `$HOME/.starcoin-agents/wallet-runtime/` by default and keeps
 `local-account-agent` attached to the current terminal so `tty_prompt` approvals still work.
 
-To export the private key for one local account address, stop the wallet runtime first:
+To export the private key for one local account address, keep the wallet runtime running and approve
+the request in the supervisor terminal:
 
 ```bash
-python3 ./scripts/wallet_runtime.py down
 python3 ./scripts/wallet_runtime.py export-account --address <account-address> --output-file ./account.key
+```
+
+To import a private-key file into the local wallet backend, keep the wallet runtime running and
+approve the request in the supervisor terminal:
+
+```bash
+python3 ./scripts/wallet_runtime.py import-account --private-key-file ./account.key
 ```
 
 If `--output-file` is omitted, the command prompts for a destination file or an existing directory.
 This exports only the private key for the requested address using Starcoin account export semantics;
-it does not copy the full local account vault, wallet runtime socket, or sqlite state. In
-non-interactive mode, pass the account password through `--password-stdin`.
+it does not copy the full local account vault, wallet runtime socket, or sqlite state. Private-key
+contents are read or written by `local-account-agent` on the wallet side and are not returned through
+the daemon response.
 
 ## Create Account Flow
 

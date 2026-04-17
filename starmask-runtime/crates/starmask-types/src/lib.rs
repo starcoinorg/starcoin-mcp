@@ -28,7 +28,8 @@ pub use native_bridge::{
     NATIVE_BRIDGE_PROTOCOL_VERSION, NativeBridgeAccount, NativeBridgeRequest, NativeBridgeResponse,
 };
 pub use payload::{
-    CreateAccountPayload, MessagePayload, RequestPayload, RequestResult, TransactionPayload,
+    CreateAccountPayload, ExportAccountPayload, ImportAccountPayload, MessagePayload,
+    RequestPayload, RequestResult, TransactionPayload,
 };
 pub use records::{
     DeliveryLease, PresentationLease, RequestRecord, WalletAccountRecord, WalletInstanceRecord,

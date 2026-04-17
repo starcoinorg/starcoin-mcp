@@ -87,6 +87,20 @@ pub enum NativeBridgeRequest {
         created_account_is_default: Option<bool>,
         #[serde(skip_serializing_if = "Option::is_none")]
         created_account_is_locked: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exported_account_address: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        exported_account_output_file: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        imported_account_address: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        imported_account_public_key: Option<String>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        imported_account_curve: Option<Curve>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        imported_account_is_default: Option<bool>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        imported_account_is_locked: Option<bool>,
     },
     #[serde(rename = "request.reject")]
     RequestReject {
@@ -158,6 +172,12 @@ pub enum NativeBridgeResponse {
         message: Option<String>,
         #[serde(skip_serializing_if = "Option::is_none")]
         message_format: Option<MessageFormat>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        output_file: Option<String>,
+        #[serde(default)]
+        force: bool,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        private_key_file: Option<String>,
     },
     #[serde(rename = "request.none")]
     RequestNone {

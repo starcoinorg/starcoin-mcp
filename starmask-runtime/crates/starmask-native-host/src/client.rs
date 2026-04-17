@@ -309,6 +309,13 @@ mod tests {
                 created_account_curve: None,
                 created_account_is_default: None,
                 created_account_is_locked: None,
+                exported_account_address: None,
+                exported_account_output_file: None,
+                imported_account_address: None,
+                imported_account_public_key: None,
+                imported_account_curve: None,
+                imported_account_is_default: None,
+                imported_account_is_locked: None,
             })
             .unwrap_err();
 

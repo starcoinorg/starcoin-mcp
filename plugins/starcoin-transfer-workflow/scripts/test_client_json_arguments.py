@@ -4,6 +4,7 @@ from __future__ import annotations
 import io
 import sys
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import node_cli_client
@@ -61,6 +62,46 @@ class ClientJsonArgumentsTests(unittest.TestCase):
             args.arguments_json,
             '{"wallet_instance_id":"local-default","address":"0x1"}',
         )
+
+    def test_starmaskd_client_maps_account_import_export_tools(self) -> None:
+        client = starmaskd_client.StarmaskDaemonClient(socket_path=Path("/tmp/starmaskd.sock"))
+
+        with patch.object(client, "_call", return_value={"request_id": "req-export"}) as call:
+            self.assertEqual(
+                client.call_tool(
+                    "wallet_request_export_account",
+                    {
+                        "client_request_id": "client-export",
+                        "account_address": "0x1",
+                        "wallet_instance_id": "local-default",
+                        "output_file": "/tmp/account.key",
+                        "force": True,
+                    },
+                ),
+                {"request_id": "req-export"},
+            )
+
+        call.assert_called_once()
+        self.assertEqual(call.call_args.args[0], "request.createExportAccount")
+        self.assertEqual(call.call_args.args[1]["account_address"], "0x1")
+        self.assertEqual(call.call_args.args[1]["output_file"], "/tmp/account.key")
+
+        with patch.object(client, "_call", return_value={"request_id": "req-import"}) as call:
+            self.assertEqual(
+                client.call_tool(
+                    "wallet_request_import_account",
+                    {
+                        "client_request_id": "client-import",
+                        "wallet_instance_id": "local-default",
+                        "private_key_file": "/tmp/import.key",
+                    },
+                ),
+                {"request_id": "req-import"},
+            )
+
+        call.assert_called_once()
+        self.assertEqual(call.call_args.args[0], "request.createImportAccount")
+        self.assertEqual(call.call_args.args[1]["private_key_file"], "/tmp/import.key")
 
     def test_node_cli_client_still_accepts_stdin_json_arguments(self) -> None:
         with patch("sys.stdin", io.StringIO('{"address":"0x2"}')):

@@ -16,24 +16,26 @@ use tracing::{debug, warn};
 use starmask_core::{
     CoordinatorCommand, CoordinatorResponse,
     commands::{
-        CreateAccountCommand, CreateSignMessageCommand, CreateSignTransactionCommand,
-        HeartbeatBackendCommand, HeartbeatExtensionCommand, MarkRequestPresentedCommand,
-        RegisterBackendCommand, RejectRequestCommand, ResolveRequestCommand,
-        SetAccountLabelCommand, UpdateBackendAccountsCommand, UpdateExtensionAccountsCommand,
+        CreateAccountCommand, CreateExportAccountCommand, CreateImportAccountCommand,
+        CreateSignMessageCommand, CreateSignTransactionCommand, HeartbeatBackendCommand,
+        HeartbeatExtensionCommand, MarkRequestPresentedCommand, RegisterBackendCommand,
+        RejectRequestCommand, ResolveRequestCommand, SetAccountLabelCommand,
+        UpdateBackendAccountsCommand, UpdateExtensionAccountsCommand,
     },
 };
 use starmask_types::{
     AckResult, BackendHeartbeatParams, BackendRegisterParams, BackendRegisteredResult,
     BackendUpdateAccountsParams, CancelRequestParams, Channel, CreateAccountParams,
-    CreateSignMessageParams, CreateSignTransactionParams, DAEMON_PROTOCOL_VERSION,
-    ExtensionHeartbeatParams, ExtensionRegisterParams, ExtensionRegisteredResult,
-    ExtensionUpdateAccountsParams, GENERIC_BACKEND_PROTOCOL_VERSION, GetRequestStatusParams,
-    JsonRpcErrorResponse, JsonRpcRequest, JsonRpcResponse, JsonRpcSuccess, NativeBridgeAccount,
-    RequestHasAvailableParams, RequestPresentedParams, RequestPullNextParams, RequestRejectParams,
-    RequestResolveParams, RequestResult, ResultKind, SharedError, SharedErrorCode,
-    SystemGetInfoParams, SystemPingParams, TimestampMs, WalletAccountRecord, WalletCapability,
-    WalletGetPublicKeyParams, WalletListAccountsParams, WalletListInstancesParams,
-    WalletSetAccountLabelParams, WalletStatusParams,
+    CreateExportAccountParams, CreateImportAccountParams, CreateSignMessageParams,
+    CreateSignTransactionParams, DAEMON_PROTOCOL_VERSION, ExtensionHeartbeatParams,
+    ExtensionRegisterParams, ExtensionRegisteredResult, ExtensionUpdateAccountsParams,
+    GENERIC_BACKEND_PROTOCOL_VERSION, GetRequestStatusParams, JsonRpcErrorResponse, JsonRpcRequest,
+    JsonRpcResponse, JsonRpcSuccess, NativeBridgeAccount, RequestHasAvailableParams,
+    RequestPresentedParams, RequestPullNextParams, RequestRejectParams, RequestResolveParams,
+    RequestResult, ResultKind, SharedError, SharedErrorCode, SystemGetInfoParams, SystemPingParams,
+    TimestampMs, WalletAccountRecord, WalletCapability, WalletGetPublicKeyParams,
+    WalletListAccountsParams, WalletListInstancesParams, WalletSetAccountLabelParams,
+    WalletStatusParams,
 };
 
 use crate::{
@@ -259,6 +261,53 @@ async fn dispatch_request(
                         client_context: params.client_context,
                         ttl_seconds: params.ttl_seconds,
                     }))
+                    .await,
+                |response| match response {
+                    CoordinatorResponse::RequestCreated(result) => Ok(result),
+                    other => Err(unexpected_response(other)),
+                },
+            )?)
+            .map_err(|error| error_response(None, error))?
+        }
+        "request.createExportAccount" => {
+            let params = decode_protocol::<CreateExportAccountParams>(&id, &request.params)?;
+            serde_json::to_value(expect_response(
+                handle
+                    .dispatch(CoordinatorCommand::CreateExportAccount(
+                        CreateExportAccountCommand {
+                            client_request_id: params.client_request_id,
+                            account_address: params.account_address,
+                            wallet_instance_id: params.wallet_instance_id,
+                            output_file: params.output_file,
+                            force: params.force,
+                            display_hint: params.display_hint,
+                            client_context: params.client_context,
+                            ttl_seconds: params.ttl_seconds,
+                        },
+                    ))
+                    .await,
+                |response| match response {
+                    CoordinatorResponse::RequestCreated(result) => Ok(result),
+                    other => Err(unexpected_response(other)),
+                },
+            )?)
+            .map_err(|error| error_response(None, error))?
+        }
+        "request.createImportAccount" => {
+            let params = decode_protocol::<CreateImportAccountParams>(&id, &request.params)?;
+            serde_json::to_value(expect_response(
+                handle
+                    .dispatch(CoordinatorCommand::CreateImportAccount(
+                        CreateImportAccountCommand {
+                            client_request_id: params.client_request_id,
+                            account_address: params.account_address,
+                            wallet_instance_id: params.wallet_instance_id,
+                            private_key_file: params.private_key_file,
+                            display_hint: params.display_hint,
+                            client_context: params.client_context,
+                            ttl_seconds: params.ttl_seconds,
+                        },
+                    ))
                     .await,
                 |response| match response {
                     CoordinatorResponse::RequestCreated(result) => Ok(result),
@@ -840,6 +889,8 @@ impl_has_protocol_version!(
     BackendUpdateAccountsParams,
     CancelRequestParams,
     CreateAccountParams,
+    CreateExportAccountParams,
+    CreateImportAccountParams,
     CreateSignMessageParams,
     CreateSignTransactionParams,
     ExtensionHeartbeatParams,
@@ -944,6 +995,35 @@ fn request_result_from_params(params: &RequestResolveParams) -> Result<RequestRe
             is_locked: params
                 .created_account_is_locked
                 .context("created_account_is_locked is required for created_account")?,
+        }),
+        ResultKind::ExportedAccount => Ok(RequestResult::ExportedAccount {
+            address: params
+                .exported_account_address
+                .clone()
+                .context("exported_account_address is required for exported_account")?,
+            output_file: params
+                .exported_account_output_file
+                .clone()
+                .context("exported_account_output_file is required for exported_account")?,
+        }),
+        ResultKind::ImportedAccount => Ok(RequestResult::ImportedAccount {
+            address: params
+                .imported_account_address
+                .clone()
+                .context("imported_account_address is required for imported_account")?,
+            public_key: params
+                .imported_account_public_key
+                .clone()
+                .context("imported_account_public_key is required for imported_account")?,
+            curve: params
+                .imported_account_curve
+                .context("imported_account_curve is required for imported_account")?,
+            is_default: params
+                .imported_account_is_default
+                .context("imported_account_is_default is required for imported_account")?,
+            is_locked: params
+                .imported_account_is_locked
+                .context("imported_account_is_locked is required for imported_account")?,
         }),
         ResultKind::None => anyhow::bail!("result_kind none is not valid for request.resolve"),
     }

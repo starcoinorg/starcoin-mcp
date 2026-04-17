@@ -40,6 +40,7 @@ script path itself has changed.
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/doctor.py`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py status`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py export-account --address <account-address> --output-file <output-file>`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/wallet_runtime.py import-account --private-key-file <private-key-file>`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/workflow_audit.py summary --path $HOME/.starcoin-agents/wallet-runtime/audit/transfer-audit.jsonl`
 - End-to-end test:
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/run_transfer_test.py --rpc-url http://127.0.0.1:9850 --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime --sender <sender> --receiver <receiver> --amount 1 --amount-unit stc --vm-profile vm2_only --min-confirmed-blocks 3`
@@ -52,8 +53,10 @@ Default runtime locations for this workflow:
 - wallet config: `$HOME/.starcoin-agents/wallet-runtime/starmaskd.toml`
 
 Use `wallet_runtime.py export-account --address <account-address>` only when the private key for one
-specific local address must be exported. It does not copy the local account vault. Stop the wallet
-runtime before exporting, and use `--password-stdin` for non-interactive runs.
+specific local address must be exported. It does not copy the local account vault. Keep the wallet
+runtime running and approve the request in the supervisor terminal. Use
+`wallet_runtime.py import-account --private-key-file <private-key-file>` to import one private-key
+file through the same online approval flow.
 
 Known important parameters:
 

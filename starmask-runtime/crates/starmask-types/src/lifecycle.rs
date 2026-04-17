@@ -6,6 +6,8 @@ pub enum RequestKind {
     SignTransaction,
     SignMessage,
     CreateAccount,
+    ExportAccount,
+    ImportAccount,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq, Hash)]
@@ -57,6 +59,8 @@ pub enum ResultKind {
     SignedTransaction,
     SignedMessage,
     CreatedAccount,
+    ExportedAccount,
+    ImportedAccount,
     None,
 }
 
@@ -100,6 +104,8 @@ pub enum WalletCapability {
     SignMessage,
     SignTransaction,
     CreateAccount,
+    ExportAccount,
+    ImportAccount,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, Eq, PartialEq, Hash)]
@@ -143,6 +149,8 @@ impl RequestKind {
             Self::SignTransaction => ResultKind::SignedTransaction,
             Self::SignMessage => ResultKind::SignedMessage,
             Self::CreateAccount => ResultKind::CreatedAccount,
+            Self::ExportAccount => ResultKind::ExportedAccount,
+            Self::ImportAccount => ResultKind::ImportedAccount,
         }
     }
 }
