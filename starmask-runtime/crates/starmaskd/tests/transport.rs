@@ -208,6 +208,30 @@ async fn list_wallet_accounts(
     response.result
 }
 
+async fn set_account_label(
+    socket_path: &std::path::Path,
+    wallet_instance_id: &str,
+    address: &str,
+    label: &str,
+) -> serde_json::Value {
+    let response = call_daemon(
+        socket_path,
+        "req-set-account-label",
+        "wallet.setAccountLabel",
+        json!({
+            "protocol_version": 1,
+            "wallet_instance_id": wallet_instance_id,
+            "address": address,
+            "label": label,
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Success(response) = response else {
+        panic!("expected wallet.setAccountLabel success");
+    };
+    response.result
+}
+
 async fn has_available(
     socket_path: &std::path::Path,
     wallet_instance_id: &str,
@@ -953,6 +977,10 @@ async fn unix_server_backend_update_accounts_replaces_snapshot() {
         json!("local-default")
     );
     assert_eq!(
+        accounts["wallet_instances"][0]["instance_label"],
+        json!("Local Default Wallet")
+    );
+    assert_eq!(
         accounts["wallet_instances"][0]["lock_state"],
         json!("locked")
     );
@@ -960,10 +988,167 @@ async fn unix_server_backend_update_accounts_replaces_snapshot() {
         accounts["wallet_instances"][0]["accounts"],
         json!([{
             "address": "0x2",
+            "label": "account-2",
             "public_key": "0xdef",
             "is_default": true,
+            "is_read_only": false,
             "is_locked": false
         }])
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn unix_server_sets_local_account_label_and_keeps_list_shape() {
+    let (_tempdir, socket_path, server) = spawn_local_backend_server().await;
+
+    register_local_backend(
+        &socket_path,
+        "unlocked",
+        vec![local_backend_account(
+            "0x2",
+            "0xdef",
+            LocalBackendAccountOptions {
+                is_default: true,
+                is_locked: false,
+            },
+        )],
+    )
+    .await;
+
+    let renamed = set_account_label(&socket_path, "local-default", "0x2", "main").await;
+    assert_eq!(renamed["wallet_instance_id"], json!("local-default"));
+    assert_eq!(renamed["account"]["address"], json!("0x2"));
+    assert_eq!(renamed["account"]["label"], json!("main"));
+    assert_eq!(renamed["account"]["is_read_only"], json!(false));
+
+    let accounts = list_wallet_accounts(&socket_path, "local-default").await;
+    assert_eq!(
+        accounts["wallet_instances"][0]["accounts"],
+        json!([{
+            "address": "0x2",
+            "label": "main",
+            "public_key": "0xdef",
+            "is_default": true,
+            "is_read_only": false,
+            "is_locked": false
+        }])
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn unix_server_rejects_empty_local_account_label() {
+    let (_tempdir, socket_path, server) = spawn_local_backend_server().await;
+
+    register_local_backend(
+        &socket_path,
+        "unlocked",
+        vec![local_backend_account(
+            "0x2",
+            "0xdef",
+            LocalBackendAccountOptions {
+                is_default: true,
+                is_locked: false,
+            },
+        )],
+    )
+    .await;
+
+    let response = call_daemon(
+        &socket_path,
+        "req-set-empty-account-label",
+        "wallet.setAccountLabel",
+        json!({
+            "protocol_version": 1,
+            "wallet_instance_id": "local-default",
+            "address": "0x2",
+            "label": "   ",
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Error(response) = response else {
+        panic!("expected wallet.setAccountLabel failure");
+    };
+    assert_eq!(
+        response.error.code,
+        starmask_types::SharedErrorCode::InvalidAccount
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn unix_server_rejects_missing_local_account_label_target() {
+    let (_tempdir, socket_path, server) = spawn_local_backend_server().await;
+
+    register_local_backend(
+        &socket_path,
+        "unlocked",
+        vec![local_backend_account(
+            "0x2",
+            "0xdef",
+            LocalBackendAccountOptions {
+                is_default: true,
+                is_locked: false,
+            },
+        )],
+    )
+    .await;
+
+    let response = call_daemon(
+        &socket_path,
+        "req-set-missing-account-label",
+        "wallet.setAccountLabel",
+        json!({
+            "protocol_version": 1,
+            "wallet_instance_id": "local-default",
+            "address": "0x9",
+            "label": "main",
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Error(response) = response else {
+        panic!("expected wallet.setAccountLabel failure");
+    };
+    assert_eq!(
+        response.error.code,
+        starmask_types::SharedErrorCode::InvalidAccount
+    );
+
+    server.abort();
+    let _ = server.await;
+}
+
+#[tokio::test]
+async fn unix_server_rejects_extension_account_label() {
+    let (_tempdir, socket_path, server) = spawn_test_server().await;
+
+    register_wallet(&socket_path, "wallet-1").await;
+
+    let response = call_daemon(
+        &socket_path,
+        "req-set-extension-account-label",
+        "wallet.setAccountLabel",
+        json!({
+            "protocol_version": 1,
+            "wallet_instance_id": "wallet-1",
+            "address": "0x1",
+            "label": "main",
+        }),
+    )
+    .await;
+    let JsonRpcResponse::Error(response) = response else {
+        panic!("expected wallet.setAccountLabel failure");
+    };
+    assert_eq!(
+        response.error.code,
+        starmask_types::SharedErrorCode::UnsupportedOperation
     );
 
     server.abort();

@@ -1,20 +1,20 @@
-# Starmask SQLite Schema and Migration Design
+# Starmask SQLite Schema Design
 
 ## Status
 
-This document is the authoritative `v1` schema design for the current extension-backed
+This document is the authoritative pre-release schema design for the current multi-backend
 implementation.
 
 Repository status note: the in-tree `crates/starmask-runtime` adapter has been removed. Schema guidance
 remains current for the daemon-owned persistence layer.
 
-Planned generic wallet-backend schema changes are tracked in
-`docs/unified-wallet-coordinator-evolution.md`.
+Because this version has not been released, the daemon does not maintain database compatibility
+migrations for older development schemas. Existing development databases should be recreated when
+the baseline schema changes.
 
 ## 1. Purpose
 
-This document defines the first SQLite schema for `starmaskd` and the migration strategy that
-supports:
+This document defines the current SQLite schema for `starmaskd`, supporting:
 
 - durable request lifecycle state
 - wallet registration and account cache
@@ -39,24 +39,17 @@ At startup, the daemon should apply:
 - `PRAGMA busy_timeout = 5000`
 - optional `PRAGMA synchronous = NORMAL`
 
-## 4. Migration Strategy
+## 4. Schema Strategy
 
-The current implementation uses numbered SQL migrations in source control.
-
-Current layout:
-
-```text
-starmaskd/migrations/
-  0001_initial.sql
-```
-
-Future migrations should continue the same append-only numbering scheme.
+The current implementation creates the baseline schema from `crates/starmaskd/schema.sql`.
 
 Rules:
 
-1. migrations are append-only
-2. there is no manual drift between Rust structs and SQL columns
-3. startup fails clearly if the schema version is unsupported
+1. schema version is `2` for the current pre-release baseline
+2. empty databases are initialized directly to the current baseline schema
+3. non-current schema versions are rejected instead of upgraded
+4. unversioned non-empty databases are rejected instead of being guessed or backfilled
+5. startup fails clearly if the schema version is unsupported
 
 ## 5. Current Tables
 
@@ -99,9 +92,15 @@ Current kind values:
 Current columns:
 
 - `wallet_instance_id TEXT PRIMARY KEY`
+- `backend_kind TEXT NOT NULL`
+- `transport_kind TEXT NOT NULL`
+- `approval_surface TEXT NOT NULL`
+- `instance_label TEXT NOT NULL`
 - `extension_id TEXT NOT NULL`
 - `extension_version TEXT NOT NULL`
 - `protocol_version INTEGER NOT NULL`
+- `capabilities_json TEXT NOT NULL`
+- `backend_metadata_json TEXT NOT NULL`
 - `profile_hint TEXT`
 - `lock_state TEXT NOT NULL`
 - `connected INTEGER NOT NULL`
@@ -116,8 +115,19 @@ Current columns:
 - `label TEXT`
 - `public_key TEXT`
 - `is_default INTEGER NOT NULL`
+- `is_read_only INTEGER NOT NULL`
 - `is_locked INTEGER NOT NULL`
 - `last_seen_at INTEGER NOT NULL`
+
+### `wallet_account_labels`
+
+Current columns:
+
+- `wallet_instance_id TEXT NOT NULL`
+- `address TEXT NOT NULL`
+- `label TEXT NOT NULL`
+- `account_order INTEGER NOT NULL`
+- `updated_at INTEGER NOT NULL`
 
 ## 6. Current Indexes
 
@@ -129,6 +139,9 @@ Recommended indexes:
 - index on `requests(result_expires_at)`
 - index on `wallet_instances(connected, last_seen_at)`
 - index on `wallet_accounts(address)`
+- index on `wallet_instances(backend_kind, connected)`
+- index on `wallet_instances(last_seen_at)`
+- index on `wallet_account_labels(wallet_instance_id, account_order)`
 
 ## 7. JSON Storage Strategy
 
@@ -155,13 +168,10 @@ The repository layer needs optimized support for:
 6. load known wallet instances
 7. load account cache for one or more wallet instances
 
-## 9. Deliberate `v1` Omissions
+## 9. Deliberate Omissions
 
 The current schema does not yet define:
 
-- backend-kind metadata
-- generic backend capability metadata
 - unlock request rows
 
-Those belong to the planned multi-backend evolution in
-`docs/unified-wallet-coordinator-evolution.md`.
+Unlock persistence belongs to a future explicit unlock-flow design.

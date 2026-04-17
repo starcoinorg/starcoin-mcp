@@ -60,7 +60,7 @@ Recommended test layout:
 
 1. unit tests for generic coordinator routing and capability checks
 2. local-socket transport integration tests over JSON-RPC `v2`
-3. repository migration tests from schema `v1` to schema `v2`
+3. repository schema initialization and version-gate tests
 4. config validation tests for backend entries
 5. local-account backend integration tests using temporary account directories
 6. compatibility tests proving the current extension-backed `v1` path still works
@@ -142,7 +142,7 @@ The implementation must demonstrate:
 
 1. idle polling is bounded and does not busy-loop
 2. account snapshot replacement is atomic
-3. result retention remains bounded after phase-2 migration
+3. result retention remains bounded across restart and maintenance
 4. one backend cannot resume another backend's presented request
 
 At minimum, one automated test should prove that an empty `request.pullNext` path remains cheap and
@@ -153,8 +153,8 @@ stable under repeated polling.
 The project is not ready for phase-2 implementation freeze unless:
 
 1. every acceptance area above has at least one automated test or one manual verification record
-2. schema migration from `v1` to `v2` has been exercised in tests
-3. the compatibility path for current extension-backed `v1` behavior remains green
+2. current-schema initialization and unsupported-schema rejection have been exercised in tests
+3. the compatibility path for current extension-backed behavior remains green
 
 ## 13. Phase-3 Additions
 

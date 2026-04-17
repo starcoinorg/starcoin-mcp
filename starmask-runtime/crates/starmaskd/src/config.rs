@@ -17,6 +17,8 @@ use walkdir::WalkDir;
 use starmask_core::CoordinatorConfig;
 use starmask_types::{ApprovalSurface, BackendKind, Channel, DurationSeconds, WalletCapability};
 
+use crate::schema::SCHEMA_VERSION;
+
 #[derive(Debug, Parser)]
 #[command(name = "starmaskd")]
 #[command(about = "Local daemon for the Starmask wallet runtime")]
@@ -391,7 +393,7 @@ impl RuntimeConfig {
         let coordinator = CoordinatorConfig {
             daemon_version: env!("CARGO_PKG_VERSION").to_owned(),
             socket_scope: "local-user".to_owned(),
-            db_schema_version: 2,
+            db_schema_version: SCHEMA_VERSION,
             default_request_ttl: DurationSeconds::new(
                 env_u64("STARMASKD_DEFAULT_REQUEST_TTL_SECONDS")
                     .or(file_config.default_request_ttl_seconds)

@@ -257,11 +257,13 @@ class TransferPreflightTests(unittest.TestCase):
         )
 
         risk_codes = {risk.code for risk in report.risk_labels}
+        risk_severities = {risk.code: risk.severity for risk in report.risk_labels}
         self.assertTrue(controller.has_blocking_risks(report))
         self.assertIn("rpc_unavailable", risk_codes)
         self.assertIn("insufficient_token_balance", risk_codes)
         self.assertIn("insufficient_balance_for_amount_and_fee", risk_codes)
         self.assertIn("nonce_advanced_after_prepare", risk_codes)
+        self.assertEqual(risk_severities["nonce_advanced_after_prepare"], "block")
         self.assertIn("receiver_account_not_initialized", risk_codes)
 
     def test_audit_logger_records_hash_not_payloads(self) -> None:

@@ -13,6 +13,7 @@ from transfer_host import (
     build_risk_rows,
     has_blocking_risks,
 )
+from transfer_state import TransferStateStore
 
 
 VM1_STC_TOKEN_CODE = "0x1::STC::STC"
@@ -219,6 +220,8 @@ def submit_recovery_hint(
     next_action = submit_result.get("next_action")
     submission_state = submit_result.get("submission_state")
     if next_action == "reconcile_by_txn_hash":
+        if watch_result is not None and bool(watch_result.get("confirmed")):
+            return None
         return "Submission outcome was uncertain. Reconcile by txn hash before any retry."
     if next_action == "reprepare_then_resign":
         return "The prepared transaction is no longer fresh. Prepare again and request a new signature."
@@ -238,12 +241,14 @@ class TransferController:
         chain_id: int,
         network: str,
         genesis_hash: str,
+        state_store: TransferStateStore | None = None,
     ):
         self.node_client = node_client
         self.wallet_client = wallet_client
         self.chain_id = chain_id
         self.network = network
         self.genesis_hash = genesis_hash
+        self.state_store = state_store
 
     def prepare_session(
         self,
@@ -281,7 +286,7 @@ class TransferController:
             },
         )
         prepare_result = validate_prepare_result(prepare_result)
-        return TransferSession(
+        session = TransferSession(
             sender=sender,
             receiver=receiver,
             wallet_instance_id=wallet_instance_id,
@@ -295,6 +300,9 @@ class TransferController:
             public_key=public_key_result["public_key"],
             prepare_result=prepare_result,
         )
+        if self.state_store is not None:
+            self.state_store.record_prepared(session)
+        return session
 
     def collect_preflight_report(self, session: TransferSession) -> TransferPreflightReport:
         chain_status = self.node_client.call_tool("chain_status")
@@ -455,6 +463,45 @@ class TransferController:
         if session.signed_txn_bcs_hex is None:
             raise RuntimeError("transfer session does not have signed_txn_bcs_hex yet")
         normalized_min_confirmed_blocks = normalize_min_confirmed_blocks(min_confirmed_blocks)
+        if self.state_store is not None:
+            unresolved = self.state_store.unresolved_for_session(session)
+            if unresolved is not None:
+                watch_result = self.node_client.call_tool(
+                    "watch_transaction",
+                    {
+                        "txn_hash": unresolved.txn_hash,
+                        "timeout_seconds": timeout_seconds,
+                        "min_confirmed_blocks": normalized_min_confirmed_blocks,
+                    },
+                )
+                submit_result = {
+                    "txn_hash": unresolved.txn_hash,
+                    "submission_state": "unknown",
+                    "submitted": False,
+                    "next_action": "reconcile_by_txn_hash",
+                    "error_code": "submission_unknown",
+                }
+                if bool(watch_result.get("confirmed")):
+                    submit_result.update(
+                        {
+                            "submission_state": "accepted",
+                            "submitted": True,
+                            "next_action": None,
+                            "error_code": None,
+                            "reconciled_from_unresolved": True,
+                        }
+                    )
+                    self.state_store.clear_unresolved_submission(session)
+                session.submit_result = submit_result
+                session.watch_result = watch_result
+                return TransferSubmitOutcome(
+                    submit_result=submit_result,
+                    watch_result=watch_result,
+                    watch_source="pre-submit reconcile",
+                    success=bool(watch_result.get("confirmed")),
+                    guidance=submit_recovery_hint(submit_result, watch_result),
+                )
+            self.state_store.require_prepared_for_submit(session)
         submit_result = self.node_client.call_tool(
             "submit_signed_transaction",
             {
@@ -468,6 +515,11 @@ class TransferController:
         session.submit_result = submit_result
         watch_result = submit_result.get("watch_result")
         watch_source = "submit" if watch_result is not None else None
+        if (
+            self.state_store is not None
+            and submit_result.get("next_action") == "reconcile_by_txn_hash"
+        ):
+            self.state_store.record_unresolved_submission(session, submit_result)
         if blocking and submit_result["next_action"] == "reconcile_by_txn_hash":
             watch_result = self.node_client.call_tool(
                 "watch_transaction",
@@ -478,6 +530,8 @@ class TransferController:
                 },
             )
             watch_source = "reconcile"
+            if self.state_store is not None and bool(watch_result.get("confirmed")):
+                self.state_store.clear_unresolved_submission(session)
         elif (
             blocking
             and submit_result["submission_state"] == "accepted"
@@ -492,6 +546,12 @@ class TransferController:
                 },
             )
             watch_source = "follow-up watch"
+        if (
+            self.state_store is not None
+            and watch_result is not None
+            and bool(watch_result.get("confirmed"))
+        ):
+            self.state_store.clear_unresolved_submission(session)
         session.watch_result = watch_result
         guidance = submit_recovery_hint(submit_result, watch_result)
         success = (

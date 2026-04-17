@@ -19,7 +19,7 @@ use starmask_core::{
         CreateAccountCommand, CreateSignMessageCommand, CreateSignTransactionCommand,
         HeartbeatBackendCommand, HeartbeatExtensionCommand, MarkRequestPresentedCommand,
         RegisterBackendCommand, RejectRequestCommand, ResolveRequestCommand,
-        UpdateBackendAccountsCommand, UpdateExtensionAccountsCommand,
+        SetAccountLabelCommand, UpdateBackendAccountsCommand, UpdateExtensionAccountsCommand,
     },
 };
 use starmask_types::{
@@ -33,7 +33,7 @@ use starmask_types::{
     RequestResolveParams, RequestResult, ResultKind, SharedError, SharedErrorCode,
     SystemGetInfoParams, SystemPingParams, TimestampMs, WalletAccountRecord, WalletCapability,
     WalletGetPublicKeyParams, WalletListAccountsParams, WalletListInstancesParams,
-    WalletStatusParams,
+    WalletSetAccountLabelParams, WalletStatusParams,
 };
 
 use crate::{
@@ -224,6 +224,25 @@ async fn dispatch_request(
                     .await,
                 |response| match response {
                     CoordinatorResponse::WalletPublicKey(result) => Ok(result),
+                    other => Err(unexpected_response(other)),
+                },
+            )?)
+            .map_err(|error| error_response(None, error))?
+        }
+        "wallet.setAccountLabel" => {
+            let params = decode_protocol::<WalletSetAccountLabelParams>(&id, &request.params)?;
+            serde_json::to_value(expect_response(
+                handle
+                    .dispatch(CoordinatorCommand::WalletSetAccountLabel(
+                        SetAccountLabelCommand {
+                            wallet_instance_id: params.wallet_instance_id,
+                            address: params.address,
+                            label: params.label,
+                        },
+                    ))
+                    .await,
+                |response| match response {
+                    CoordinatorResponse::WalletAccountLabelSet(result) => Ok(result),
                     other => Err(unexpected_response(other)),
                 },
             )?)
@@ -837,6 +856,7 @@ impl_has_protocol_version!(
     WalletGetPublicKeyParams,
     WalletListAccountsParams,
     WalletListInstancesParams,
+    WalletSetAccountLabelParams,
     WalletStatusParams,
 );
 

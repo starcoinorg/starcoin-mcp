@@ -150,15 +150,25 @@ If the wallet runtime is already up, bootstrap can also stay inside the daemon r
 python3 ./scripts/run_create_account.py \
   --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime \
   --wallet-instance-id local-default \
+  --account-name account-1 \
   --display-hint "Bootstrap local account"
 ```
 
 `run_create_account.py` creates the request, polls `wallet_get_request_status`, prints the created
-address on approval, and writes an audit record under
+address plus the resolved account name on approval, and writes an audit record under
 `$HOME/.starcoin-agents/wallet-runtime/audit/create-account-audit.jsonl` by default.
 
 For lower-level debugging, you can still call `wallet_create_account` directly through
-`starmaskd_client.py` and poll `wallet_get_request_status` yourself.
+`starmaskd_client.py` and poll `wallet_get_request_status` yourself. To rename an existing local
+address without touching the Starcoin account storage, call `wallet_set_account_label` through the
+same client.
+
+The low-level clients accept tool arguments either as stdin JSON or as a final inline JSON object:
+
+```bash
+python3 ./scripts/node_cli_client.py call get_account_overview '{"address":"<address>"}'
+python3 ./scripts/starmaskd_client.py call wallet_get_public_key '{"wallet_instance_id":"local-default","address":"<address>"}'
+```
 
 Those `starcoin` CLI examples are still useful for local funding. The transfer flow itself should
 use the script-driven `starmaskd` + `starcoin-node-cli` path.
@@ -180,6 +190,8 @@ accepts these overrides:
   - use an installed `starmaskd` binary
 - `LOCAL_ACCOUNT_AGENT_BIN`
   - use an installed `local-account-agent` binary
+- `LOCAL_ACCOUNT_EXPORT_BIN`
+  - use an installed `local-account-export` binary for single-address private-key exports
 
 ## Wallet Runtime
 
@@ -207,15 +219,17 @@ python3 ./scripts/wallet_runtime.py up \
 The supervisor writes `wallet-runtime.json` under `$HOME/.starcoin-agents/wallet-runtime/` by default and keeps
 `local-account-agent` attached to the current terminal so `tty_prompt` approvals still work.
 
-To back up the local account vault, use:
+To export the private key for one local account address, stop the wallet runtime first:
 
 ```bash
-python3 ./scripts/wallet_runtime.py backup
+python3 ./scripts/wallet_runtime.py down
+python3 ./scripts/wallet_runtime.py export-account --address <account-address> --output-file ./account.key
 ```
 
-If `--backup-dir` is omitted, the command prompts for a destination directory. It backs up the
-local account vault, not the wallet runtime socket or sqlite state. If the runtime is still
-running, stop it first or pass `--allow-live` for a best-effort copy.
+If `--output-file` is omitted, the command prompts for a destination file or an existing directory.
+This exports only the private key for the requested address using Starcoin account export semantics;
+it does not copy the full local account vault, wallet runtime socket, or sqlite state. In
+non-interactive mode, pass the account password through `--password-stdin`.
 
 ## Create Account Flow
 
@@ -273,6 +287,22 @@ Both audit files record request ids, backend ids, timestamps, and terminal decis
 path also records the prepared payload hash and submit outcome. The audit helpers intentionally do
 not log passwords, private keys, raw signed payloads, or full signed transaction bytes.
 
+Use the summary command when inspecting audit history:
+
+```bash
+python3 ./scripts/workflow_audit.py summary \
+  --path $HOME/.starcoin-agents/wallet-runtime/audit/transfer-audit.jsonl
+```
+
+Transfer runs also keep a small JSON state file next to the transfer audit by default:
+
+- `<active-runtime>/audit/transfer-state.json`
+
+The state file records prepared payload hashes, chain context, simulation status, and unresolved
+submission hashes. It does not store raw transaction bytes or signed transaction bytes. If a prior
+submit returned `submission_unknown`, the next run reconciles the persisted `txn_hash` before any
+new submit attempt for the same prepared payload.
+
 ## CLI Transfer Test
 
 Two modes are supported.
@@ -291,7 +321,8 @@ python3 ./scripts/run_transfer_test.py \
   --amount-unit stc \
   --vm-profile vm2_only \
   --min-confirmed-blocks 3 \
-  --audit-log-path <repo-root>/.starcoin-agents/transfer-audit.jsonl
+  --audit-log-path <repo-root>/.starcoin-agents/transfer-audit.jsonl \
+  --state-path <repo-root>/.starcoin-agents/transfer-state.json
 ```
 
 ### Reuse A Running Wallet Supervisor
@@ -320,8 +351,10 @@ In one-shot mode, `run_transfer_test.py` does this:
 6. calls `starcoin-node-cli` for `prepare_transfer`, `node_health`, `get_account_overview`, `submit_signed_transaction`, and follow-up `watch_transaction`
 7. shows a host-side preflight preview card plus risk labels before wallet signing
 8. blocks immediately if the preview finds a blocking risk such as RPC unavailability or insufficient balance
-9. waits for the local wallet CLI approval card in the same terminal
-10. appends JSONL audit records under the active runtime directory unless `--audit-log-path` overrides it
+9. records a prepared payload attestation in the transfer state file
+10. waits for the local wallet CLI approval card in the same terminal
+11. reconciles persisted unresolved submissions by `txn_hash` before any retry
+12. appends JSONL audit records under the active runtime directory unless `--audit-log-path` overrides it
 
 In supervisor-reuse mode, steps 3 and 4 are skipped. The script reads
 `$HOME/.starcoin-agents/wallet-runtime/wallet-runtime.json`, reuses the daemon socket and wallet instance, and
@@ -360,14 +393,17 @@ intermediate state and exits non-zero instead of treating it as a completed succ
 - the preview compares the latest `chain_status` with the prepared `chain_context`
 - fee and nonce context come from `prepare_transfer.execution_facts`
 - blocking risks stop the flow before `request.createSignTransaction`
+- nonce movement after preparation is blocking; prepare again before signing
 
 By default the audit file is written to:
 
 - `<runtime-dir>/audit/transfer-audit.jsonl` for one-shot runs
 - `<wallet-runtime-dir>/audit/transfer-audit.jsonl` for supervisor-reuse runs
 
+By default the transfer state file is written next to that audit file as `transfer-state.json`.
+
 ## Notes
 
 - This plugin example is repo-local. It lives under the current workspace so you can inspect and modify it directly.
 - If you want a global plugin instead, move the same files under `~/plugins/starcoin-transfer-workflow/` and mirror the marketplace entry into `~/.agents/plugins/marketplace.json`.
-- In global mode, put `starcoin-node-cli`, `starmaskd`, and `local-account-agent` somewhere on PATH.
+- In global mode, put `starcoin-node-cli`, `starmaskd`, `local-account-agent`, and `local-account-export` somewhere on PATH.

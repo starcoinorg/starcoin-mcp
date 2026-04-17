@@ -3,14 +3,21 @@ use std::{fs, path::Path};
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde::{Serialize, de::DeserializeOwned};
 
+use crate::{
+    account_labels::{
+        current_timestamp_ms, ensure_local_account_labels, existing_account_order,
+        is_local_account_wallet, next_account_order, normalize_account_label,
+        upsert_wallet_account_label,
+    },
+    schema::ensure_current_schema,
+};
 use starmask_core::{RepositoryError, RequestRepository, WalletRepository};
 use starmask_types::{
-    ApprovalSurface, BackendKind, ClientRequestId, DeliveryLease, DeliveryLeaseId, PresentationId,
-    RequestId, RequestRecord, TimestampMs, TransportKind, WalletAccountRecord, WalletCapability,
-    WalletInstanceId, WalletInstanceRecord,
+    ClientRequestId, DeliveryLease, DeliveryLeaseId, PresentationId, RequestId, RequestRecord,
+    TimestampMs, WalletAccountRecord, WalletInstanceId, WalletInstanceRecord,
 };
 
-pub const SCHEMA_VERSION: u32 = 2;
+pub use crate::schema::SCHEMA_VERSION;
 
 pub struct SqliteStore {
     connection: Connection,
@@ -27,7 +34,7 @@ impl SqliteStore {
                 "PRAGMA journal_mode = WAL; PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000; PRAGMA synchronous = NORMAL;",
             )
             .map_err(sql_error)?;
-        apply_migrations(&mut connection)?;
+        ensure_current_schema(&mut connection)?;
         Ok(Self { connection })
     }
 
@@ -232,6 +239,9 @@ impl WalletRepository for SqliteStore {
         accounts: Vec<WalletAccountRecord>,
     ) -> Result<(), RepositoryError> {
         let transaction = self.connection.transaction().map_err(sql_error)?;
+        if is_local_account_wallet(&transaction, wallet_instance_id)? {
+            ensure_local_account_labels(&transaction, wallet_instance_id, &accounts)?;
+        }
         transaction
             .execute(
                 "DELETE FROM wallet_accounts WHERE wallet_instance_id = ?1",
@@ -268,13 +278,17 @@ impl WalletRepository for SqliteStore {
         if let Some(wallet_instance_id) = wallet_instance_id {
             query_wallet_accounts(
                 &self.connection,
-                "SELECT * FROM wallet_accounts WHERE wallet_instance_id = ?1 ORDER BY address ASC",
+                " WHERE wallet_accounts.wallet_instance_id = ?1
+                  ORDER BY COALESCE(wallet_account_labels.account_order, 9223372036854775807) ASC,
+                           wallet_accounts.address ASC",
                 params![wallet_instance_id.as_str()],
             )
         } else {
             query_wallet_accounts(
                 &self.connection,
-                "SELECT * FROM wallet_accounts ORDER BY wallet_instance_id ASC, address ASC",
+                " ORDER BY wallet_accounts.wallet_instance_id ASC,
+                           COALESCE(wallet_account_labels.account_order, 9223372036854775807) ASC,
+                           wallet_accounts.address ASC",
                 params![],
             )
         }
@@ -285,114 +299,56 @@ impl WalletRepository for SqliteStore {
         wallet_instance_id: &WalletInstanceId,
         address: &str,
     ) -> Result<Option<WalletAccountRecord>, RepositoryError> {
-        let mut statement = self
-            .connection
-            .prepare("SELECT * FROM wallet_accounts WHERE wallet_instance_id = ?1 AND address = ?2")
-            .map_err(sql_error)?;
-        statement
-            .query_row(
-                params![wallet_instance_id.as_str(), address],
-                read_wallet_account,
-            )
-            .optional()
-            .map_err(sql_error)
-    }
-}
-
-fn apply_migrations(connection: &mut Connection) -> Result<(), RepositoryError> {
-    let current: i64 = connection
-        .pragma_query_value(None, "user_version", |row| row.get(0))
-        .map_err(sql_error)?;
-    match current {
-        0 => apply_schema_version_2(connection, true),
-        1 => apply_schema_version_2(connection, false),
-        value if value == i64::from(SCHEMA_VERSION) => Ok(()),
-        other => Err(RepositoryError::Storage(format!(
-            "unsupported schema version: {other}"
-        ))),
-    }
-}
-
-fn apply_schema_version_2(
-    connection: &mut Connection,
-    include_initial_schema: bool,
-) -> Result<(), RepositoryError> {
-    let transaction = connection.transaction().map_err(sql_error)?;
-    if include_initial_schema {
-        transaction
-            .execute_batch(include_str!("../migrations/0001_initial.sql"))
-            .map_err(sql_error)?;
-    }
-    transaction
-        .execute_batch(include_str!(
-            "../migrations/0002_generic_wallet_backends.sql"
-        ))
-        .map_err(sql_error)?;
-    backfill_wallet_instances_v2(&transaction)?;
-    transaction
-        .pragma_update(None, "user_version", i64::from(SCHEMA_VERSION))
-        .map_err(sql_error)?;
-    transaction.commit().map_err(sql_error)?;
-    Ok(())
-}
-
-fn backfill_wallet_instances_v2(connection: &Connection) -> Result<(), RepositoryError> {
-    let capabilities = encode_json(&vec![
-        WalletCapability::GetPublicKey,
-        WalletCapability::SignMessage,
-        WalletCapability::SignTransaction,
-    ])?;
-    let mut statement = connection
-        .prepare(
-            "SELECT wallet_instance_id, extension_id, extension_version, profile_hint FROM wallet_instances",
+        query_wallet_account(
+            &self.connection,
+            " WHERE wallet_accounts.wallet_instance_id = ?1 AND wallet_accounts.address = ?2",
+            params![wallet_instance_id.as_str(), address],
         )
-        .map_err(sql_error)?;
-    let rows = statement
-        .query_map(params![], |row| {
-            Ok((
-                row.get::<_, String>("wallet_instance_id")?,
-                row.get::<_, String>("extension_id")?,
-                row.get::<_, String>("extension_version")?,
-                row.get::<_, Option<String>>("profile_hint")?,
-            ))
-        })
-        .map_err(sql_error)?;
-
-    for row in rows {
-        let (wallet_instance_id, extension_id, extension_version, profile_hint) =
-            row.map_err(sql_error)?;
-        let instance_label = profile_hint
-            .clone()
-            .filter(|value| !value.trim().is_empty())
-            .unwrap_or_else(|| wallet_instance_id.clone());
-        let backend_metadata = serde_json::json!({
-            "extension_id": extension_id,
-            "extension_version": extension_version,
-            "profile_hint": profile_hint,
-        });
-        connection
-            .execute(
-                "UPDATE wallet_instances
-                 SET backend_kind = ?2,
-                     transport_kind = ?3,
-                     approval_surface = ?4,
-                     instance_label = ?5,
-                     capabilities_json = ?6,
-                     backend_metadata_json = ?7
-                 WHERE wallet_instance_id = ?1",
-                params![
-                    wallet_instance_id,
-                    encode_string_enum(BackendKind::StarmaskExtension)?,
-                    encode_string_enum(TransportKind::NativeMessaging)?,
-                    encode_string_enum(ApprovalSurface::BrowserUi)?,
-                    instance_label,
-                    capabilities,
-                    encode_json(&backend_metadata)?,
-                ],
-            )
-            .map_err(sql_error)?;
     }
-    Ok(())
+
+    fn set_wallet_account_label(
+        &mut self,
+        wallet_instance_id: &WalletInstanceId,
+        address: &str,
+        label: &str,
+    ) -> Result<WalletAccountRecord, RepositoryError> {
+        let transaction = self.connection.transaction().map_err(sql_error)?;
+        if !is_local_account_wallet(&transaction, wallet_instance_id)? {
+            return Err(RepositoryError::Storage(format!(
+                "wallet instance {} does not support daemon-managed account labels",
+                wallet_instance_id
+            )));
+        }
+
+        let mut account = query_wallet_account(
+            &transaction,
+            " WHERE wallet_accounts.wallet_instance_id = ?1 AND wallet_accounts.address = ?2",
+            params![wallet_instance_id.as_str(), address],
+        )?
+        .ok_or_else(|| {
+            RepositoryError::Storage(format!(
+                "wallet account {}:{} was not found",
+                wallet_instance_id, address
+            ))
+        })?;
+        let normalized_label = normalize_account_label(label)?;
+        let account_order = match existing_account_order(&transaction, wallet_instance_id, address)?
+        {
+            Some(account_order) => account_order,
+            None => next_account_order(&transaction, wallet_instance_id)?,
+        };
+        upsert_wallet_account_label(
+            &transaction,
+            wallet_instance_id,
+            address,
+            &normalized_label,
+            account_order,
+            current_timestamp_ms(),
+        )?;
+        account.label = Some(normalized_label);
+        transaction.commit().map_err(sql_error)?;
+        Ok(account)
+    }
 }
 
 fn query_requests<P>(
@@ -412,17 +368,51 @@ where
 
 fn query_wallet_accounts<P>(
     connection: &Connection,
-    sql: &str,
+    sql_tail: &str,
     params: P,
 ) -> Result<Vec<WalletAccountRecord>, RepositoryError>
 where
     P: rusqlite::Params,
 {
-    let mut statement = connection.prepare(sql).map_err(sql_error)?;
+    let sql = wallet_account_query(sql_tail);
+    let mut statement = connection.prepare(&sql).map_err(sql_error)?;
     let rows = statement
         .query_map(params, read_wallet_account)
         .map_err(sql_error)?;
     rows.collect::<Result<Vec<_>, _>>().map_err(sql_error)
+}
+
+fn query_wallet_account<P>(
+    connection: &Connection,
+    sql_tail: &str,
+    params: P,
+) -> Result<Option<WalletAccountRecord>, RepositoryError>
+where
+    P: rusqlite::Params,
+{
+    let sql = wallet_account_query(sql_tail);
+    connection
+        .query_row(&sql, params, read_wallet_account)
+        .optional()
+        .map_err(sql_error)
+}
+
+fn wallet_account_query(sql_tail: &str) -> String {
+    format!(
+        "SELECT
+             wallet_accounts.wallet_instance_id,
+             wallet_accounts.address,
+             COALESCE(wallet_account_labels.label, wallet_accounts.label) AS label,
+             wallet_accounts.public_key,
+             wallet_accounts.is_default,
+             wallet_accounts.is_read_only,
+             wallet_accounts.is_locked,
+             wallet_accounts.last_seen_at
+           FROM wallet_accounts
+      LEFT JOIN wallet_account_labels
+             ON wallet_account_labels.wallet_instance_id = wallet_accounts.wallet_instance_id
+            AND wallet_account_labels.address = wallet_accounts.address{sql_tail}"
+    )
 }
 
 fn write_request(
@@ -686,145 +676,237 @@ mod tests {
     use starmask_core::WalletRepository;
     use starmask_types::{
         ApprovalSurface, BackendKind, LockState, TransportKind, WalletCapability, WalletInstanceId,
+        WalletInstanceRecord,
     };
 
-    use super::SqliteStore;
+    use super::{SCHEMA_VERSION, SqliteStore};
 
-    #[test]
-    fn v2_migration_backfills_extension_wallet_instances_and_keeps_accounts_readable() {
-        let tempdir = tempdir().unwrap();
-        let database_path = tempdir.path().join("starmaskd.sqlite");
-        let connection = Connection::open(&database_path).unwrap();
+    fn raw_wallet_account_label(
+        database_path: &std::path::Path,
+        wallet_instance_id: &WalletInstanceId,
+        address: &str,
+    ) -> Option<String> {
+        let connection = Connection::open(database_path).unwrap();
         connection
-            .execute_batch(include_str!("../migrations/0001_initial.sql"))
-            .unwrap();
-        connection.pragma_update(None, "user_version", 1).unwrap();
-        connection
-            .execute(
-                "INSERT INTO wallet_instances (
-                    wallet_instance_id, extension_id, extension_version, protocol_version,
-                    profile_hint, lock_state, connected, last_seen_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    "wallet-1",
-                    "ext.allowed",
-                    "1.2.3",
-                    1,
-                    "Browser Default",
-                    "unlocked",
-                    1,
-                    42_i64
-                ],
+            .query_row(
+                "SELECT label FROM wallet_accounts WHERE wallet_instance_id = ?1 AND address = ?2",
+                params![wallet_instance_id.as_str(), address],
+                |row| row.get(0),
             )
-            .unwrap();
+            .unwrap()
+    }
+
+    fn label_row_updated_at(
+        database_path: &std::path::Path,
+        wallet_instance_id: &WalletInstanceId,
+        address: &str,
+    ) -> i64 {
+        let connection = Connection::open(database_path).unwrap();
         connection
-            .execute(
-                "INSERT INTO wallet_accounts (
-                    wallet_instance_id, address, label, public_key, is_default, is_locked, last_seen_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-                params!["wallet-1", "0x1", Option::<String>::None, "0xabc", 1, 0, 42_i64],
+            .query_row(
+                "SELECT updated_at FROM wallet_account_labels WHERE wallet_instance_id = ?1 AND address = ?2",
+                params![wallet_instance_id.as_str(), address],
+                |row| row.get(0),
             )
-            .unwrap();
-        drop(connection);
-
-        let mut store = SqliteStore::open(&database_path).unwrap();
-        assert_eq!(store.schema_version().unwrap(), 2);
-
-        let wallet_instance_id = WalletInstanceId::new("wallet-1").unwrap();
-        let instance = store
-            .get_wallet_instance(&wallet_instance_id)
             .unwrap()
-            .expect("wallet instance should survive migration");
-        assert_eq!(instance.backend_kind, BackendKind::StarmaskExtension);
-        assert_eq!(instance.transport_kind, TransportKind::NativeMessaging);
-        assert_eq!(instance.approval_surface, ApprovalSurface::BrowserUi);
-        assert_eq!(instance.instance_label, "Browser Default");
-        assert_eq!(instance.extension_id, "ext.allowed");
-        assert_eq!(instance.extension_version, "1.2.3");
-        assert_eq!(instance.lock_state, LockState::Unlocked);
-        assert_eq!(
-            instance.capabilities,
-            vec![
-                WalletCapability::GetPublicKey,
-                WalletCapability::SignMessage,
-                WalletCapability::SignTransaction,
-            ]
-        );
-        assert_eq!(
-            instance.backend_metadata,
-            serde_json::json!({
-                "extension_id": "ext.allowed",
-                "extension_version": "1.2.3",
-                "profile_hint": "Browser Default",
-            })
-        );
-
-        let account = store
-            .get_wallet_account(&wallet_instance_id, "0x1")
-            .unwrap()
-            .expect("wallet account should survive migration");
-        assert!(!account.is_read_only);
-        assert!(!account.is_locked);
-        assert_eq!(account.public_key.as_deref(), Some("0xabc"));
     }
 
     #[test]
-    fn v2_migration_rolls_back_schema_when_backfill_fails() {
+    fn rejects_old_schema_versions_instead_of_migrating() {
+        let tempdir = tempdir().unwrap();
+        let database_path = tempdir.path().join("starmaskd.sqlite");
+        let connection = Connection::open(&database_path).unwrap();
+        connection.pragma_update(None, "user_version", 1).unwrap();
+        drop(connection);
+
+        let error = SqliteStore::open(&database_path)
+            .err()
+            .expect("old schema should be rejected");
+        assert!(error.to_string().contains("unsupported schema version: 1"));
+    }
+
+    #[test]
+    fn initializes_empty_database_to_current_schema_version() {
+        let tempdir = tempdir().unwrap();
+        let database_path = tempdir.path().join("starmaskd.sqlite");
+        let store = SqliteStore::open(&database_path).unwrap();
+
+        assert_eq!(store.schema_version().unwrap(), SCHEMA_VERSION);
+    }
+
+    #[test]
+    fn rejects_current_version_missing_required_tables() {
         let tempdir = tempdir().unwrap();
         let database_path = tempdir.path().join("starmaskd.sqlite");
         let connection = Connection::open(&database_path).unwrap();
         connection
-            .execute_batch(include_str!("../migrations/0001_initial.sql"))
-            .unwrap();
-        connection.pragma_update(None, "user_version", 1).unwrap();
-        connection
-            .execute(
-                "INSERT INTO wallet_instances (
-                    wallet_instance_id, extension_id, extension_version, protocol_version,
-                    profile_hint, lock_state, connected, last_seen_at
-                 ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
-                params![
-                    "wallet-1",
-                    "ext.test",
-                    "1.0.0",
-                    1,
-                    Option::<String>::None,
-                    "unlocked",
-                    1,
-                    0_i64
-                ],
-            )
-            .unwrap();
-        connection
-            .execute_batch(
-                "CREATE TRIGGER fail_wallet_instance_backfill
-                 BEFORE UPDATE ON wallet_instances
-                 BEGIN
-                   SELECT RAISE(ABORT, 'forced backfill failure');
-                 END;",
-            )
+            .pragma_update(None, "user_version", i64::from(SCHEMA_VERSION))
             .unwrap();
         drop(connection);
 
         let error = SqliteStore::open(&database_path)
             .err()
-            .expect("migration should fail");
-        assert!(error.to_string().contains("forced backfill failure"));
+            .expect("current version missing tables should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("missing required table requests")
+        );
+    }
 
+    #[test]
+    fn rejects_unversioned_non_empty_databases() {
+        let tempdir = tempdir().unwrap();
+        let database_path = tempdir.path().join("starmaskd.sqlite");
         let connection = Connection::open(&database_path).unwrap();
-        let user_version: i64 = connection
-            .pragma_query_value(None, "user_version", |row| row.get(0))
+        connection
+            .execute_batch("CREATE TABLE legacy_wallets (id TEXT PRIMARY KEY);")
             .unwrap();
-        assert_eq!(user_version, 1);
+        drop(connection);
 
-        let mut statement = connection
-            .prepare("PRAGMA table_info(wallet_instances)")
+        let error = SqliteStore::open(&database_path)
+            .err()
+            .expect("unversioned non-empty database should be rejected");
+        assert!(
+            error
+                .to_string()
+                .contains("database has no schema version but is not empty")
+        );
+    }
+
+    #[test]
+    fn local_account_labels_default_to_account_sequence_and_can_be_customized() {
+        let tempdir = tempdir().unwrap();
+        let database_path = tempdir.path().join("starmaskd.sqlite");
+        let mut store = SqliteStore::open(&database_path).unwrap();
+        let wallet_instance_id = WalletInstanceId::new("local-default").unwrap();
+        store
+            .upsert_wallet_instance(WalletInstanceRecord {
+                wallet_instance_id: wallet_instance_id.clone(),
+                backend_kind: BackendKind::LocalAccountDir,
+                transport_kind: TransportKind::LocalSocket,
+                approval_surface: ApprovalSurface::TtyPrompt,
+                instance_label: "Local Default Wallet".to_owned(),
+                extension_id: "local-default".to_owned(),
+                extension_version: env!("CARGO_PKG_VERSION").to_owned(),
+                protocol_version: 2,
+                capabilities: vec![WalletCapability::CreateAccount],
+                backend_metadata: serde_json::json!({
+                    "account_provider_kind": "local",
+                    "prompt_mode": "tty_prompt",
+                }),
+                profile_hint: Some("local_account_dir".to_owned()),
+                lock_state: LockState::Unlocked,
+                connected: true,
+                last_seen_at: starmask_types::TimestampMs::from_millis(100),
+            })
             .unwrap();
-        let columns = statement
-            .query_map([], |row| row.get::<_, String>("name"))
+        store
+            .replace_wallet_accounts(
+                &wallet_instance_id,
+                vec![
+                    starmask_types::WalletAccountRecord {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        address: "0x2".to_owned(),
+                        label: Some("   ".to_owned()),
+                        public_key: Some("0xdef".to_owned()),
+                        is_default: false,
+                        is_read_only: false,
+                        is_locked: false,
+                        last_seen_at: starmask_types::TimestampMs::from_millis(101),
+                    },
+                    starmask_types::WalletAccountRecord {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        address: "0x3".to_owned(),
+                        label: None,
+                        public_key: Some("0xghi".to_owned()),
+                        is_default: true,
+                        is_read_only: false,
+                        is_locked: false,
+                        last_seen_at: starmask_types::TimestampMs::from_millis(102),
+                    },
+                ],
+            )
+            .unwrap();
+
+        let listed = store
+            .list_wallet_accounts(Some(&wallet_instance_id))
+            .unwrap();
+        assert_eq!(listed.len(), 2);
+        assert_eq!(listed[0].label.as_deref(), Some("account-1"));
+        assert_eq!(listed[1].label.as_deref(), Some("account-2"));
+
+        let renamed = store
+            .set_wallet_account_label(&wallet_instance_id, "0x3", "savings")
+            .unwrap();
+        assert_eq!(renamed.label.as_deref(), Some("savings"));
+        assert!(label_row_updated_at(&database_path, &wallet_instance_id, "0x3") > 102);
+        let fetched = store
+            .get_wallet_account(&wallet_instance_id, "0x3")
             .unwrap()
-            .collect::<Result<Vec<_>, _>>()
             .unwrap();
-        assert!(!columns.iter().any(|column| column == "backend_kind"));
+        assert_eq!(fetched.label.as_deref(), Some("savings"));
+        assert_eq!(
+            raw_wallet_account_label(&database_path, &wallet_instance_id, "0x3"),
+            None
+        );
+
+        store
+            .replace_wallet_accounts(
+                &wallet_instance_id,
+                vec![
+                    starmask_types::WalletAccountRecord {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        address: "0x2".to_owned(),
+                        label: None,
+                        public_key: Some("0xdef".to_owned()),
+                        is_default: false,
+                        is_read_only: false,
+                        is_locked: false,
+                        last_seen_at: starmask_types::TimestampMs::from_millis(103),
+                    },
+                    starmask_types::WalletAccountRecord {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        address: "0x3".to_owned(),
+                        label: None,
+                        public_key: Some("0xghi".to_owned()),
+                        is_default: true,
+                        is_read_only: false,
+                        is_locked: false,
+                        last_seen_at: starmask_types::TimestampMs::from_millis(104),
+                    },
+                    starmask_types::WalletAccountRecord {
+                        wallet_instance_id: wallet_instance_id.clone(),
+                        address: "0x4".to_owned(),
+                        label: None,
+                        public_key: Some("0xjkl".to_owned()),
+                        is_default: false,
+                        is_read_only: false,
+                        is_locked: false,
+                        last_seen_at: starmask_types::TimestampMs::from_millis(105),
+                    },
+                ],
+            )
+            .unwrap();
+
+        let listed = store
+            .list_wallet_accounts(Some(&wallet_instance_id))
+            .unwrap();
+        assert_eq!(
+            listed
+                .iter()
+                .map(|account| (account.address.as_str(), account.label.as_deref()))
+                .collect::<Vec<_>>(),
+            vec![
+                ("0x2", Some("account-1")),
+                ("0x3", Some("savings")),
+                ("0x4", Some("account-3")),
+            ]
+        );
+        assert_eq!(
+            raw_wallet_account_label(&database_path, &wallet_instance_id, "0x4"),
+            None
+        );
+        assert!(label_row_updated_at(&database_path, &wallet_instance_id, "0x4") > 105);
     }
 }

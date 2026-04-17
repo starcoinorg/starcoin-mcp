@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import argparse
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from workflow_audit import WorkflowAuditLogger
+from workflow_audit import WorkflowAuditLogger, non_negative_int, summarize_audit_records
 
 
 class WorkflowAuditTests(unittest.TestCase):
@@ -50,6 +51,86 @@ class WorkflowAuditTests(unittest.TestCase):
         self.assertEqual(records[1]["event"], "create_account_request_terminal")
         self.assertEqual(records[1]["created_address"], "0x1")
         self.assertNotIn("public_key", records[1])
+
+    def test_audit_summary_excludes_raw_payload_fields(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "audit.jsonl"
+            log_path.write_text(
+                "\n".join(
+                    [
+                        json.dumps(
+                            {
+                                "recorded_at": "2026-04-14T00:00:00Z",
+                                "event": "sign_request_terminal",
+                                "request_id": "req-1",
+                                "payload_sha256": "abc",
+                                "backend_id": "local-default",
+                                "terminal_status": "approved",
+                                "raw_txn_bcs_hex": "0xraw-should-not-appear",
+                                "signed_txn_bcs_hex": "0xsigned-should-not-appear",
+                            }
+                        )
+                    ]
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = summarize_audit_records(log_path)
+
+        self.assertEqual(summary[0]["request_id"], "req-1")
+        self.assertEqual(summary[0]["payload_sha256"], "abc")
+        self.assertNotIn("raw_txn_bcs_hex", summary[0])
+        self.assertNotIn("signed_txn_bcs_hex", summary[0])
+
+    def test_audit_summary_rejects_negative_limit(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "audit.jsonl"
+            log_path.write_text(
+                json.dumps({"event": "one", "request_id": "req-1"}) + "\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "limit must be >= 0"):
+                summarize_audit_records(log_path, limit=-1)
+
+    def test_audit_summary_returns_last_limited_records(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "audit.jsonl"
+            log_path.write_text(
+                "\n".join(
+                    json.dumps({"event": "submission_result", "request_id": f"req-{index}"})
+                    for index in range(4)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = summarize_audit_records(log_path, limit=2)
+
+        self.assertEqual([record["request_id"] for record in summary], ["req-2", "req-3"])
+
+    def test_audit_summary_limit_zero_returns_all_records(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            log_path = Path(temp_dir) / "audit.jsonl"
+            log_path.write_text(
+                "\n".join(
+                    json.dumps({"event": "submission_result", "request_id": f"req-{index}"})
+                    for index in range(3)
+                )
+                + "\n",
+                encoding="utf-8",
+            )
+
+            summary = summarize_audit_records(log_path, limit=0)
+
+        self.assertEqual([record["request_id"] for record in summary], ["req-0", "req-1", "req-2"])
+
+    def test_non_negative_int_rejects_negative_limit_for_argparse(self) -> None:
+        self.assertEqual(non_negative_int("0"), 0)
+
+        with self.assertRaisesRegex(argparse.ArgumentTypeError, "--limit must be >= 0"):
+            non_negative_int("-1")
 
 
 if __name__ == "__main__":

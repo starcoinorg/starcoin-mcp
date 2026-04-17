@@ -29,6 +29,7 @@ sha2 = "0.10"
 starcoin-account-api = { git = "https://github.com/starcoinorg/starcoin.git", rev = "3febb106f1cf0cbfbd1562303ca39e094f843f9a", package = "starcoin-account-api" }
 starcoin-account = { git = "https://github.com/starcoinorg/starcoin.git", rev = "3febb106f1cf0cbfbd1562303ca39e094f843f9a", package = "starcoin-account" }
 starcoin-config = { git = "https://github.com/starcoinorg/starcoin.git", rev = "3febb106f1cf0cbfbd1562303ca39e094f843f9a", package = "starcoin-config" }
+starcoin-crypto = { git = "https://github.com/starcoinorg/starcoin-crypto", rev = "bc3ca2138cf66d646f14a0f673ae5d853743f50a", package = "starcoin-crypto" }
 starcoin-types = { git = "https://github.com/starcoinorg/starcoin.git", rev = "3febb106f1cf0cbfbd1562303ca39e094f843f9a", package = "starcoin-vm1-types" }
 tempfile = "3.20"
 thiserror = "2.0"

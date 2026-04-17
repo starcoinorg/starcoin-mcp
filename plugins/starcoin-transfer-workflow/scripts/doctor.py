@@ -10,6 +10,10 @@ import socket
 import stat
 import sys
 from pathlib import Path
+from typing import Any
+from urllib.error import URLError
+from urllib.parse import urlsplit, urlunsplit
+from urllib.request import Request, urlopen
 
 from runtime_layout import (
     STARMASKD_MANIFEST_MARKERS,
@@ -103,7 +107,7 @@ def parse_toml(path: Path) -> dict:
     try:
         with path.open("rb") as handle:
             return tomllib.load(handle)
-    except Exception as exc:
+    except (OSError, tomllib.TOMLDecodeError) as exc:
         return {"_parse_error": str(exc)}
 
 
@@ -114,6 +118,135 @@ def parse_json(path: Path) -> dict | None:
         return None
     except json.JSONDecodeError:
         return None
+
+
+def json_rpc(
+    url: str, method: str, params: list[Any] | dict[str, Any] | None = None
+) -> Any:
+    validate_rpc_url(url)
+    payload = {
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params if params is not None else [],
+    }
+    request = Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    with urlopen(request, timeout=3) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    if "error" in body:
+        raise RuntimeError(f"{method} failed: {body['error']}")
+    return body["result"]
+
+
+def validate_rpc_url(url: str) -> None:
+    parts = urlsplit(url)
+    if parts.scheme not in {"http", "https"} or not parts.hostname:
+        raise ValueError("RPC endpoint must be an http or https URL with a host")
+
+
+def extract_chain_field(value: Any, field: str) -> Any:
+    if isinstance(value, dict):
+        if field in value:
+            return value[field]
+        peer_info = value.get("peer_info")
+        if isinstance(peer_info, dict):
+            chain_info = peer_info.get("chain_info")
+            if isinstance(chain_info, dict) and field in chain_info:
+                return chain_info[field]
+    return None
+
+
+def first_chain_field(payloads: tuple[Any, ...], fields: tuple[str, ...]) -> Any:
+    for payload in payloads:
+        for field in fields:
+            value = extract_chain_field(payload, field)
+            if value is not None:
+                return value
+    return None
+
+
+def live_rpc_checks(
+    node_rpc: object,
+    *,
+    expected_chain_id: object,
+    expected_network: object,
+    expected_genesis_hash: object,
+) -> list[dict]:
+    redacted_rpc = redacted_url_repr(node_rpc)
+    if looks_like_placeholder_rpc(node_rpc):
+        return [
+            check(
+                "node rpc live",
+                False,
+                f"rpc_endpoint_url={redacted_rpc}",
+                "Set rpc_endpoint_url before running the live RPC probe.",
+            )
+        ]
+    assert isinstance(node_rpc, str)
+    try:
+        node_info = json_rpc(node_rpc, "node.info")
+    except (OSError, TimeoutError, RuntimeError, ValueError, KeyError, URLError) as exc:
+        return [
+            check(
+                "node rpc live",
+                False,
+                f"rpc_endpoint_url={redacted_rpc}, error_type={type(exc).__name__}",
+                "Start the Starcoin RPC node or fix rpc_endpoint_url in node-cli.toml.",
+            )
+        ]
+    try:
+        chain_info = json_rpc(node_rpc, "chain.info")
+    except (OSError, TimeoutError, RuntimeError, ValueError, KeyError, URLError):
+        chain_info = {}
+
+    observed_chain_id = first_chain_field((chain_info, node_info), ("chain_id",))
+    observed_network = first_chain_field(
+        (node_info, chain_info), ("net", "network")
+    )
+    observed_genesis_hash = first_chain_field(
+        (chain_info, node_info), ("genesis_hash",)
+    )
+
+    results = [
+        check(
+            "node rpc live",
+            True,
+            f"rpc_endpoint_url={redacted_rpc}, node.info responded",
+        )
+    ]
+    results.append(
+        check(
+            "node rpc chain id",
+            expected_chain_id is not None and str(observed_chain_id) == str(expected_chain_id),
+            f"observed={observed_chain_id!r}, expected={expected_chain_id!r}",
+            "Set expected_chain_id and use the RPC endpoint that matches it.",
+        )
+    )
+    expected_network_text = str(expected_network or "").strip()
+    results.append(
+        check(
+            "node rpc network",
+            bool(expected_network_text)
+            and str(observed_network or "").lower() == expected_network_text.lower(),
+            f"observed={observed_network!r}, expected={expected_network!r}",
+            "Set expected_network and use the RPC endpoint that matches it.",
+        )
+    )
+    if not looks_like_placeholder_hash(expected_genesis_hash):
+        results.append(
+            check(
+                "node rpc genesis hash",
+                str(observed_genesis_hash or "").lower()
+                == str(expected_genesis_hash or "").lower(),
+                f"observed={observed_genesis_hash!r}, expected={expected_genesis_hash!r}",
+                "Use the RPC endpoint that matches expected_genesis_hash, or update node-cli.toml after verifying the target chain.",
+            )
+        )
+    return results
 
 
 def socket_reachable(path: Path) -> tuple[bool, str]:
@@ -199,6 +332,52 @@ def looks_like_placeholder_rpc(node_rpc: object) -> bool:
     if not lowered:
         return True
     return "example" in lowered or "replace" in lowered
+
+
+def redacted_url_repr(value: object) -> str:
+    if not isinstance(value, str):
+        return repr(value)
+    try:
+        parts = urlsplit(value)
+    except ValueError:
+        return repr(redact_unparseable_url(value))
+    netloc = parts.netloc
+    if "@" in netloc:
+        netloc = "<redacted>@" + netloc.rsplit("@", 1)[1]
+    query = "<redacted>" if parts.query else ""
+    fragment = "<redacted>" if parts.fragment else ""
+    return repr(urlunsplit((parts.scheme, netloc, parts.path, query, fragment)))
+
+
+def redact_unparseable_url(value: str) -> str:
+    base = value
+    fragment = ""
+    query = ""
+    if "#" in base:
+        base, _ = base.split("#", 1)
+        fragment = "#<redacted>"
+    if "?" in base:
+        base, _ = base.split("?", 1)
+        query = "?<redacted>"
+
+    scheme_end = base.find("://")
+    if scheme_end >= 0:
+        prefix = base[: scheme_end + 3]
+        rest = base[scheme_end + 3 :]
+    else:
+        prefix = ""
+        rest = base
+
+    path_start = rest.find("/")
+    if path_start >= 0:
+        authority = rest[:path_start]
+        path = rest[path_start:]
+    else:
+        authority = rest
+        path = ""
+    if "@" in authority:
+        authority = "<redacted>@" + authority.rsplit("@", 1)[1]
+    return f"{prefix}{authority}{path}{query}{fragment}"
 
 
 def looks_like_placeholder_hash(expected_genesis_hash: object) -> bool:
@@ -367,6 +546,12 @@ def main() -> int:
 
     node_mode = node_config.get("mode") if isinstance(node_config, dict) else None
     node_rpc = node_config.get("rpc_endpoint_url") if isinstance(node_config, dict) else None
+    expected_chain_id = (
+        node_config.get("expected_chain_id") if isinstance(node_config, dict) else None
+    )
+    expected_network = (
+        node_config.get("expected_network") if isinstance(node_config, dict) else None
+    )
     expected_genesis_hash = (
         node_config.get("expected_genesis_hash") if isinstance(node_config, dict) else None
     )
@@ -389,7 +574,7 @@ def main() -> int:
             check(
                 "node rpc endpoint",
                 not looks_like_placeholder_rpc(node_rpc),
-                f"rpc_endpoint_url={node_rpc!r}",
+                f"rpc_endpoint_url={redacted_url_repr(node_rpc)}",
                 f"Set rpc_endpoint_url in the copied template from {NODE_EXAMPLE_PATH}.",
             ),
             check(
@@ -411,6 +596,15 @@ def main() -> int:
                 f"Use the [[wallet_backends]] entry from {WALLET_EXAMPLE_PATH}.",
             ),
         ]
+        )
+    if node_config_path.exists() and "_parse_error" not in node_config:
+        results.extend(
+            live_rpc_checks(
+                node_rpc,
+                expected_chain_id=expected_chain_id,
+                expected_network=expected_network,
+                expected_genesis_hash=expected_genesis_hash,
+            )
         )
 
     if socket_cleanup_result is not None:
@@ -455,6 +649,7 @@ def main() -> int:
         "next_steps": [
             "Install or enable the plugin from the marketplace entry shown above.",
             f"Copy and edit {NODE_EXAMPLE_PATH} and {WALLET_EXAMPLE_PATH} if the default configs are missing.",
+            "Make sure the configured Starcoin RPC endpoint responds and matches the expected chain identity.",
             "Install starcoin-node-cli, starmaskd, and local-account-agent on PATH if you want a global plugin that does not rely on a source checkout.",
             "Start starmaskd and the wallet backend if the daemon socket check failed.",
             "Ask your agentic host to use the starcoin-transfer skill for one transfer after the checks pass.",

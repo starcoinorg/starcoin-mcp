@@ -1219,11 +1219,12 @@ mod tests {
             second.address().to_string(),
         ];
         expected_addresses.sort();
-        let actual_addresses = state.updated_accounts[0]
+        let mut actual_addresses = state.updated_accounts[0]
             .accounts
             .iter()
             .map(|account| account.address.clone())
             .collect::<Vec<_>>();
+        actual_addresses.sort();
         assert_eq!(actual_addresses, expected_addresses);
     }
 

@@ -39,6 +39,13 @@ pub struct CreateAccountCommand {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SetAccountLabelCommand {
+    pub wallet_instance_id: WalletInstanceId,
+    pub address: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RegisterExtensionCommand {
     pub wallet_instance_id: WalletInstanceId,
     pub extension_id: String,
@@ -135,6 +142,7 @@ pub enum CoordinatorCommand {
         address: String,
         wallet_instance_id: Option<WalletInstanceId>,
     },
+    WalletSetAccountLabel(SetAccountLabelCommand),
     CreateAccount(CreateAccountCommand),
     CreateSignTransaction(CreateSignTransactionCommand),
     CreateSignMessage(CreateSignMessageCommand),

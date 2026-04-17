@@ -73,6 +73,13 @@ pub trait WalletRepository {
         wallet_instance_id: &WalletInstanceId,
         address: &str,
     ) -> Result<Option<WalletAccountRecord>, RepositoryError>;
+
+    fn set_wallet_account_label(
+        &mut self,
+        wallet_instance_id: &WalletInstanceId,
+        address: &str,
+        label: &str,
+    ) -> Result<WalletAccountRecord, RepositoryError>;
 }
 
 pub trait Store: RequestRepository + WalletRepository {}

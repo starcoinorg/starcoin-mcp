@@ -57,6 +57,16 @@ class StarmaskDaemonClient:
                     "wallet_instance_id": params.get("wallet_instance_id"),
                 },
             )
+        if name == "wallet_set_account_label":
+            return self._call(
+                "wallet.setAccountLabel",
+                {
+                    "protocol_version": DAEMON_PROTOCOL_VERSION,
+                    "wallet_instance_id": params["wallet_instance_id"],
+                    "address": params["address"],
+                    "label": params["label"],
+                },
+            )
         if name in {"wallet_request_create_account", "wallet_create_account"}:
             return self._call(
                 "request.createAccount",
@@ -155,13 +165,18 @@ def resolve_socket_path(socket_path_arg: str | None, runtime_dir_arg: str | None
     return resolve_wallet_daemon_socket_path(runtime_dir, metadata=metadata)
 
 
-def read_json_arguments() -> dict[str, Any]:
-    raw = sys.stdin.read()
+def read_json_arguments(arguments_json: str | None = None) -> dict[str, Any]:
+    if arguments_json is not None:
+        raw = arguments_json
+    elif sys.stdin.isatty():
+        return {}
+    else:
+        raw = sys.stdin.read()
     if not raw.strip():
         return {}
     value = json.loads(raw)
     if not isinstance(value, dict):
-        raise RuntimeError("stdin arguments must be a JSON object")
+        raise RuntimeError("tool arguments must be a JSON object")
     return value
 
 
@@ -185,6 +200,11 @@ def parse_args() -> argparse.Namespace:
         "tool",
         help="Tool name, for example wallet_list_instances or wallet_request_sign_transaction.",
     )
+    call.add_argument(
+        "arguments_json",
+        nargs="?",
+        help="Optional JSON object arguments. If omitted, arguments are read from stdin.",
+    )
     return parser.parse_args()
 
 
@@ -195,7 +215,7 @@ def main() -> int:
     )
     if args.command != "call":
         raise SystemExit(f"unsupported command: {args.command}")
-    result = client.call_tool(args.tool, read_json_arguments())
+    result = client.call_tool(args.tool, read_json_arguments(args.arguments_json))
     json.dump(result, sys.stdout, separators=(",", ":"))
     sys.stdout.write("\n")
     return 0

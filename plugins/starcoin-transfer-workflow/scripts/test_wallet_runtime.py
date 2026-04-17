@@ -2,21 +2,57 @@
 from __future__ import annotations
 
 import json
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
 from wallet_runtime import (
-    backup_wallet_dir,
-    resolve_backup_destination,
-    resolve_backup_wallet_dir,
+    export_account_private_key,
+    resolve_account_export_chain_id,
+    resolve_account_export_output_file,
+    resolve_account_export_wallet_dir,
     runtime_paths,
 )
 
 
-class WalletRuntimeBackupTests(unittest.TestCase):
-    def test_resolve_backup_wallet_dir_prefers_runtime_metadata(self) -> None:
+class WalletRuntimeAccountExportTests(unittest.TestCase):
+    def test_export_account_help_uses_output_file(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).with_name("wallet_runtime.py")),
+                "export-account",
+                "--help",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn("--output-file", completed.stdout)
+        self.assertNotIn("--backup-file", completed.stdout)
+
+    def test_legacy_backup_command_is_not_registered(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).with_name("wallet_runtime.py")),
+                "backup",
+                "--help",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
+
+        self.assertNotEqual(completed.returncode, 0)
+        self.assertIn("invalid choice: 'backup'", completed.stderr)
+
+    def test_resolve_account_export_wallet_dir_prefers_runtime_metadata(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime_dir = Path(tmpdir) / "runtime"
             wallet_dir = Path(tmpdir) / "wallet"
@@ -29,11 +65,11 @@ class WalletRuntimeBackupTests(unittest.TestCase):
             )
 
             self.assertEqual(
-                resolve_backup_wallet_dir(runtime_dir, None),
+                resolve_account_export_wallet_dir(runtime_dir, None),
                 wallet_dir.resolve(),
             )
 
-    def test_resolve_backup_wallet_dir_falls_back_to_runtime_config(self) -> None:
+    def test_resolve_account_export_wallet_dir_falls_back_to_runtime_config(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             runtime_dir = Path(tmpdir) / "runtime"
             wallet_dir = Path(tmpdir) / "wallet"
@@ -49,89 +85,94 @@ class WalletRuntimeBackupTests(unittest.TestCase):
             )
 
             self.assertEqual(
-                resolve_backup_wallet_dir(runtime_dir, None),
+                resolve_account_export_wallet_dir(runtime_dir, None),
                 wallet_dir.resolve(),
             )
 
-    def test_resolve_backup_destination_appends_timestamped_child_for_existing_parent(self) -> None:
+    def test_resolve_account_export_output_file_appends_timestamped_child_for_existing_parent(
+        self,
+    ) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
-            parent_dir = Path(tmpdir) / "backups"
+            parent_dir = Path(tmpdir) / "exports"
             parent_dir.mkdir()
-            source_wallet_dir = Path(tmpdir) / "wallet-default"
-            source_wallet_dir.mkdir()
 
             with patch("wallet_runtime.time.strftime", return_value="20260414-120000"):
                 self.assertEqual(
-                    resolve_backup_destination(
+                    resolve_account_export_output_file(
                         str(parent_dir),
-                        source_wallet_dir=source_wallet_dir,
+                        account_address="0xABCDEF",
                     ),
-                    parent_dir.resolve() / "wallet-default-backup-20260414-120000",
+                    parent_dir.resolve() / "abcdef-private-key-export-20260414-120000.txt",
                 )
 
-    def test_backup_wallet_dir_copies_files_and_writes_manifest(self) -> None:
+    def test_resolve_account_export_chain_id_prefers_runtime_metadata(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_dir = Path(tmpdir) / "runtime"
+            metadata_path = runtime_paths(runtime_dir)["metadata_path"]
+            metadata_path.parent.mkdir(parents=True, exist_ok=True)
+            metadata_path.write_text(json.dumps({"chain_id": 251}), encoding="utf-8")
+
+            self.assertEqual(resolve_account_export_chain_id(runtime_dir, None), 251)
+
+    def test_resolve_account_export_chain_id_falls_back_to_runtime_config(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            runtime_dir = Path(tmpdir) / "runtime"
+            config_path = runtime_paths(runtime_dir)["config_path"]
+            config_path.parent.mkdir(parents=True, exist_ok=True)
+            config_path.write_text(
+                "[[wallet_backends]]\nchain_id = 250\n",
+                encoding="utf-8",
+            )
+
+            self.assertEqual(resolve_account_export_chain_id(runtime_dir, None), 250)
+
+    def test_resolve_account_export_chain_id_uses_explicit_arg(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            self.assertEqual(
+                resolve_account_export_chain_id(Path(tmpdir) / "runtime", 249), 249
+            )
+
+    def test_export_account_private_key_invokes_export_binary(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
             base_dir = Path(tmpdir)
-            source_wallet_dir = base_dir / "wallet"
-            source_wallet_dir.mkdir()
-            (source_wallet_dir / "account.json").write_text("{}", encoding="utf-8")
-            destination_dir = base_dir / "backup"
-            runtime_dir = base_dir / "runtime"
-
-            manifest = backup_wallet_dir(
-                source_wallet_dir=source_wallet_dir,
-                destination_dir=destination_dir,
-                runtime_dir=runtime_dir,
+            wallet_dir = base_dir / "wallet"
+            wallet_dir.mkdir()
+            output_file = base_dir / "account.key"
+            completed = subprocess.CompletedProcess(
+                args=["local-account-export"],
+                returncode=0,
+                stdout=json.dumps(
+                    {
+                        "address": "0x1",
+                        "wallet_dir": str(wallet_dir),
+                        "output_file": str(output_file),
+                    }
+                ),
+                stderr="",
             )
 
-            self.assertTrue((destination_dir / "account.json").exists())
-            self.assertEqual(
-                manifest["source_wallet_dir"],
-                str(source_wallet_dir.resolve()),
-            )
-            self.assertEqual(
-                json.loads((destination_dir / "backup-manifest.json").read_text(encoding="utf-8"))[
-                    "backup_dir"
-                ],
-                str(destination_dir.resolve()),
-            )
-
-    def test_backup_wallet_dir_rejects_destination_inside_source(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            base_dir = Path(tmpdir)
-            source_wallet_dir = base_dir / "wallet"
-            source_wallet_dir.mkdir()
-            destination_dir = source_wallet_dir / "nested-backup"
-
-            with self.assertRaisesRegex(
-                RuntimeError,
-                "backup destination must not be the wallet directory or a child of it",
-            ):
-                backup_wallet_dir(
-                    source_wallet_dir=source_wallet_dir,
-                    destination_dir=destination_dir,
+            with patch(
+                "wallet_runtime.launch_command",
+                return_value=(["local-account-export"], "/bin/local-account-export"),
+            ) as launch_command, patch(
+                "wallet_runtime.subprocess.run", return_value=completed
+            ) as subprocess_run:
+                result = export_account_private_key(
+                    wallet_dir=wallet_dir,
+                    destination_file=output_file,
                     runtime_dir=base_dir / "runtime",
+                    account_address="0x1",
+                    chain_id=254,
+                    password="secret\n",
+                    force=False,
                 )
 
-    def test_backup_wallet_dir_preserves_symlinks(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            base_dir = Path(tmpdir)
-            source_wallet_dir = base_dir / "wallet"
-            source_wallet_dir.mkdir()
-            external_secret = base_dir / "external-secret.txt"
-            external_secret.write_text("secret", encoding="utf-8")
-            (source_wallet_dir / "linked-secret").symlink_to(external_secret)
-            destination_dir = base_dir / "backup"
-
-            backup_wallet_dir(
-                source_wallet_dir=source_wallet_dir,
-                destination_dir=destination_dir,
-                runtime_dir=base_dir / "runtime",
-            )
-
-            copied_link = destination_dir / "linked-secret"
-            self.assertTrue(copied_link.is_symlink())
-            self.assertEqual(copied_link.resolve(), external_secret.resolve())
+            launch_args = launch_command.call_args.kwargs["program_args"]
+            self.assertIn("--address", launch_args)
+            self.assertIn("0x1", launch_args)
+            self.assertIn("--password-stdin", launch_args)
+            self.assertEqual(subprocess_run.call_args.kwargs["input"], "secret\n")
+            self.assertEqual(result["export_launch"], "/bin/local-account-export")
 
 
 if __name__ == "__main__":
