@@ -26,6 +26,8 @@ script path itself has changed.
   inline JSON for one-off reads so the command is self-contained:
   `python3 ./plugins/starcoin-transfer-workflow/scripts/node_cli_client.py call get_account_overview '{"address":"<address>"}'`
 - Wallet status and discovery:
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/list_wallets.py --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime`
+  - `python3 ./plugins/starcoin-transfer-workflow/scripts/list_wallets.py --wallet-instance-id <wallet-instance-id> --include-public-key`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_list_instances`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_list_accounts '{"wallet_instance_id":"<wallet-instance-id>","include_public_key":true}'`
   - `python3 ./plugins/starcoin-transfer-workflow/scripts/starmaskd_client.py call wallet_get_public_key '{"wallet_instance_id":"<wallet-instance-id>","address":"<address>"}'`
@@ -121,6 +123,7 @@ the user's intent first, then use the scripts for deterministic execution.
 ### 1. Create A Fresh Address When Needed
 
 - Discover wallet instances first with `wallet_list_instances`.
+- When showing wallet/account candidates to the user, prefer `list_wallets.py` and quote its aligned plain-text output inside a fenced `text` block. Do not reformat wallet rows as Markdown pipe tables, because CJK headers and long addresses misalign easily.
 - If there is exactly one viable wallet instance, you may auto-select it. Otherwise ask one precise follow-up question with the concrete candidates.
 - Prefer `run_create_account.py` for a user-facing guided flow. It creates the request, waits for approval, and writes a local audit record.
 - Local account labels come from the daemon-side metadata layer instead of Starcoin account storage. If a local address has no custom name yet, `wallet_list_accounts` assigns and returns `account-1`, `account-2`, and so on in first-seen order.

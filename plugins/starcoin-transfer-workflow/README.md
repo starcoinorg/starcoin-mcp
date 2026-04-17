@@ -50,6 +50,8 @@ ships a plugin-managed adapter entrypoint.
   - transfer workflow instructions for an agentic host
 - `scripts/starmaskd_client.py`
   - direct JSON-RPC client for `starmaskd`
+- `scripts/list_wallets.py`
+  - aligned wallet/account list view for human-readable inspection
 - `scripts/node_cli_client.py`
   - adapter that calls `starcoin-node-cli`
 - `scripts/run_create_account.py`
@@ -170,6 +172,15 @@ The low-level clients accept tool arguments either as stdin JSON or as a final i
 python3 ./scripts/node_cli_client.py call get_account_overview '{"address":"<address>"}'
 python3 ./scripts/starmaskd_client.py call wallet_get_public_key '{"wallet_instance_id":"local-default","address":"<address>"}'
 ```
+
+For human-readable wallet/address inspection, prefer:
+
+```bash
+python3 ./scripts/list_wallets.py --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime
+```
+
+When the operator is using Chinese prompts, `--locale zh` keeps the headers and default marker localized
+without relying on Markdown pipe-table alignment.
 
 Those `starcoin` CLI examples are still useful for local funding. The transfer flow itself should
 use the script-driven `starmaskd` + `starcoin-node-cli` path.
