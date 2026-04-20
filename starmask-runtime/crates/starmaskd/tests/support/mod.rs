@@ -18,9 +18,10 @@ use starmask_core::{
     },
 };
 use starmask_types::{
-    ApprovalSurface, BackendKind, ClientRequestId, DeliveryLeaseId, JsonRpcRequest,
-    JsonRpcResponse, LockState, NativeBridgeAccount, PresentationId, RequestId, RequestResult,
-    TimestampMs, TransportKind, WalletAccountRecord, WalletCapability, WalletInstanceId,
+    ApprovalSurface, BackendKind, ClientRequestId, DAEMON_PROTOCOL_VERSION, DeliveryLeaseId,
+    GENERIC_BACKEND_PROTOCOL_VERSION, JsonRpcRequest, JsonRpcResponse, LockState,
+    NativeBridgeAccount, PresentationId, RequestId, RequestResult, TimestampMs, TransportKind,
+    WalletAccountRecord, WalletCapability, WalletInstanceId,
 };
 use starmaskd::sqlite_store::SqliteStore;
 
@@ -115,7 +116,7 @@ pub fn register_wallet(
                 wallet_instance_id: wallet_instance_id.clone(),
                 extension_id: "ext.allowed".to_owned(),
                 extension_version: "1.0.0".to_owned(),
-                protocol_version: 1,
+                protocol_version: DAEMON_PROTOCOL_VERSION,
                 profile_hint: None,
                 lock_state,
                 accounts: Vec::new(),
@@ -149,7 +150,7 @@ pub fn register_local_backend(
                 instance_label: "Local Default Wallet".to_owned(),
                 extension_id: String::new(),
                 extension_version: String::new(),
-                protocol_version: 2,
+                protocol_version: GENERIC_BACKEND_PROTOCOL_VERSION,
                 capabilities: vec![
                     WalletCapability::Unlock,
                     WalletCapability::GetPublicKey,

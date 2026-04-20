@@ -435,15 +435,15 @@ fn render_raw_payload_details(request: &PulledRequest) -> String {
                 "Export one local account private key to a file on this machine.",
             );
             write_card_field_full(&mut output, "Account", &request.account_address);
-            if let Some(output_file) = &request.output_file {
-                write_card_field_full(&mut output, "Output File", output_file);
-            } else {
-                write_card_field_full(&mut output, "Output File", "missing");
-            }
+            write_card_field_full(
+                &mut output,
+                "Output File",
+                format_optional_path(request.output_file.as_deref()),
+            );
             write_card_field_full(
                 &mut output,
                 "Overwrite Existing File",
-                &request.force.to_string(),
+                format_flag(request.force),
             );
         }
         RequestKind::ImportAccount => {
@@ -453,16 +453,16 @@ fn render_raw_payload_details(request: &PulledRequest) -> String {
                 "Operation",
                 "Import one local account private key from a file on this machine.",
             );
-            if request.account_address.trim().is_empty() {
-                write_card_field_full(&mut output, "Requested Account", "derive from private key");
-            } else {
-                write_card_field_full(&mut output, "Requested Account", &request.account_address);
-            }
-            if let Some(private_key_file) = &request.private_key_file {
-                write_card_field_full(&mut output, "Private Key File", private_key_file);
-            } else {
-                write_card_field_full(&mut output, "Private Key File", "missing");
-            }
+            write_card_field_full(
+                &mut output,
+                "Requested Account",
+                requested_account_label(&request.account_address),
+            );
+            write_card_field_full(
+                &mut output,
+                "Private Key File",
+                format_optional_path(request.private_key_file.as_deref()),
+            );
         }
     }
 
@@ -523,12 +523,12 @@ fn write_export_account_section(output: &mut String, request: &PulledRequest) {
     write_card_field_preview(
         output,
         "Output File",
-        request.output_file.as_deref().unwrap_or("missing"),
+        format_optional_path(request.output_file.as_deref()),
     );
     write_card_field_preview(
         output,
         "Overwrite Existing File",
-        &request.force.to_string(),
+        format_flag(request.force),
     );
     write_card_field_preview(
         output,
@@ -543,14 +543,13 @@ fn write_import_account_section(output: &mut String, request: &PulledRequest) {
     write_card_field_preview(
         output,
         "Private Key File",
-        request.private_key_file.as_deref().unwrap_or("missing"),
+        format_optional_path(request.private_key_file.as_deref()),
     );
-    let requested_account = if request.account_address.trim().is_empty() {
-        "derive from private key"
-    } else {
-        request.account_address.as_str()
-    };
-    write_card_field_preview(output, "Requested Account", requested_account);
+    write_card_field_preview(
+        output,
+        "Requested Account",
+        requested_account_label(&request.account_address),
+    );
     write_card_field_preview(
         output,
         "Password Handling",
@@ -726,6 +725,22 @@ fn write_message_section(output: &mut String, request: &PulledRequest) {
     } else {
         write_card_field_preview(output, "Canonical Message", "missing");
     }
+}
+
+fn format_optional_path(value: Option<&str>) -> &str {
+    value.unwrap_or("missing")
+}
+
+fn requested_account_label(account_address: &str) -> &str {
+    if account_address.trim().is_empty() {
+        "missing"
+    } else {
+        account_address
+    }
+}
+
+fn format_flag(value: bool) -> &'static str {
+    if value { "true" } else { "false" }
 }
 
 fn write_context_section(output: &mut String, request: &PulledRequest) {
@@ -1318,7 +1333,7 @@ mod tests {
             request_id: RequestId::new("req-import").unwrap(),
             client_request_id: ClientRequestId::new("client-import").unwrap(),
             kind: RequestKind::ImportAccount,
-            account_address: String::new(),
+            account_address: "0x1".to_owned(),
             payload_hash: PayloadHash::new("payload-import").unwrap(),
             display_hint: None,
             client_context: None,
@@ -1341,6 +1356,6 @@ mod tests {
         assert!(export_summary.contains("Output File: /tmp/account.key"));
         assert!(export_summary.contains("Overwrite Existing File: true"));
         assert!(import_details.contains("Private Key File: /tmp/import.key"));
-        assert!(import_details.contains("Requested Account: derive from private key"));
+        assert!(import_details.contains("Requested Account: 0x1"));
     }
 }

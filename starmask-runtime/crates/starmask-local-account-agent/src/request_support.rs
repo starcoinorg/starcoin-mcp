@@ -1,4 +1,4 @@
-use std::{convert::TryFrom, fs::OpenOptions, io::Write, path::Path, str::FromStr, time::Duration};
+use std::{convert::TryFrom, fs, io::Write, path::Path, str::FromStr, time::Duration};
 
 use anyhow::{Context, Result};
 use starcoin_account::AccountManager;
@@ -11,6 +11,7 @@ use starmask_types::{
     BackendAccount, Curve, MessageFormat, PulledRequest, RejectReasonCode, RequestKind,
     RequestResult, WalletCapability,
 };
+use tempfile::NamedTempFile;
 
 #[derive(Clone, Debug)]
 pub(crate) struct RequestRejection {
@@ -159,14 +160,17 @@ pub(crate) fn import_account(
             }
         })?;
     let derived_address = private_key.public_key().derived_address();
-    let address = if request.account_address.trim().is_empty() {
-        derived_address
-    } else {
+    if request.account_address.trim().is_empty() {
+        return Err(RequestRejection {
+            reason_code: RejectReasonCode::BackendPolicyBlocked,
+            message: Some("Import request is missing the expected account address".to_owned()),
+        });
+    }
+    let address =
         parse_account_address(&request.account_address).map_err(|error| RequestRejection {
             reason_code: RejectReasonCode::BackendPolicyBlocked,
             message: Some(error.to_string()),
-        })?
-    };
+        })?;
     if address != derived_address {
         return Err(RequestRejection {
             reason_code: RejectReasonCode::BackendPolicyBlocked,
@@ -265,6 +269,15 @@ fn write_private_key_file(
     encoded: &str,
     force: bool,
 ) -> std::result::Result<(), RequestRejection> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| RequestRejection {
+            reason_code: RejectReasonCode::BackendUnavailable,
+            message: Some(format!(
+                "Failed to create output directory {}: {error}",
+                parent.display()
+            )),
+        })?;
+    }
     if path.exists() && !force {
         return Err(RequestRejection {
             reason_code: RejectReasonCode::BackendPolicyBlocked,
@@ -274,32 +287,33 @@ fn write_private_key_file(
             )),
         });
     }
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).map_err(|error| RequestRejection {
-            reason_code: RejectReasonCode::BackendUnavailable,
-            message: Some(format!(
-                "Failed to create output directory {}: {error}",
-                parent.display()
-            )),
-        })?;
-    }
 
-    let mut options = OpenOptions::new();
-    options.write(true).truncate(true);
-    if force {
-        options.create(true);
-    } else {
-        options.create_new(true);
-    }
-    let mut file = options.open(path).map_err(|error| RequestRejection {
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut temp_file = NamedTempFile::new_in(parent).map_err(|error| RequestRejection {
         reason_code: RejectReasonCode::BackendUnavailable,
         message: Some(format!(
-            "Failed to open output file {}: {error}",
-            path.display()
+            "Failed to create temporary export file in {}: {error}",
+            parent.display()
         )),
     })?;
-    file.write_all(encoded.as_bytes())
-        .and_then(|_| file.write_all(b"\n"))
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        temp_file
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|error| RequestRejection {
+                reason_code: RejectReasonCode::BackendUnavailable,
+                message: Some(format!(
+                    "Failed to restrict permissions on temporary export file in {}: {error}",
+                    parent.display()
+                )),
+            })?;
+    }
+    temp_file
+        .write_all(encoded.as_bytes())
+        .and_then(|_| temp_file.write_all(b"\n"))
+        .and_then(|_| temp_file.as_file().sync_all())
         .map_err(|error| RequestRejection {
             reason_code: RejectReasonCode::BackendUnavailable,
             message: Some(format!(
@@ -307,20 +321,51 @@ fn write_private_key_file(
             )),
         })?;
 
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).map_err(
-            |error| RequestRejection {
+    if force {
+        #[cfg(windows)]
+        if path.exists() {
+            fs::remove_file(path).map_err(|error| RequestRejection {
                 reason_code: RejectReasonCode::BackendUnavailable,
                 message: Some(format!(
-                    "Failed to restrict permissions on {}: {error}",
+                    "Failed to replace existing output file {}: {error}",
                     path.display()
                 )),
-            },
-        )?;
+            })?;
+        }
+        temp_file.persist(path).map_err(|error| RequestRejection {
+            reason_code: RejectReasonCode::BackendUnavailable,
+            message: Some(format!(
+                "Failed to move account private-key export into {}: {}",
+                path.display(),
+                error.error
+            )),
+        })?;
+        return Ok(());
     }
 
+    temp_file.persist_noclobber(path).map_err(|error| {
+        let reason_code = if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+            RejectReasonCode::BackendPolicyBlocked
+        } else {
+            RejectReasonCode::BackendUnavailable
+        };
+        let message = if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+            format!(
+                "Output file already exists: {}; pass --force to overwrite it",
+                path.display()
+            )
+        } else {
+            format!(
+                "Failed to move account private-key export into {}: {}",
+                path.display(),
+                error.error
+            )
+        };
+        RequestRejection {
+            reason_code,
+            message: Some(message),
+        }
+    })?;
     Ok(())
 }
 
@@ -426,6 +471,7 @@ mod tests {
 
     use super::{
         account_info_to_backend_account, decode_signing_message, ensure_local_unlock_capability,
+        write_private_key_file,
     };
     use starmask_types::{MessageFormat, WalletCapability};
 
@@ -481,5 +527,23 @@ mod tests {
             ],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn write_private_key_file_creates_private_output_with_expected_contents() {
+        let tempdir = tempdir().unwrap();
+        let path = tempdir.path().join("exports/account.key");
+
+        write_private_key_file(&path, "private-key-data", false).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "private-key-data\n"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(path.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+        }
     }
 }

@@ -733,7 +733,7 @@ async fn dispatch_request(
                 &[DAEMON_PROTOCOL_VERSION, GENERIC_BACKEND_PROTOCOL_VERSION],
             )?;
             let result = request_result_from_params(&params)
-                .map_err(|error| error_response(Some(&id), error))?;
+                .map_err(|error| JsonRpcErrorResponse::new(&id, error))?;
             serde_json::to_value(expect_response(
                 handle
                     .dispatch(CoordinatorCommand::ResolveRequest(ResolveRequestCommand {
@@ -949,6 +949,17 @@ fn error_response(id: Option<&str>, error: impl std::fmt::Display) -> JsonRpcErr
     )
 }
 
+fn invalid_request_error(message: impl Into<String>) -> SharedError {
+    SharedError::new(SharedErrorCode::InvalidRequest, message).with_retryable(false)
+}
+
+fn required_request_field<T>(
+    value: Option<T>,
+    message: &'static str,
+) -> std::result::Result<T, SharedError> {
+    value.ok_or_else(|| invalid_request_error(message))
+}
+
 fn extract_shared_error(error: &anyhow::Error) -> Option<SharedError> {
     if let Some(shared) = error.downcast_ref::<SharedError>() {
         return Some(shared.clone());
@@ -961,71 +972,81 @@ fn extract_shared_error(error: &anyhow::Error) -> Option<SharedError> {
     None
 }
 
-fn request_result_from_params(params: &RequestResolveParams) -> Result<RequestResult> {
+fn request_result_from_params(
+    params: &RequestResolveParams,
+) -> std::result::Result<RequestResult, SharedError> {
     match params.result_kind {
         ResultKind::SignedTransaction => {
-            let signed_txn_bcs_hex = params
-                .signed_txn_bcs_hex
-                .clone()
-                .context("signed_txn_bcs_hex is required for signed_transaction")?;
+            let signed_txn_bcs_hex = required_request_field(
+                params.signed_txn_bcs_hex.clone(),
+                "signed_txn_bcs_hex is required for signed_transaction",
+            )?;
             Ok(RequestResult::SignedTransaction { signed_txn_bcs_hex })
         }
         ResultKind::SignedMessage => {
-            let signature = params
-                .signature
-                .clone()
-                .context("signature is required for signed_message")?;
+            let signature = required_request_field(
+                params.signature.clone(),
+                "signature is required for signed_message",
+            )?;
             Ok(RequestResult::SignedMessage { signature })
         }
         ResultKind::CreatedAccount => Ok(RequestResult::CreatedAccount {
-            address: params
-                .created_account_address
-                .clone()
-                .context("created_account_address is required for created_account")?,
-            public_key: params
-                .created_account_public_key
-                .clone()
-                .context("created_account_public_key is required for created_account")?,
-            curve: params
-                .created_account_curve
-                .context("created_account_curve is required for created_account")?,
-            is_default: params
-                .created_account_is_default
-                .context("created_account_is_default is required for created_account")?,
-            is_locked: params
-                .created_account_is_locked
-                .context("created_account_is_locked is required for created_account")?,
+            address: required_request_field(
+                params.created_account_address.clone(),
+                "created_account_address is required for created_account",
+            )?,
+            public_key: required_request_field(
+                params.created_account_public_key.clone(),
+                "created_account_public_key is required for created_account",
+            )?,
+            curve: required_request_field(
+                params.created_account_curve,
+                "created_account_curve is required for created_account",
+            )?,
+            is_default: required_request_field(
+                params.created_account_is_default,
+                "created_account_is_default is required for created_account",
+            )?,
+            is_locked: required_request_field(
+                params.created_account_is_locked,
+                "created_account_is_locked is required for created_account",
+            )?,
         }),
         ResultKind::ExportedAccount => Ok(RequestResult::ExportedAccount {
-            address: params
-                .exported_account_address
-                .clone()
-                .context("exported_account_address is required for exported_account")?,
-            output_file: params
-                .exported_account_output_file
-                .clone()
-                .context("exported_account_output_file is required for exported_account")?,
+            address: required_request_field(
+                params.exported_account_address.clone(),
+                "exported_account_address is required for exported_account",
+            )?,
+            output_file: required_request_field(
+                params.exported_account_output_file.clone(),
+                "exported_account_output_file is required for exported_account",
+            )?,
         }),
         ResultKind::ImportedAccount => Ok(RequestResult::ImportedAccount {
-            address: params
-                .imported_account_address
-                .clone()
-                .context("imported_account_address is required for imported_account")?,
-            public_key: params
-                .imported_account_public_key
-                .clone()
-                .context("imported_account_public_key is required for imported_account")?,
-            curve: params
-                .imported_account_curve
-                .context("imported_account_curve is required for imported_account")?,
-            is_default: params
-                .imported_account_is_default
-                .context("imported_account_is_default is required for imported_account")?,
-            is_locked: params
-                .imported_account_is_locked
-                .context("imported_account_is_locked is required for imported_account")?,
+            address: required_request_field(
+                params.imported_account_address.clone(),
+                "imported_account_address is required for imported_account",
+            )?,
+            public_key: required_request_field(
+                params.imported_account_public_key.clone(),
+                "imported_account_public_key is required for imported_account",
+            )?,
+            curve: required_request_field(
+                params.imported_account_curve,
+                "imported_account_curve is required for imported_account",
+            )?,
+            is_default: required_request_field(
+                params.imported_account_is_default,
+                "imported_account_is_default is required for imported_account",
+            )?,
+            is_locked: required_request_field(
+                params.imported_account_is_locked,
+                "imported_account_is_locked is required for imported_account",
+            )?,
         }),
-        ResultKind::None => anyhow::bail!("result_kind none is not valid for request.resolve"),
+        ResultKind::None => Err(invalid_request_error(
+            "result_kind none is not valid for request.resolve",
+        )),
     }
 }
 
@@ -1258,8 +1279,8 @@ mod tests {
         .expect_err("missing signature should fail before dispatch");
 
         assert_eq!(error.id, "req-3");
-        assert_eq!(error.error.code, SharedErrorCode::InternalBridgeError);
-        assert_eq!(error.error.retryable, Some(true));
+        assert_eq!(error.error.code, SharedErrorCode::InvalidRequest);
+        assert_eq!(error.error.retryable, Some(false));
         assert_eq!(
             error.error.message,
             "signature is required for signed_message"

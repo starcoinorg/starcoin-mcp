@@ -14,8 +14,9 @@ use crate::{
     time::{DurationSeconds, TimestampMs},
 };
 
-pub const DAEMON_PROTOCOL_VERSION: u32 = 1;
-pub const GENERIC_BACKEND_PROTOCOL_VERSION: u32 = 2;
+// Bump both protocol versions because export/import expanded the daemon and backend wire contract.
+pub const DAEMON_PROTOCOL_VERSION: u32 = 2;
+pub const GENERIC_BACKEND_PROTOCOL_VERSION: u32 = 3;
 pub const STARMASKD_DB_SCHEMA_VERSION: u32 = 2;
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -152,8 +153,7 @@ pub struct CreateImportAccountParams {
     pub client_request_id: ClientRequestId,
     pub wallet_instance_id: WalletInstanceId,
     pub private_key_file: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub account_address: Option<String>,
+    pub account_address: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub display_hint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]

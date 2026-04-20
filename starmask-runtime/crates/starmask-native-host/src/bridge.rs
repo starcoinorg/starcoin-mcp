@@ -149,7 +149,7 @@ where
             imported_account_is_default,
             imported_account_is_locked,
             ..
-        } => validate_request_resolve_params(
+        } => validate_request_resolve_params(RequestResolveValidationInput {
             wallet_instance_id,
             request_id,
             presentation_id,
@@ -168,7 +168,7 @@ where
             imported_account_curve,
             imported_account_is_default,
             imported_account_is_locked,
-        )
+        })
         .and_then(|params| client.request_resolve(params))
         .map(|_| NativeBridgeResponse::ExtensionAck {
             reply_to: reply_to.clone(),
@@ -210,7 +210,7 @@ fn request_resolve_payload_error(message: impl Into<String>) -> SharedError {
     SharedError::new(SharedErrorCode::InternalBridgeError, message).with_retryable(false)
 }
 
-fn validate_request_resolve_params(
+struct RequestResolveValidationInput {
     wallet_instance_id: starmask_types::WalletInstanceId,
     request_id: starmask_types::RequestId,
     presentation_id: starmask_types::PresentationId,
@@ -229,7 +229,31 @@ fn validate_request_resolve_params(
     imported_account_curve: Option<starmask_types::Curve>,
     imported_account_is_default: Option<bool>,
     imported_account_is_locked: Option<bool>,
+}
+
+fn validate_request_resolve_params(
+    input: RequestResolveValidationInput,
 ) -> Result<RequestResolveParams, SharedError> {
+    let RequestResolveValidationInput {
+        wallet_instance_id,
+        request_id,
+        presentation_id,
+        result_kind,
+        signed_txn_bcs_hex,
+        signature,
+        created_account_address,
+        created_account_public_key,
+        created_account_curve,
+        created_account_is_default,
+        created_account_is_locked,
+        exported_account_address,
+        exported_account_output_file,
+        imported_account_address,
+        imported_account_public_key,
+        imported_account_curve,
+        imported_account_is_default,
+        imported_account_is_locked,
+    } = input;
     let has_created_account_fields = created_account_address.is_some()
         || created_account_public_key.is_some()
         || created_account_curve.is_some()
@@ -313,11 +337,12 @@ fn validate_request_resolve_params(
             }
         }
         ResultKind::ExportedAccount => {
-            if signed_txn_bcs_hex.is_some()
-                || signature.is_some()
-                || has_created_account_fields
-                || has_imported_account_fields
-            {
+            if signed_txn_bcs_hex.is_some() || signature.is_some() {
+                return Err(request_resolve_payload_error(
+                    "signed_transaction and signed_message payloads must be omitted for exported_account",
+                ));
+            }
+            if has_created_account_fields || has_imported_account_fields {
                 return Err(request_resolve_payload_error(
                     "non-exported account result fields must be omitted for exported_account",
                 ));
@@ -335,11 +360,12 @@ fn validate_request_resolve_params(
             }
         }
         ResultKind::ImportedAccount => {
-            if signed_txn_bcs_hex.is_some()
-                || signature.is_some()
-                || has_created_account_fields
-                || has_exported_account_fields
-            {
+            if signed_txn_bcs_hex.is_some() || signature.is_some() {
+                return Err(request_resolve_payload_error(
+                    "signed_transaction and signed_message payloads must be omitted for imported_account",
+                ));
+            }
+            if has_created_account_fields || has_exported_account_fields {
                 return Err(request_resolve_payload_error(
                     "non-imported account result fields must be omitted for imported_account",
                 ));
@@ -417,7 +443,7 @@ mod tests {
         ) -> Result<starmask_types::ExtensionRegisteredResult, SharedError> {
             Ok(starmask_types::ExtensionRegisteredResult {
                 wallet_instance_id: WalletInstanceId::new("wallet-1").unwrap(),
-                daemon_protocol_version: 1,
+                daemon_protocol_version: daemon_protocol_version(),
                 accepted: true,
             })
         }

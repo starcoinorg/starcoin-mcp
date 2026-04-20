@@ -94,6 +94,7 @@ class ClientJsonArgumentsTests(unittest.TestCase):
                         "client_request_id": "client-import",
                         "wallet_instance_id": "local-default",
                         "private_key_file": "/tmp/import.key",
+                        "account_address": "0x2",
                     },
                 ),
                 {"request_id": "req-import"},
@@ -102,6 +103,24 @@ class ClientJsonArgumentsTests(unittest.TestCase):
         call.assert_called_once()
         self.assertEqual(call.call_args.args[0], "request.createImportAccount")
         self.assertEqual(call.call_args.args[1]["private_key_file"], "/tmp/import.key")
+        self.assertEqual(call.call_args.args[1]["account_address"], "0x2")
+
+    def test_starmaskd_client_preserves_empty_import_account_address(self) -> None:
+        client = starmaskd_client.StarmaskDaemonClient(socket_path=Path("/tmp/starmaskd.sock"))
+
+        with patch.object(client, "_call", return_value={"request_id": "req-import"}) as call:
+            client.call_tool(
+                "wallet_request_import_account",
+                {
+                    "client_request_id": "client-import",
+                    "wallet_instance_id": "local-default",
+                    "private_key_file": "/tmp/import.key",
+                    "account_address": "",
+                    "address": "0xfallback",
+                },
+            )
+
+        self.assertEqual(call.call_args.args[1]["account_address"], "")
 
     def test_node_cli_client_still_accepts_stdin_json_arguments(self) -> None:
         with patch("sys.stdin", io.StringIO('{"address":"0x2"}')):

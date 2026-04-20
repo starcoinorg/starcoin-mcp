@@ -1032,12 +1032,16 @@ mod tests {
             }
         }
 
-        fn import_account_request(&self, private_key_file: PathBuf) -> PulledRequest {
+        fn import_account_request(
+            &self,
+            private_key_file: PathBuf,
+            account_address: &AccountAddress,
+        ) -> PulledRequest {
             PulledRequest {
                 request_id: RequestId::new("req-import-account").unwrap(),
                 client_request_id: ClientRequestId::new("client-import-account").unwrap(),
                 kind: RequestKind::ImportAccount,
-                account_address: String::new(),
+                account_address: account_address.to_string(),
                 payload_hash: PayloadHash::new("payload-import-account").unwrap(),
                 display_hint: Some("Import account".to_owned()),
                 client_context: Some("phase2-test".to_owned()),
@@ -1224,7 +1228,8 @@ mod tests {
             private_key.to_encoded_string().unwrap() + "\n",
         )
         .unwrap();
-        let request = harness.import_account_request(private_key_file.clone());
+        let request =
+            harness.import_account_request(private_key_file.clone(), source_account.address());
         let snapshot = harness.snapshot();
 
         harness.agent.handle_request(request, &snapshot).unwrap();

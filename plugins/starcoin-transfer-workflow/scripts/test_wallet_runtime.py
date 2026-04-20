@@ -40,6 +40,7 @@ class WalletRuntimeAccountExportTests(unittest.TestCase):
 
             self.assertTrue(wallet_dir.is_dir())
             self.assertEqual(wallet_dir.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(wallet_dir.parent.stat().st_mode & 0o777, 0o700)
 
     def test_export_account_help_uses_output_file(self) -> None:
         completed = subprocess.run(
@@ -105,6 +106,7 @@ class WalletRuntimeAccountExportTests(unittest.TestCase):
 
         self.assertEqual(completed.returncode, 0)
         self.assertIn("--private-key-file", completed.stdout)
+        self.assertIn("--address", completed.stdout)
 
     def test_request_account_export_submits_online_wallet_request(self) -> None:
         client = FakeWalletClient(
@@ -158,7 +160,7 @@ class WalletRuntimeAccountExportTests(unittest.TestCase):
             result = request_account_import(
                 client,  # type: ignore[arg-type]
                 private_key_file=Path("/tmp/import.key"),
-                account_address=None,
+                account_address="0x2",
                 wallet_instance_id="local-default",
                 ttl_seconds=300,
                 wait_timeout_seconds=1,
@@ -169,7 +171,7 @@ class WalletRuntimeAccountExportTests(unittest.TestCase):
         self.assertEqual(client.calls[0][1]["client_request_id"], "client-import")
         self.assertEqual(client.calls[0][1]["private_key_file"], "/tmp/import.key")
         self.assertEqual(client.calls[0][1]["wallet_instance_id"], "local-default")
-        self.assertIsNone(client.calls[0][1]["account_address"])
+        self.assertEqual(client.calls[0][1]["account_address"], "0x2")
         self.assertEqual(client.calls[1], ("wallet_get_request_status", {"request_id": "req-import"}))
 
 

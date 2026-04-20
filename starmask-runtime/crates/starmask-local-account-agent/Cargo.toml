@@ -28,6 +28,7 @@ starcoin-crypto.workspace = true
 starcoin-types.workspace = true
 starmask-types = { path = "../starmask-types" }
 starmaskd = { path = "../starmaskd" }
+tempfile.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 uuid.workspace = true
@@ -35,5 +36,4 @@ uuid.workspace = true
 [dev-dependencies]
 pretty_assertions.workspace = true
 starmask-core = { path = "../starmask-core" }
-tempfile.workspace = true
 tokio.workspace = true

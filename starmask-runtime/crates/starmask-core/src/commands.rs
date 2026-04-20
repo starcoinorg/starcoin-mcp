@@ -53,7 +53,7 @@ pub struct CreateExportAccountCommand {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct CreateImportAccountCommand {
     pub client_request_id: ClientRequestId,
-    pub account_address: Option<String>,
+    pub account_address: String,
     pub wallet_instance_id: WalletInstanceId,
     pub private_key_file: String,
     pub display_hint: Option<String>,

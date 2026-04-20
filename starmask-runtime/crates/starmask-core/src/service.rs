@@ -510,6 +510,13 @@ where
         command: CreateImportAccountCommand,
     ) -> CoreResult<CreateRequestResult> {
         self.policy.check_create_import_account(&command)?;
+        if command.account_address.trim().is_empty() {
+            return Err(CoreError::shared(
+                SharedErrorCode::InvalidAccount,
+                "account_address is required for import requests",
+            )
+            .into());
+        }
         let payload = RequestPayload::ImportAccount(ImportAccountPayload {
             private_key_file: command.private_key_file,
             display_hint: command.display_hint,
@@ -517,7 +524,7 @@ where
         });
         self.create_request(
             command.client_request_id,
-            command.account_address.unwrap_or_default(),
+            command.account_address,
             Some(command.wallet_instance_id),
             RequestKind::ImportAccount,
             payload,
@@ -1616,10 +1623,11 @@ mod tests {
     use pretty_assertions::assert_eq;
 
     use starmask_types::{
-        ApprovalSurface, BackendKind, ClientRequestId, DeliveryLease, DeliveryLeaseId,
-        DurationSeconds, LockState, MessageFormat, PresentationId, RejectReasonCode, RequestKind,
-        RequestPayload, RequestRecord, RequestStatus, SharedErrorCode, TimestampMs,
-        TransactionPayload, TransportKind, WalletAccountRecord, WalletCapability, WalletInstanceId,
+        ApprovalSurface, BackendKind, ClientRequestId, DAEMON_PROTOCOL_VERSION, DeliveryLease,
+        DeliveryLeaseId, DurationSeconds, GENERIC_BACKEND_PROTOCOL_VERSION, LockState,
+        MessageFormat, PresentationId, RejectReasonCode, RequestKind, RequestPayload,
+        RequestRecord, RequestStatus, SharedErrorCode, TimestampMs, TransactionPayload,
+        TransportKind, WalletAccountRecord, WalletCapability, WalletInstanceId,
         WalletInstanceRecord,
     };
 
@@ -1906,7 +1914,7 @@ mod tests {
                     wallet_instance_id: wallet_instance_id.clone(),
                     extension_id: "ext".to_owned(),
                     extension_version: "1.0.0".to_owned(),
-                    protocol_version: 1,
+                    protocol_version: DAEMON_PROTOCOL_VERSION,
                     profile_hint: None,
                     lock_state,
                     accounts: Vec::new(),
@@ -1939,7 +1947,7 @@ mod tests {
                     instance_label: "Local Default Wallet".to_owned(),
                     extension_id: String::new(),
                     extension_version: String::new(),
-                    protocol_version: 2,
+                    protocol_version: GENERIC_BACKEND_PROTOCOL_VERSION,
                     capabilities: vec![
                         WalletCapability::Unlock,
                         WalletCapability::GetPublicKey,
@@ -2066,13 +2074,14 @@ mod tests {
         coordinator: &mut Coordinator<MemoryStore, AllowAllPolicy, FixedClock, SequentialIds>,
         client_request_id: &str,
         wallet_instance_id: &WalletInstanceId,
+        account_address: &str,
         ttl_seconds: Option<DurationSeconds>,
     ) -> starmask_types::CreateRequestResult {
         let created = coordinator
             .dispatch(CoordinatorCommand::CreateImportAccount(
                 CreateImportAccountCommand {
                     client_request_id: ClientRequestId::new(client_request_id).unwrap(),
-                    account_address: None,
+                    account_address: account_address.to_owned(),
                     wallet_instance_id: wallet_instance_id.clone(),
                     private_key_file: "/tmp/import.key".to_owned(),
                     display_hint: Some("Import account".to_owned()),
@@ -2133,7 +2142,7 @@ mod tests {
                     wallet_instance_id: wallet_instance_id.clone(),
                     extension_id: "ext".to_owned(),
                     extension_version: "1.0.0".to_owned(),
-                    protocol_version: 1,
+                    protocol_version: DAEMON_PROTOCOL_VERSION,
                     profile_hint: None,
                     lock_state: LockState::Unlocked,
                     accounts: Vec::new(),
@@ -2186,7 +2195,7 @@ mod tests {
                         wallet_instance_id: wallet_instance_id.clone(),
                         extension_id: "ext".to_owned(),
                         extension_version: "1.0.0".to_owned(),
-                        protocol_version: 1,
+                        protocol_version: DAEMON_PROTOCOL_VERSION,
                         profile_hint: None,
                         lock_state: LockState::Unlocked,
                         accounts: Vec::new(),
@@ -2256,7 +2265,7 @@ mod tests {
                     wallet_instance_id: wallet_instance_id.clone(),
                     extension_id: "ext".to_owned(),
                     extension_version: "1.0.0".to_owned(),
-                    protocol_version: 1,
+                    protocol_version: DAEMON_PROTOCOL_VERSION,
                     profile_hint: None,
                     lock_state: LockState::Unlocked,
                     accounts: Vec::new(),
@@ -2314,7 +2323,7 @@ mod tests {
                     wallet_instance_id: wallet_instance_id.clone(),
                     extension_id: "ext".to_owned(),
                     extension_version: "1.0.0".to_owned(),
-                    protocol_version: 1,
+                    protocol_version: DAEMON_PROTOCOL_VERSION,
                     profile_hint: Some("Default".to_owned()),
                     lock_state: LockState::Unlocked,
                     accounts: Vec::new(),
@@ -2380,7 +2389,7 @@ mod tests {
                     wallet_instance_id: wallet_instance_id.clone(),
                     extension_id: "ext".to_owned(),
                     extension_version: "1.0.0".to_owned(),
-                    protocol_version: 1,
+                    protocol_version: DAEMON_PROTOCOL_VERSION,
                     profile_hint: None,
                     lock_state: LockState::Unlocked,
                     accounts: Vec::new(),
@@ -2488,7 +2497,7 @@ mod tests {
                         wallet_instance_id: wallet_instance_id.clone(),
                         extension_id: "ext".to_owned(),
                         extension_version: "1.0.0".to_owned(),
-                        protocol_version: 1,
+                        protocol_version: DAEMON_PROTOCOL_VERSION,
                         profile_hint: None,
                         lock_state: LockState::Unlocked,
                         accounts: Vec::new(),
@@ -2574,7 +2583,7 @@ mod tests {
                     wallet_instance_id: wallet_instance_id.clone(),
                     extension_id: "ext".to_owned(),
                     extension_version: "1.0.0".to_owned(),
-                    protocol_version: 1,
+                    protocol_version: DAEMON_PROTOCOL_VERSION,
                     profile_hint: None,
                     lock_state: LockState::Unlocked,
                     accounts: Vec::new(),
@@ -2665,7 +2674,7 @@ mod tests {
                     wallet_instance_id: wallet_instance_id.clone(),
                     extension_id: "ext".to_owned(),
                     extension_version: "1.0.0".to_owned(),
-                    protocol_version: 1,
+                    protocol_version: DAEMON_PROTOCOL_VERSION,
                     profile_hint: None,
                     lock_state: LockState::Unlocked,
                     accounts: Vec::new(),
@@ -2767,7 +2776,7 @@ mod tests {
                     instance_label: "Local Default Wallet".to_owned(),
                     extension_id: String::new(),
                     extension_version: String::new(),
-                    protocol_version: 2,
+                    protocol_version: GENERIC_BACKEND_PROTOCOL_VERSION,
                     capabilities: vec![
                         WalletCapability::Unlock,
                         WalletCapability::GetPublicKey,
@@ -2829,7 +2838,7 @@ mod tests {
                     instance_label: "Local Default Wallet".to_owned(),
                     extension_id: String::new(),
                     extension_version: String::new(),
-                    protocol_version: 2,
+                    protocol_version: GENERIC_BACKEND_PROTOCOL_VERSION,
                     capabilities: vec![
                         WalletCapability::Unlock,
                         WalletCapability::GetPublicKey,
@@ -2906,7 +2915,7 @@ mod tests {
                     instance_label: "Local Default Wallet".to_owned(),
                     extension_id: String::new(),
                     extension_version: String::new(),
-                    protocol_version: 2,
+                    protocol_version: GENERIC_BACKEND_PROTOCOL_VERSION,
                     capabilities: vec![
                         WalletCapability::Unlock,
                         WalletCapability::GetPublicKey,
@@ -2974,6 +2983,7 @@ mod tests {
             &mut coordinator,
             "client-import-account",
             &wallet_instance_id,
+            "0x1",
             None,
         );
         let pulled = pull_next_request(&mut coordinator, &wallet_instance_id);
@@ -2981,7 +2991,7 @@ mod tests {
         assert_eq!(created.wallet_instance_id, wallet_instance_id);
         assert_eq!(created.kind, RequestKind::ImportAccount);
         assert_eq!(pulled.kind, RequestKind::ImportAccount);
-        assert_eq!(pulled.account_address, "");
+        assert_eq!(pulled.account_address, "0x1");
         assert_eq!(pulled.private_key_file.as_deref(), Some("/tmp/import.key"));
     }
 
@@ -3107,7 +3117,7 @@ mod tests {
                     instance_label: "Local Default Wallet".to_owned(),
                     extension_id: String::new(),
                     extension_version: String::new(),
-                    protocol_version: 2,
+                    protocol_version: GENERIC_BACKEND_PROTOCOL_VERSION,
                     capabilities: vec![
                         WalletCapability::Unlock,
                         WalletCapability::GetPublicKey,
@@ -3154,7 +3164,7 @@ mod tests {
                     instance_label: "Local Default Wallet".to_owned(),
                     extension_id: String::new(),
                     extension_version: String::new(),
-                    protocol_version: 2,
+                    protocol_version: GENERIC_BACKEND_PROTOCOL_VERSION,
                     capabilities: vec![
                         WalletCapability::Unlock,
                         WalletCapability::GetPublicKey,
@@ -3203,7 +3213,7 @@ mod tests {
                     wallet_instance_id: wallet_instance_id.clone(),
                     extension_id: "ext".to_owned(),
                     extension_version: "1.0.0".to_owned(),
-                    protocol_version: 1,
+                    protocol_version: DAEMON_PROTOCOL_VERSION,
                     profile_hint: None,
                     lock_state: LockState::Unlocked,
                     accounts: Vec::new(),
@@ -3238,7 +3248,7 @@ mod tests {
                     wallet_instance_id: wallet_instance_id.clone(),
                     extension_id: "ext".to_owned(),
                     extension_version: "1.0.0".to_owned(),
-                    protocol_version: 1,
+                    protocol_version: DAEMON_PROTOCOL_VERSION,
                     profile_hint: None,
                     lock_state: LockState::Unlocked,
                     accounts: Vec::new(),
@@ -3323,7 +3333,7 @@ mod tests {
                     wallet_instance_id: wallet_instance_id.clone(),
                     extension_id: "ext".to_owned(),
                     extension_version: "1.0.0".to_owned(),
-                    protocol_version: 1,
+                    protocol_version: DAEMON_PROTOCOL_VERSION,
                     profile_hint: None,
                     lock_state: LockState::Unlocked,
                     accounts: Vec::new(),
@@ -3388,7 +3398,7 @@ mod tests {
                     wallet_instance_id: wallet_instance_id.clone(),
                     extension_id: "ext".to_owned(),
                     extension_version: "1.0.0".to_owned(),
-                    protocol_version: 1,
+                    protocol_version: DAEMON_PROTOCOL_VERSION,
                     profile_hint: None,
                     lock_state: LockState::Unlocked,
                     accounts: Vec::new(),

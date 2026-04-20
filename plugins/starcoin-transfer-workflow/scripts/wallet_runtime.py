@@ -10,6 +10,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -172,8 +173,8 @@ def parse_args() -> argparse.Namespace:
     )
     import_account.add_argument(
         "--address",
-        default=None,
-        help="Optional account address. When omitted, the local agent derives it from the private key.",
+        required=True,
+        help="Expected account address derived from the private key file.",
     )
     import_account.add_argument(
         "--wallet-instance-id",
@@ -198,14 +199,24 @@ def parse_args() -> argparse.Namespace:
 
 
 def ensure_private_wallet_dir(wallet_dir: Path) -> None:
-    if not wallet_dir.exists():
-        wallet_dir.mkdir(parents=True, mode=0o700)
+    missing_paths: list[Path] = []
+    current = wallet_dir
+    while not current.exists():
+        missing_paths.append(current)
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    for path in reversed(missing_paths):
+        path.mkdir(mode=0o700)
+        os.chmod(path, 0o700)
     os.chmod(wallet_dir, 0o700)
-    mode = wallet_dir.stat().st_mode & 0o777
-    if mode & 0o077:
-        raise RuntimeError(
-            f"wallet_dir {wallet_dir} must not grant group/world permissions, got {oct(mode)}"
-        )
+    for path in [*missing_paths, wallet_dir]:
+        mode = path.stat().st_mode & 0o777
+        if mode & 0o077:
+            raise RuntimeError(
+                f"wallet_dir path {path} must not grant group/world permissions, got {oct(mode)}"
+            )
 
 
 def write_text(path: Path, content: str) -> None:
@@ -485,7 +496,7 @@ TERMINAL_REQUEST_STATUSES = {"approved", "rejected", "expired", "cancelled", "fa
 
 
 def new_client_request_id(prefix: str) -> str:
-    return f"{prefix}-{int(time.time() * 1000)}-{os.getpid()}"
+    return f"{prefix}-{os.getpid()}-{uuid.uuid4().hex}"
 
 
 def require_wallet_runtime_ready(runtime_dir: Path) -> dict[str, Any]:
@@ -660,7 +671,10 @@ def main() -> int:
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
             result = payload["result"]
-            print(f"account private-key export created: {result.get('output_file', destination_file)}")
+            print(
+                "account private-key export created: "
+                f"{result.get('output_file', str(destination_file))}"
+            )
             print(f"address:                {result.get('address', args.address)}")
             print(f"request_id:             {payload['request_id']}")
             print(f"wallet_instance_id:     {wallet_instance_id}")
@@ -671,11 +685,12 @@ def main() -> int:
         private_key_file = Path(args.private_key_file).expanduser().resolve()
         if not private_key_file.is_file():
             raise FileNotFoundError(f"private_key_file does not exist: {private_key_file}")
-        wallet_instance_id = (
-            args.wallet_instance_id
-            or status.get("wallet_instance_id")
-            or DEFAULT_WALLET_BACKEND_ID
-        )
+        wallet_instance_id = args.wallet_instance_id or status.get("wallet_instance_id")
+        if not wallet_instance_id:
+            raise RuntimeError(
+                "wallet_instance_id could not be resolved; pass --wallet-instance-id or "
+                "restart the runtime so metadata records it"
+            )
         client = StarmaskDaemonClient(socket_path=Path(status["daemon_socket_path"]))
         payload = request_account_import(
             client,

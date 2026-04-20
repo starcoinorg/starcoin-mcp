@@ -95,6 +95,11 @@ class StarmaskDaemonClient:
                 },
             )
         if name in {"wallet_request_import_account", "wallet_import_account"}:
+            account_address = (
+                params.get("account_address")
+                if params.get("account_address") is not None
+                else params.get("address")
+            )
             return self._call(
                 "request.createImportAccount",
                 {
@@ -102,7 +107,7 @@ class StarmaskDaemonClient:
                     "client_request_id": params["client_request_id"],
                     "wallet_instance_id": params["wallet_instance_id"],
                     "private_key_file": params["private_key_file"],
-                    "account_address": params.get("account_address") or params.get("address"),
+                    "account_address": account_address,
                     "display_hint": params.get("display_hint"),
                     "client_context": params.get("client_context"),
                     "ttl_seconds": params.get("ttl_seconds"),

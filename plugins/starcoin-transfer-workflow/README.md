@@ -240,7 +240,7 @@ To import a private-key file into the local wallet backend, keep the wallet runt
 approve the request in the supervisor terminal:
 
 ```bash
-python3 ./scripts/wallet_runtime.py import-account --private-key-file ./account.key
+python3 ./scripts/wallet_runtime.py import-account --private-key-file ./account.key --address 0x1
 ```
 
 If `--output-file` is omitted, the command prompts for a destination file or an existing directory.
@@ -424,4 +424,4 @@ By default the transfer state file is written next to that audit file as `transf
 
 - This plugin example is repo-local. It lives under the current workspace so you can inspect and modify it directly.
 - If you want a global plugin instead, move the same files under `~/plugins/starcoin-transfer-workflow/` and mirror the marketplace entry into `~/.agents/plugins/marketplace.json`.
-- In global mode, put `starcoin-node-cli`, `starmaskd`, `local-account-agent`, and `local-account-export` somewhere on PATH.
+- In global mode, put `starcoin-node-cli`, `starmaskd`, and `local-account-agent` somewhere on PATH.

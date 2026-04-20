@@ -26,6 +26,7 @@ pub enum SharedErrorCode {
     InvalidTransactionPayload,
     InvalidMessagePayload,
     UnsupportedChain,
+    InvalidRequest,
     InternalBridgeError,
     ResultUnavailable,
     IdempotencyKeyConflict,

@@ -9,7 +9,8 @@ use crate::{
     time::TimestampMs,
 };
 
-pub const NATIVE_BRIDGE_PROTOCOL_VERSION: u32 = 1;
+// Bumped because request.resolve/request.next gained export/import result fields.
+pub const NATIVE_BRIDGE_PROTOCOL_VERSION: u32 = 2;
 pub const NATIVE_BRIDGE_MAX_INBOUND_BYTES: u32 = 64 * 1024 * 1024;
 pub const NATIVE_BRIDGE_MAX_OUTBOUND_BYTES: u32 = 1024 * 1024;
 
