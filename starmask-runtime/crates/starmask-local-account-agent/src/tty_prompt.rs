@@ -31,6 +31,12 @@ pub(crate) trait ApprovalPrompt: Send + Sync {
         request: &PulledRequest,
         capabilities: &[WalletCapability],
     ) -> std::result::Result<PromptApproval, RequestRejection>;
+
+    fn prompt_for_import_account(
+        &self,
+        request: &PulledRequest,
+        capabilities: &[WalletCapability],
+    ) -> std::result::Result<PromptApproval, RequestRejection>;
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -66,6 +72,14 @@ impl ApprovalPrompt for TtyApprovalPrompt {
         account_info: &AccountInfo,
         capabilities: &[WalletCapability],
     ) -> std::result::Result<PromptApproval, RequestRejection> {
+        if request.kind == RequestKind::ExportAccount
+            && !capabilities.contains(&WalletCapability::ExportAccount)
+        {
+            return Err(RequestRejection {
+                reason_code: starmask_types::RejectReasonCode::UnsupportedOperation,
+                message: Some("Local backend does not support account export".to_owned()),
+            });
+        }
         ensure_local_unlock_capability(account_info.is_locked, capabilities)?;
         print_request_summary(request, account_info);
 
@@ -87,7 +101,8 @@ impl ApprovalPrompt for TtyApprovalPrompt {
             }
         }
 
-        let password = if account_info.is_locked {
+        let needs_password = account_info.is_locked || request.kind == RequestKind::ExportAccount;
+        let password = if needs_password {
             let password = rpassword::prompt_password("Account password: ").map_err(|error| {
                 RequestRejection {
                     reason_code: starmask_types::RejectReasonCode::BackendUnavailable,
@@ -124,6 +139,45 @@ impl ApprovalPrompt for TtyApprovalPrompt {
         }
 
         print_create_account_summary(request);
+
+        loop {
+            match prompt_for_action().map_err(|error| RequestRejection {
+                reason_code: starmask_types::RejectReasonCode::BackendUnavailable,
+                message: Some(format!("Failed to read local approval input: {error}")),
+            })? {
+                PromptAction::Approve => break,
+                PromptAction::Reject => {
+                    return Ok(PromptApproval {
+                        approved: false,
+                        password: None,
+                    });
+                }
+                PromptAction::ViewRaw => {
+                    print_raw_payload_details(request);
+                }
+            }
+        }
+
+        let password = prompt_for_new_account_password()?;
+        Ok(PromptApproval {
+            approved: true,
+            password: Some(password),
+        })
+    }
+
+    fn prompt_for_import_account(
+        &self,
+        request: &PulledRequest,
+        capabilities: &[WalletCapability],
+    ) -> std::result::Result<PromptApproval, RequestRejection> {
+        if !capabilities.contains(&WalletCapability::ImportAccount) {
+            return Err(RequestRejection {
+                reason_code: starmask_types::RejectReasonCode::UnsupportedOperation,
+                message: Some("Local backend does not support account import".to_owned()),
+            });
+        }
+
+        print_import_account_summary(request);
 
         loop {
             match prompt_for_action().map_err(|error| RequestRejection {
@@ -240,6 +294,10 @@ fn print_create_account_summary(request: &PulledRequest) {
     eprint!("{}", render_create_account_summary(request));
 }
 
+fn print_import_account_summary(request: &PulledRequest) {
+    eprint!("{}", render_import_account_summary(request));
+}
+
 fn print_raw_payload_details(request: &PulledRequest) {
     eprint!("{}", render_raw_payload_details(request));
 }
@@ -258,6 +316,8 @@ fn render_request_summary(request: &PulledRequest, account_info: &AccountInfo) -
         RequestKind::SignTransaction => write_transaction_section(&mut output, request),
         RequestKind::SignMessage => write_message_section(&mut output, request),
         RequestKind::CreateAccount => write_create_account_section(&mut output),
+        RequestKind::ExportAccount => write_export_account_section(&mut output, request),
+        RequestKind::ImportAccount => write_import_account_section(&mut output, request),
     }
     write_context_section(&mut output, request);
     write_actions_section(&mut output);
@@ -277,6 +337,24 @@ fn render_create_account_summary(request: &PulledRequest) -> String {
 
     write_request_section(&mut output, request);
     write_create_account_section(&mut output);
+    write_context_section(&mut output, request);
+    write_actions_section(&mut output);
+    write_card_border(&mut output);
+
+    output.push('\n');
+    output
+}
+
+fn render_import_account_summary(request: &PulledRequest) -> String {
+    let mut output = String::new();
+    output.push('\n');
+
+    write_card_border(&mut output);
+    write_card_text_line(&mut output, "Starmask Local Account Import Request");
+    write_card_border(&mut output);
+
+    write_request_section(&mut output, request);
+    write_import_account_section(&mut output, request);
     write_context_section(&mut output, request);
     write_actions_section(&mut output);
     write_card_border(&mut output);
@@ -349,6 +427,43 @@ fn render_raw_payload_details(request: &PulledRequest) -> String {
                 "Create a new local account and add it to this wallet backend.",
             );
         }
+        RequestKind::ExportAccount => {
+            write_card_section_heading(&mut output, "Account Export");
+            write_card_field_full(
+                &mut output,
+                "Operation",
+                "Export one local account private key to a file on this machine.",
+            );
+            write_card_field_full(&mut output, "Account", &request.account_address);
+            write_card_field_full(
+                &mut output,
+                "Output File",
+                format_optional_path(request.output_file.as_deref()),
+            );
+            write_card_field_full(
+                &mut output,
+                "Overwrite Existing File",
+                format_flag(request.force),
+            );
+        }
+        RequestKind::ImportAccount => {
+            write_card_section_heading(&mut output, "Account Import");
+            write_card_field_full(
+                &mut output,
+                "Operation",
+                "Import one local account private key from a file on this machine.",
+            );
+            write_card_field_full(
+                &mut output,
+                "Requested Account",
+                requested_account_label(&request.account_address),
+            );
+            write_card_field_full(
+                &mut output,
+                "Private Key File",
+                format_optional_path(request.private_key_file.as_deref()),
+            );
+        }
     }
 
     write_card_section_heading(&mut output, "Back");
@@ -399,6 +514,46 @@ fn write_create_account_section(output: &mut String) {
         output,
         "Password Handling",
         "password is entered locally on this terminal and is not sent by the host",
+    );
+}
+
+fn write_export_account_section(output: &mut String, request: &PulledRequest) {
+    write_card_section_heading(output, "Account Export");
+    write_card_field_preview(output, "Operation", "export_local_account_private_key");
+    write_card_field_preview(
+        output,
+        "Output File",
+        format_optional_path(request.output_file.as_deref()),
+    );
+    write_card_field_preview(
+        output,
+        "Overwrite Existing File",
+        format_flag(request.force),
+    );
+    write_card_field_preview(
+        output,
+        "Password Handling",
+        "account password is entered locally on this terminal and is not sent by the host",
+    );
+}
+
+fn write_import_account_section(output: &mut String, request: &PulledRequest) {
+    write_card_section_heading(output, "Account Import");
+    write_card_field_preview(output, "Operation", "import_local_account_private_key");
+    write_card_field_preview(
+        output,
+        "Private Key File",
+        format_optional_path(request.private_key_file.as_deref()),
+    );
+    write_card_field_preview(
+        output,
+        "Requested Account",
+        requested_account_label(&request.account_address),
+    );
+    write_card_field_preview(
+        output,
+        "Password Handling",
+        "new account password is entered locally on this terminal and is not sent by the host",
     );
 }
 
@@ -572,6 +727,22 @@ fn write_message_section(output: &mut String, request: &PulledRequest) {
     }
 }
 
+fn format_optional_path(value: Option<&str>) -> &str {
+    value.unwrap_or("missing")
+}
+
+fn requested_account_label(account_address: &str) -> &str {
+    if account_address.trim().is_empty() {
+        "missing"
+    } else {
+        account_address
+    }
+}
+
+fn format_flag(value: bool) -> &'static str {
+    if value { "true" } else { "false" }
+}
+
 fn write_context_section(output: &mut String, request: &PulledRequest) {
     if request.display_hint.is_none() && request.client_context.is_none() {
         return;
@@ -736,6 +907,8 @@ fn request_kind_label(kind: RequestKind) -> &'static str {
         RequestKind::SignTransaction => "sign_transaction",
         RequestKind::SignMessage => "sign_message",
         RequestKind::CreateAccount => "create_account",
+        RequestKind::ExportAccount => "export_account",
+        RequestKind::ImportAccount => "import_account",
     }
 }
 
@@ -936,6 +1109,9 @@ mod tests {
             raw_txn_bcs_hex: None,
             message: Some("0xdeadbeef".to_owned()),
             message_format: Some(MessageFormat::Hex),
+            output_file: None,
+            force: false,
+            private_key_file: None,
         }
     }
 
@@ -1006,6 +1182,9 @@ mod tests {
             )),
             message: None,
             message_format: None,
+            output_file: None,
+            force: false,
+            private_key_file: None,
         };
 
         let rendered = render_request_summary(&request, &sample_account_info(false));
@@ -1065,6 +1244,9 @@ mod tests {
             )),
             message: None,
             message_format: None,
+            output_file: None,
+            force: false,
+            private_key_file: None,
         };
 
         let rendered = render_request_summary(&request, &sample_account_info(false));
@@ -1103,6 +1285,9 @@ mod tests {
             )),
             message: None,
             message_format: None,
+            output_file: None,
+            force: false,
+            private_key_file: None,
         };
 
         let rendered = render_request_summary(&request, &sample_account_info(false));
@@ -1120,5 +1305,57 @@ mod tests {
         assert!(rendered.contains("Canonical Message"));
         assert!(rendered.contains("Message: 0xdeadbeef"));
         assert!(rendered.contains("Byte Length: 4"));
+    }
+
+    #[test]
+    fn render_export_and_import_request_summaries_surface_file_paths() {
+        let export_request = PulledRequest {
+            request_id: RequestId::new("req-export").unwrap(),
+            client_request_id: ClientRequestId::new("client-export").unwrap(),
+            kind: RequestKind::ExportAccount,
+            account_address: "0x1".to_owned(),
+            payload_hash: PayloadHash::new("payload-export").unwrap(),
+            display_hint: None,
+            client_context: None,
+            resume_required: false,
+            delivery_lease_id: None,
+            lease_expires_at: None,
+            presentation_id: None,
+            presentation_expires_at: None,
+            raw_txn_bcs_hex: None,
+            message: None,
+            message_format: None,
+            output_file: Some("/tmp/account.key".to_owned()),
+            force: true,
+            private_key_file: None,
+        };
+        let import_request = PulledRequest {
+            request_id: RequestId::new("req-import").unwrap(),
+            client_request_id: ClientRequestId::new("client-import").unwrap(),
+            kind: RequestKind::ImportAccount,
+            account_address: "0x1".to_owned(),
+            payload_hash: PayloadHash::new("payload-import").unwrap(),
+            display_hint: None,
+            client_context: None,
+            resume_required: false,
+            delivery_lease_id: None,
+            lease_expires_at: None,
+            presentation_id: None,
+            presentation_expires_at: None,
+            raw_txn_bcs_hex: None,
+            message: None,
+            message_format: None,
+            output_file: None,
+            force: false,
+            private_key_file: Some("/tmp/import.key".to_owned()),
+        };
+
+        let export_summary = render_request_summary(&export_request, &sample_account_info(false));
+        let import_details = render_raw_payload_details(&import_request);
+
+        assert!(export_summary.contains("Output File: /tmp/account.key"));
+        assert!(export_summary.contains("Overwrite Existing File: true"));
+        assert!(import_details.contains("Private Key File: /tmp/import.key"));
+        assert!(import_details.contains("Requested Account: 0x1"));
     }
 }

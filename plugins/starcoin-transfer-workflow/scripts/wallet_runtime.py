@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import argparse
-import getpass
 import json
 import os
 import signal
@@ -11,6 +10,7 @@ import socket
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -24,12 +24,7 @@ from runtime_layout import (
     resolve_workspace_root,
     wallet_runtime_socket_path,
 )
-
-try:
-    import tomllib
-except ModuleNotFoundError:  # pragma: no cover
-    import tomli as tomllib  # type: ignore
-
+from starmaskd_client import StarmaskDaemonClient
 
 PLUGIN_ROOT = Path(__file__).resolve().parent.parent
 
@@ -133,11 +128,6 @@ def parse_args() -> argparse.Namespace:
         help="Export one local account private key into a file.",
     )
     export_account.add_argument(
-        "--wallet-dir",
-        default=None,
-        help="Explicit local account vault directory. Defaults to the active runtime metadata or the standard local-account path.",
-    )
-    export_account.add_argument(
         "--address",
         required=True,
         help="Account address to export.",
@@ -149,15 +139,21 @@ def parse_args() -> argparse.Namespace:
         help="Destination file, or an existing directory where a timestamped private-key file will be written. Prompts when omitted in an interactive shell.",
     )
     export_account.add_argument(
-        "--chain-id",
-        type=int,
+        "--wallet-instance-id",
         default=None,
-        help="Chain id for opening the account manager. Defaults to runtime metadata, runtime config, or 254.",
+        help="Wallet instance that owns the account. Defaults to the active runtime metadata.",
     )
     export_account.add_argument(
-        "--password-stdin",
-        action="store_true",
-        help="Read the account password from stdin instead of prompting.",
+        "--ttl-seconds",
+        type=int,
+        default=300,
+        help="Request TTL while waiting for local approval.",
+    )
+    export_account.add_argument(
+        "--wait-timeout-seconds",
+        type=float,
+        default=300.0,
+        help="How long to wait for the local approval result.",
     )
     export_account.add_argument(
         "--force",
@@ -166,18 +162,61 @@ def parse_args() -> argparse.Namespace:
     )
     export_account.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
 
+    import_account = subparsers.add_parser(
+        "import-account",
+        help="Import one local account private key from a file through the running runtime.",
+    )
+    import_account.add_argument(
+        "--private-key-file",
+        required=True,
+        help="Private-key file to import. The local account agent reads this file locally.",
+    )
+    import_account.add_argument(
+        "--address",
+        required=True,
+        help="Expected account address derived from the private key file.",
+    )
+    import_account.add_argument(
+        "--wallet-instance-id",
+        default=None,
+        help="Wallet instance that should import the account. Defaults to the active runtime metadata.",
+    )
+    import_account.add_argument(
+        "--ttl-seconds",
+        type=int,
+        default=300,
+        help="Request TTL while waiting for local approval.",
+    )
+    import_account.add_argument(
+        "--wait-timeout-seconds",
+        type=float,
+        default=300.0,
+        help="How long to wait for the local approval result.",
+    )
+    import_account.add_argument("--json", action="store_true", help="Emit machine-readable JSON.")
+
     return parser.parse_args()
 
 
 def ensure_private_wallet_dir(wallet_dir: Path) -> None:
-    if not wallet_dir.exists():
-        raise FileNotFoundError(f"wallet_dir does not exist: {wallet_dir}")
+    missing_paths: list[Path] = []
+    current = wallet_dir
+    while not current.exists():
+        missing_paths.append(current)
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    for path in reversed(missing_paths):
+        path.mkdir(mode=0o700)
+        os.chmod(path, 0o700)
     os.chmod(wallet_dir, 0o700)
-    mode = wallet_dir.stat().st_mode & 0o777
-    if mode & 0o077:
-        raise RuntimeError(
-            f"wallet_dir {wallet_dir} must not grant group/world permissions, got {oct(mode)}"
-        )
+    for path in [*missing_paths, wallet_dir]:
+        mode = path.stat().st_mode & 0o777
+        if mode & 0o077:
+            raise RuntimeError(
+                f"wallet_dir path {path} must not grant group/world permissions, got {oct(mode)}"
+            )
 
 
 def write_text(path: Path, content: str) -> None:
@@ -272,66 +311,6 @@ def runtime_paths(runtime_dir: Path) -> dict[str, Path]:
     }
 
 
-def resolve_account_export_wallet_dir(runtime_dir: Path, wallet_dir_arg: str | None) -> Path:
-    if wallet_dir_arg:
-        return Path(wallet_dir_arg).expanduser().resolve()
-
-    metadata = read_json(runtime_paths(runtime_dir)["metadata_path"])
-    if metadata is not None:
-        wallet_dir = metadata.get("wallet_dir")
-        if isinstance(wallet_dir, str) and wallet_dir.strip():
-            return Path(wallet_dir).expanduser().resolve()
-
-    config_path = runtime_paths(runtime_dir)["config_path"]
-    if config_path.exists():
-        with config_path.open("rb") as handle:
-            config = tomllib.load(handle)
-        for backend in config.get("wallet_backends", []):
-            if not isinstance(backend, dict):
-                continue
-            wallet_dir = backend.get("account_dir")
-            if isinstance(wallet_dir, str) and wallet_dir.strip():
-                return Path(wallet_dir).expanduser().resolve()
-
-    return DEFAULT_LOCAL_ACCOUNT_DIR.resolve()
-
-
-def resolve_account_export_chain_id(runtime_dir: Path, chain_id_arg: int | None) -> int:
-    if chain_id_arg is not None:
-        return validate_chain_id(chain_id_arg)
-
-    metadata = read_json(runtime_paths(runtime_dir)["metadata_path"])
-    if metadata is not None:
-        metadata_chain_id = metadata.get("chain_id")
-        if metadata_chain_id is not None:
-            return validate_chain_id(metadata_chain_id)
-
-    config_path = runtime_paths(runtime_dir)["config_path"]
-    if config_path.exists():
-        with config_path.open("rb") as handle:
-            config = tomllib.load(handle)
-        for backend in config.get("wallet_backends", []):
-            if not isinstance(backend, dict):
-                continue
-            config_chain_id = backend.get("chain_id")
-            if config_chain_id is not None:
-                return validate_chain_id(config_chain_id)
-
-    return 254
-
-
-def validate_chain_id(value: Any) -> int:
-    if isinstance(value, bool):
-        raise RuntimeError(f"chain_id must be an integer from 0 to 255, got {value!r}")
-    try:
-        chain_id = int(value)
-    except (TypeError, ValueError) as error:
-        raise RuntimeError(f"chain_id must be an integer from 0 to 255, got {value!r}") from error
-    if chain_id < 0 or chain_id > 255:
-        raise RuntimeError(f"chain_id must be an integer from 0 to 255, got {chain_id}")
-    return chain_id
-
-
 def account_export_filename(account_address: str) -> str:
     address = account_address.strip()
     if address.startswith(("0x", "0X")):
@@ -357,79 +336,6 @@ def resolve_account_export_output_file(
         if requested.is_dir():
             return requested / account_export_filename(account_address)
     return requested
-
-
-def read_account_export_password(password_stdin: bool) -> str:
-    if password_stdin:
-        password = sys.stdin.read()
-        if not password.strip():
-            raise RuntimeError("account password cannot be empty")
-        return password
-    if not sys.stdin.isatty():
-        raise RuntimeError(
-            "account password must be provided with --password-stdin in non-interactive mode"
-        )
-    password = getpass.getpass("Account password: ")
-    if not password:
-        raise RuntimeError("account password cannot be empty")
-    return password
-
-
-def export_account_private_key(
-    *,
-    wallet_dir: Path,
-    destination_file: Path,
-    runtime_dir: Path,
-    account_address: str,
-    chain_id: int,
-    password: str,
-    force: bool,
-) -> dict[str, Any]:
-    wallet_dir = wallet_dir.expanduser().resolve()
-    destination_file = destination_file.expanduser().resolve()
-    runtime_dir = runtime_dir.expanduser().resolve()
-    if not wallet_dir.exists():
-        raise FileNotFoundError(f"wallet_dir does not exist: {wallet_dir}")
-    if not wallet_dir.is_dir():
-        raise RuntimeError(f"wallet_dir is not a directory: {wallet_dir}")
-
-    program_args = [
-        "--wallet-dir",
-        str(wallet_dir),
-        "--address",
-        account_address,
-        "--chain-id",
-        str(chain_id),
-        "--output-file",
-        str(destination_file),
-        "--password-stdin",
-        "--json",
-    ]
-    if force:
-        program_args.append("--force")
-    command, launch = launch_command(
-        env_name="LOCAL_ACCOUNT_EXPORT_BIN",
-        binary_name="local-account-export",
-        manifest_path=LOCAL_AGENT_MANIFEST,
-        cargo_bin_name="local-account-export",
-        program_args=program_args,
-    )
-    completed = subprocess.run(
-        command,
-        cwd=str(WORKSPACE_ROOT),
-        input=password,
-        text=True,
-        capture_output=True,
-        check=False,
-    )
-    if completed.returncode != 0:
-        error_output = (completed.stderr or completed.stdout).strip()
-        raise RuntimeError(error_output or "account private-key export failed")
-
-    result = json.loads(completed.stdout)
-    result["runtime_dir"] = str(runtime_dir)
-    result["export_launch"] = launch
-    return result
 
 
 def toml_string(value: str) -> str:
@@ -586,6 +492,139 @@ def stop_runtime(runtime_dir: Path) -> dict[str, Any]:
     }
 
 
+TERMINAL_REQUEST_STATUSES = {"approved", "rejected", "expired", "cancelled", "failed"}
+
+
+def new_client_request_id(prefix: str) -> str:
+    return f"{prefix}-{os.getpid()}-{uuid.uuid4().hex}"
+
+
+def require_wallet_runtime_ready(runtime_dir: Path) -> dict[str, Any]:
+    status = load_status(runtime_dir)
+    if not status["daemon_socket_ok"]:
+        raise RuntimeError(
+            "wallet runtime must be running for account import/export; start it with "
+            "`wallet_runtime.py up` and keep the supervisor terminal open "
+            f"(daemon socket: {status['daemon_socket_detail']})"
+        )
+    if not status["agent_running"]:
+        raise RuntimeError(
+            "local-account-agent is not running; start `wallet_runtime.py up` and approve "
+            "account import/export in that supervisor terminal"
+        )
+    return status
+
+
+def wait_for_wallet_request(
+    client: StarmaskDaemonClient,
+    *,
+    request_id: str,
+    timeout_seconds: float,
+    poll_interval_seconds: float = 0.5,
+) -> dict[str, Any]:
+    deadline = time.time() + timeout_seconds
+    last_status: dict[str, Any] | None = None
+    while True:
+        current = client.call_tool(
+            "wallet_get_request_status",
+            {"request_id": request_id},
+        )
+        last_status = current
+        status = str(current.get("status", "")).lower()
+        if status in TERMINAL_REQUEST_STATUSES:
+            if status != "approved":
+                error_message = current.get("error_message") or "no error detail"
+                raise RuntimeError(
+                    f"wallet request {request_id} ended with status {status}: {error_message}"
+                )
+            result = current.get("result")
+            if not isinstance(result, dict):
+                raise RuntimeError(f"wallet request {request_id} approved without a result")
+            return current
+        if time.time() >= deadline:
+            raise RuntimeError(
+                f"wallet request {request_id} did not finish within {timeout_seconds:g}s; "
+                f"last status was {last_status}"
+            )
+        time.sleep(poll_interval_seconds)
+
+
+def request_account_export(
+    client: StarmaskDaemonClient,
+    *,
+    account_address: str,
+    output_file: Path,
+    wallet_instance_id: str | None,
+    force: bool,
+    ttl_seconds: int,
+    wait_timeout_seconds: float,
+) -> dict[str, Any]:
+    created = client.call_tool(
+        "wallet_request_export_account",
+        {
+            "client_request_id": new_client_request_id("export-account"),
+            "account_address": account_address,
+            "wallet_instance_id": wallet_instance_id,
+            "output_file": str(output_file),
+            "force": force,
+            "display_hint": f"Export account {account_address}",
+            "client_context": "starcoin-transfer wallet_runtime export-account",
+            "ttl_seconds": ttl_seconds,
+        },
+    )
+    request_id = created.get("request_id")
+    if not isinstance(request_id, str) or not request_id:
+        raise RuntimeError(f"daemon did not return a request_id: {created!r}")
+    completed = wait_for_wallet_request(
+        client,
+        request_id=request_id,
+        timeout_seconds=wait_timeout_seconds,
+    )
+    return {
+        "request": created,
+        "request_id": request_id,
+        "status": completed.get("status"),
+        "result": completed["result"],
+    }
+
+
+def request_account_import(
+    client: StarmaskDaemonClient,
+    *,
+    private_key_file: Path,
+    account_address: str | None,
+    wallet_instance_id: str,
+    ttl_seconds: int,
+    wait_timeout_seconds: float,
+) -> dict[str, Any]:
+    created = client.call_tool(
+        "wallet_request_import_account",
+        {
+            "client_request_id": new_client_request_id("import-account"),
+            "wallet_instance_id": wallet_instance_id,
+            "private_key_file": str(private_key_file),
+            "account_address": account_address,
+            "display_hint": "Import local account private key",
+            "client_context": "starcoin-transfer wallet_runtime import-account",
+            "ttl_seconds": ttl_seconds,
+        },
+    )
+    request_id = created.get("request_id")
+    if not isinstance(request_id, str) or not request_id:
+        raise RuntimeError(f"daemon did not return a request_id: {created!r}")
+    completed = wait_for_wallet_request(
+        client,
+        request_id=request_id,
+        timeout_seconds=wait_timeout_seconds,
+    )
+    return {
+        "request": created,
+        "request_id": request_id,
+        "status": completed.get("status"),
+        "result": completed["result"],
+    }
+
+
 def main() -> int:
     args = parse_args()
     runtime_dir = Path(args.runtime_dir).resolve()
@@ -609,35 +648,69 @@ def main() -> int:
         return 0
 
     if args.command == "export-account":
-        wallet_dir = resolve_account_export_wallet_dir(runtime_dir, args.wallet_dir)
-        chain_id = resolve_account_export_chain_id(runtime_dir, args.chain_id)
-        status = load_status(runtime_dir)
-        runtime_is_live = bool(status["starmaskd_running"] or status["agent_running"])
-        if runtime_is_live:
-            raise RuntimeError(
-                "wallet runtime is still running; stop it first with the down command before exporting an account private key"
-            )
+        status = require_wallet_runtime_ready(runtime_dir)
         destination_file = resolve_account_export_output_file(
             args.output_file,
             account_address=args.address,
         )
-        password = read_account_export_password(args.password_stdin)
-        payload = export_account_private_key(
-            wallet_dir=wallet_dir,
-            destination_file=destination_file,
-            runtime_dir=runtime_dir,
+        wallet_instance_id = args.wallet_instance_id or status.get("wallet_instance_id")
+        client = StarmaskDaemonClient(socket_path=Path(status["daemon_socket_path"]))
+        payload = request_account_export(
+            client,
             account_address=args.address,
-            chain_id=chain_id,
-            password=password,
+            output_file=destination_file,
+            wallet_instance_id=wallet_instance_id,
             force=args.force,
+            ttl_seconds=args.ttl_seconds,
+            wait_timeout_seconds=args.wait_timeout_seconds,
         )
+        payload["runtime_dir"] = str(runtime_dir)
+        payload["daemon_socket_path"] = status["daemon_socket_path"]
+        payload["wallet_instance_id"] = wallet_instance_id
         if args.json:
             print(json.dumps(payload, indent=2, sort_keys=True))
         else:
-            print(f"account private-key export created: {destination_file}")
-            print(f"address:                {args.address}")
-            print(f"wallet_dir:             {wallet_dir}")
-            print(f"chain_id:               {chain_id}")
+            result = payload["result"]
+            print(
+                "account private-key export created: "
+                f"{result.get('output_file', str(destination_file))}"
+            )
+            print(f"address:                {result.get('address', args.address)}")
+            print(f"request_id:             {payload['request_id']}")
+            print(f"wallet_instance_id:     {wallet_instance_id}")
+        return 0
+
+    if args.command == "import-account":
+        status = require_wallet_runtime_ready(runtime_dir)
+        private_key_file = Path(args.private_key_file).expanduser().resolve()
+        if not private_key_file.is_file():
+            raise FileNotFoundError(f"private_key_file does not exist: {private_key_file}")
+        wallet_instance_id = args.wallet_instance_id or status.get("wallet_instance_id")
+        if not wallet_instance_id:
+            raise RuntimeError(
+                "wallet_instance_id could not be resolved; pass --wallet-instance-id or "
+                "restart the runtime so metadata records it"
+            )
+        client = StarmaskDaemonClient(socket_path=Path(status["daemon_socket_path"]))
+        payload = request_account_import(
+            client,
+            private_key_file=private_key_file,
+            account_address=args.address,
+            wallet_instance_id=wallet_instance_id,
+            ttl_seconds=args.ttl_seconds,
+            wait_timeout_seconds=args.wait_timeout_seconds,
+        )
+        payload["runtime_dir"] = str(runtime_dir)
+        payload["daemon_socket_path"] = status["daemon_socket_path"]
+        payload["wallet_instance_id"] = wallet_instance_id
+        if args.json:
+            print(json.dumps(payload, indent=2, sort_keys=True))
+        else:
+            result = payload["result"]
+            print(f"account private-key import completed: {result.get('address')}")
+            print(f"public_key:             {result.get('public_key')}")
+            print(f"request_id:             {payload['request_id']}")
+            print(f"wallet_instance_id:     {wallet_instance_id}")
         return 0
 
     wallet_dir = Path(args.wallet_dir).resolve()

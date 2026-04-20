@@ -257,6 +257,9 @@ mod tests {
                 raw_txn_bcs_hex: None,
                 message: Some("hello".to_owned()),
                 message_format: Some(starmask_types::MessageFormat::Utf8),
+                output_file: None,
+                force: false,
+                private_key_file: None,
             },
         );
 
@@ -341,6 +344,13 @@ mod tests {
                 created_account_curve: None,
                 created_account_is_default: None,
                 created_account_is_locked: None,
+                exported_account_address: None,
+                exported_account_output_file: None,
+                imported_account_address: None,
+                imported_account_public_key: None,
+                imported_account_curve: None,
+                imported_account_is_default: None,
+                imported_account_is_locked: None,
             },
             &NativeBridgeResponse::ExtensionAck {
                 reply_to: "msg-2".to_owned(),

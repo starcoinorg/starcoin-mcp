@@ -263,6 +263,8 @@ impl WalletBackendConfig {
                 WalletCapability::SignMessage,
                 WalletCapability::SignTransaction,
                 WalletCapability::CreateAccount,
+                WalletCapability::ExportAccount,
+                WalletCapability::ImportAccount,
             ],
         }
     }

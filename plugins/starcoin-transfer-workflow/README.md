@@ -50,6 +50,8 @@ ships a plugin-managed adapter entrypoint.
   - transfer workflow instructions for an agentic host
 - `scripts/starmaskd_client.py`
   - direct JSON-RPC client for `starmaskd`
+- `scripts/list_wallets.py`
+  - aligned wallet/account list view for human-readable inspection
 - `scripts/node_cli_client.py`
   - adapter that calls `starcoin-node-cli`
 - `scripts/run_create_account.py`
@@ -133,6 +135,7 @@ should live under `local-accounts/<name>/`. The default local-account location i
 Example standalone wallet bootstrap:
 
 ```bash
+mkdir -p <repo-root>/.starcoin-agents/local-accounts/default
 chmod 700 <repo-root>/.starcoin-agents/local-accounts/default
 starcoin --connect ws://127.0.0.1:9870 --local-account-dir <repo-root>/.starcoin-agents/local-accounts/default account create -p test123
 starcoin --connect ws://127.0.0.1:9870 --local-account-dir <repo-root>/.starcoin-agents/local-accounts/default account create -p test123
@@ -170,6 +173,15 @@ python3 ./scripts/node_cli_client.py call get_account_overview '{"address":"<add
 python3 ./scripts/starmaskd_client.py call wallet_get_public_key '{"wallet_instance_id":"local-default","address":"<address>"}'
 ```
 
+For human-readable wallet/address inspection, prefer:
+
+```bash
+python3 ./scripts/list_wallets.py --wallet-runtime-dir $HOME/.starcoin-agents/wallet-runtime
+```
+
+When the operator is using Chinese prompts, `--locale zh` keeps the headers and default marker localized
+without relying on Markdown pipe-table alignment.
+
 Those `starcoin` CLI examples are still useful for local funding. The transfer flow itself should
 use the script-driven `starmaskd` + `starcoin-node-cli` path.
 
@@ -190,8 +202,6 @@ accepts these overrides:
   - use an installed `starmaskd` binary
 - `LOCAL_ACCOUNT_AGENT_BIN`
   - use an installed `local-account-agent` binary
-- `LOCAL_ACCOUNT_EXPORT_BIN`
-  - use an installed `local-account-export` binary for single-address private-key exports
 
 ## Wallet Runtime
 
@@ -219,17 +229,25 @@ python3 ./scripts/wallet_runtime.py up \
 The supervisor writes `wallet-runtime.json` under `$HOME/.starcoin-agents/wallet-runtime/` by default and keeps
 `local-account-agent` attached to the current terminal so `tty_prompt` approvals still work.
 
-To export the private key for one local account address, stop the wallet runtime first:
+To export the private key for one local account address, keep the wallet runtime running and approve
+the request in the supervisor terminal:
 
 ```bash
-python3 ./scripts/wallet_runtime.py down
 python3 ./scripts/wallet_runtime.py export-account --address <account-address> --output-file ./account.key
+```
+
+To import a private-key file into the local wallet backend, keep the wallet runtime running and
+approve the request in the supervisor terminal:
+
+```bash
+python3 ./scripts/wallet_runtime.py import-account --private-key-file ./account.key --address 0x1
 ```
 
 If `--output-file` is omitted, the command prompts for a destination file or an existing directory.
 This exports only the private key for the requested address using Starcoin account export semantics;
-it does not copy the full local account vault, wallet runtime socket, or sqlite state. In
-non-interactive mode, pass the account password through `--password-stdin`.
+it does not copy the full local account vault, wallet runtime socket, or sqlite state. Private-key
+contents are read or written by `local-account-agent` on the wallet side and are not returned through
+the daemon response.
 
 ## Create Account Flow
 
@@ -406,4 +424,4 @@ By default the transfer state file is written next to that audit file as `transf
 
 - This plugin example is repo-local. It lives under the current workspace so you can inspect and modify it directly.
 - If you want a global plugin instead, move the same files under `~/plugins/starcoin-transfer-workflow/` and mirror the marketplace entry into `~/.agents/plugins/marketplace.json`.
-- In global mode, put `starcoin-node-cli`, `starmaskd`, `local-account-agent`, and `local-account-export` somewhere on PATH.
+- In global mode, put `starcoin-node-cli`, `starmaskd`, and `local-account-agent` somewhere on PATH.

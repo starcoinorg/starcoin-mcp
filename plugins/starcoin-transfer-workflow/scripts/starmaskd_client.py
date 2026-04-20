@@ -79,6 +79,40 @@ class StarmaskDaemonClient:
                     "ttl_seconds": params.get("ttl_seconds"),
                 },
             )
+        if name in {"wallet_request_export_account", "wallet_export_account"}:
+            return self._call(
+                "request.createExportAccount",
+                {
+                    "protocol_version": DAEMON_PROTOCOL_VERSION,
+                    "client_request_id": params["client_request_id"],
+                    "account_address": params["account_address"],
+                    "wallet_instance_id": params.get("wallet_instance_id"),
+                    "output_file": params["output_file"],
+                    "force": bool(params.get("force", False)),
+                    "display_hint": params.get("display_hint"),
+                    "client_context": params.get("client_context"),
+                    "ttl_seconds": params.get("ttl_seconds"),
+                },
+            )
+        if name in {"wallet_request_import_account", "wallet_import_account"}:
+            account_address = (
+                params.get("account_address")
+                if params.get("account_address") is not None
+                else params.get("address")
+            )
+            return self._call(
+                "request.createImportAccount",
+                {
+                    "protocol_version": DAEMON_PROTOCOL_VERSION,
+                    "client_request_id": params["client_request_id"],
+                    "wallet_instance_id": params["wallet_instance_id"],
+                    "private_key_file": params["private_key_file"],
+                    "account_address": account_address,
+                    "display_hint": params.get("display_hint"),
+                    "client_context": params.get("client_context"),
+                    "ttl_seconds": params.get("ttl_seconds"),
+                },
+            )
         if name == "wallet_request_sign_transaction":
             return self._call(
                 "request.createSignTransaction",

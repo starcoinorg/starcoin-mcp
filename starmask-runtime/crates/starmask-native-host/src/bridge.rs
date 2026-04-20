@@ -103,6 +103,9 @@ where
                     raw_txn_bcs_hex: request.raw_txn_bcs_hex,
                     message: request.message,
                     message_format: request.message_format,
+                    output_file: request.output_file,
+                    force: request.force,
+                    private_key_file: request.private_key_file,
                 },
                 None => NativeBridgeResponse::RequestNone {
                     reply_to: reply_to.clone(),
@@ -138,8 +141,15 @@ where
             created_account_curve,
             created_account_is_default,
             created_account_is_locked,
+            exported_account_address,
+            exported_account_output_file,
+            imported_account_address,
+            imported_account_public_key,
+            imported_account_curve,
+            imported_account_is_default,
+            imported_account_is_locked,
             ..
-        } => validate_request_resolve_params(
+        } => validate_request_resolve_params(RequestResolveValidationInput {
             wallet_instance_id,
             request_id,
             presentation_id,
@@ -151,7 +161,14 @@ where
             created_account_curve,
             created_account_is_default,
             created_account_is_locked,
-        )
+            exported_account_address,
+            exported_account_output_file,
+            imported_account_address,
+            imported_account_public_key,
+            imported_account_curve,
+            imported_account_is_default,
+            imported_account_is_locked,
+        })
         .and_then(|params| client.request_resolve(params))
         .map(|_| NativeBridgeResponse::ExtensionAck {
             reply_to: reply_to.clone(),
@@ -193,7 +210,7 @@ fn request_resolve_payload_error(message: impl Into<String>) -> SharedError {
     SharedError::new(SharedErrorCode::InternalBridgeError, message).with_retryable(false)
 }
 
-fn validate_request_resolve_params(
+struct RequestResolveValidationInput {
     wallet_instance_id: starmask_types::WalletInstanceId,
     request_id: starmask_types::RequestId,
     presentation_id: starmask_types::PresentationId,
@@ -205,12 +222,52 @@ fn validate_request_resolve_params(
     created_account_curve: Option<starmask_types::Curve>,
     created_account_is_default: Option<bool>,
     created_account_is_locked: Option<bool>,
+    exported_account_address: Option<String>,
+    exported_account_output_file: Option<String>,
+    imported_account_address: Option<String>,
+    imported_account_public_key: Option<String>,
+    imported_account_curve: Option<starmask_types::Curve>,
+    imported_account_is_default: Option<bool>,
+    imported_account_is_locked: Option<bool>,
+}
+
+fn validate_request_resolve_params(
+    input: RequestResolveValidationInput,
 ) -> Result<RequestResolveParams, SharedError> {
+    let RequestResolveValidationInput {
+        wallet_instance_id,
+        request_id,
+        presentation_id,
+        result_kind,
+        signed_txn_bcs_hex,
+        signature,
+        created_account_address,
+        created_account_public_key,
+        created_account_curve,
+        created_account_is_default,
+        created_account_is_locked,
+        exported_account_address,
+        exported_account_output_file,
+        imported_account_address,
+        imported_account_public_key,
+        imported_account_curve,
+        imported_account_is_default,
+        imported_account_is_locked,
+    } = input;
     let has_created_account_fields = created_account_address.is_some()
         || created_account_public_key.is_some()
         || created_account_curve.is_some()
         || created_account_is_default.is_some()
         || created_account_is_locked.is_some();
+    let has_exported_account_fields =
+        exported_account_address.is_some() || exported_account_output_file.is_some();
+    let has_imported_account_fields = imported_account_address.is_some()
+        || imported_account_public_key.is_some()
+        || imported_account_curve.is_some()
+        || imported_account_is_default.is_some()
+        || imported_account_is_locked.is_some();
+    let has_account_result_fields =
+        has_created_account_fields || has_exported_account_fields || has_imported_account_fields;
     let signed_txn_is_set = signed_txn_bcs_hex
         .as_ref()
         .is_some_and(|value| !value.trim().is_empty());
@@ -230,9 +287,9 @@ fn validate_request_resolve_params(
                     "signature must be omitted for signed_transaction",
                 ));
             }
-            if has_created_account_fields {
+            if has_account_result_fields {
                 return Err(request_resolve_payload_error(
-                    "created_account_* fields must be omitted for signed_transaction",
+                    "account result fields must be omitted for signed_transaction",
                 ));
             }
         }
@@ -247,9 +304,9 @@ fn validate_request_resolve_params(
                     "signed_txn_bcs_hex must be omitted for signed_message",
                 ));
             }
-            if has_created_account_fields {
+            if has_account_result_fields {
                 return Err(request_resolve_payload_error(
-                    "created_account_* fields must be omitted for signed_message",
+                    "account result fields must be omitted for signed_message",
                 ));
             }
         }
@@ -273,6 +330,60 @@ fn validate_request_resolve_params(
                     "created_account requires address, public_key, curve, is_default, and is_locked",
                 ));
             }
+            if has_exported_account_fields || has_imported_account_fields {
+                return Err(request_resolve_payload_error(
+                    "non-created account result fields must be omitted for created_account",
+                ));
+            }
+        }
+        ResultKind::ExportedAccount => {
+            if signed_txn_bcs_hex.is_some() || signature.is_some() {
+                return Err(request_resolve_payload_error(
+                    "signed_transaction and signed_message payloads must be omitted for exported_account",
+                ));
+            }
+            if has_created_account_fields || has_imported_account_fields {
+                return Err(request_resolve_payload_error(
+                    "non-exported account result fields must be omitted for exported_account",
+                ));
+            }
+            if !exported_account_address
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty())
+                || !exported_account_output_file
+                    .as_ref()
+                    .is_some_and(|value| !value.trim().is_empty())
+            {
+                return Err(request_resolve_payload_error(
+                    "exported_account requires address and output_file",
+                ));
+            }
+        }
+        ResultKind::ImportedAccount => {
+            if signed_txn_bcs_hex.is_some() || signature.is_some() {
+                return Err(request_resolve_payload_error(
+                    "signed_transaction and signed_message payloads must be omitted for imported_account",
+                ));
+            }
+            if has_created_account_fields || has_exported_account_fields {
+                return Err(request_resolve_payload_error(
+                    "non-imported account result fields must be omitted for imported_account",
+                ));
+            }
+            if !imported_account_address
+                .as_ref()
+                .is_some_and(|value| !value.trim().is_empty())
+                || !imported_account_public_key
+                    .as_ref()
+                    .is_some_and(|value| !value.trim().is_empty())
+                || imported_account_curve.is_none()
+                || imported_account_is_default.is_none()
+                || imported_account_is_locked.is_none()
+            {
+                return Err(request_resolve_payload_error(
+                    "imported_account requires address, public_key, curve, is_default, and is_locked",
+                ));
+            }
         }
         ResultKind::None => {
             return Err(request_resolve_payload_error(
@@ -294,6 +405,13 @@ fn validate_request_resolve_params(
         created_account_curve,
         created_account_is_default,
         created_account_is_locked,
+        exported_account_address,
+        exported_account_output_file,
+        imported_account_address,
+        imported_account_public_key,
+        imported_account_curve,
+        imported_account_is_default,
+        imported_account_is_locked,
     })
 }
 
@@ -325,7 +443,7 @@ mod tests {
         ) -> Result<starmask_types::ExtensionRegisteredResult, SharedError> {
             Ok(starmask_types::ExtensionRegisteredResult {
                 wallet_instance_id: WalletInstanceId::new("wallet-1").unwrap(),
-                daemon_protocol_version: 1,
+                daemon_protocol_version: daemon_protocol_version(),
                 accepted: true,
             })
         }
@@ -439,6 +557,9 @@ mod tests {
                     raw_txn_bcs_hex: Some("0xabc".to_owned()),
                     message: None,
                     message_format: None,
+                    output_file: None,
+                    force: false,
+                    private_key_file: None,
                 }),
             })),
             ..Default::default()
@@ -471,6 +592,9 @@ mod tests {
                 raw_txn_bcs_hex: Some("0xabc".to_owned()),
                 message: None,
                 message_format: None,
+                output_file: None,
+                force: false,
+                private_key_file: None,
             }
         );
     }
@@ -556,6 +680,13 @@ mod tests {
                 created_account_curve: None,
                 created_account_is_default: None,
                 created_account_is_locked: None,
+                exported_account_address: None,
+                exported_account_output_file: None,
+                imported_account_address: None,
+                imported_account_public_key: None,
+                imported_account_curve: None,
+                imported_account_is_default: None,
+                imported_account_is_locked: None,
             },
         );
 
@@ -581,6 +712,13 @@ mod tests {
                 created_account_curve: None,
                 created_account_is_default: None,
                 created_account_is_locked: None,
+                exported_account_address: None,
+                exported_account_output_file: None,
+                imported_account_address: None,
+                imported_account_public_key: None,
+                imported_account_curve: None,
+                imported_account_is_default: None,
+                imported_account_is_locked: None,
             }
         );
     }
@@ -607,6 +745,13 @@ mod tests {
                 created_account_curve: Some(Curve::Ed25519),
                 created_account_is_default: Some(true),
                 created_account_is_locked: Some(false),
+                exported_account_address: None,
+                exported_account_output_file: None,
+                imported_account_address: None,
+                imported_account_public_key: None,
+                imported_account_curve: None,
+                imported_account_is_default: None,
+                imported_account_is_locked: None,
             },
         );
 
@@ -632,6 +777,13 @@ mod tests {
                 created_account_curve: Some(Curve::Ed25519),
                 created_account_is_default: Some(true),
                 created_account_is_locked: Some(false),
+                exported_account_address: None,
+                exported_account_output_file: None,
+                imported_account_address: None,
+                imported_account_public_key: None,
+                imported_account_curve: None,
+                imported_account_is_default: None,
+                imported_account_is_locked: None,
             }
         );
     }
@@ -655,6 +807,13 @@ mod tests {
                 created_account_curve: None,
                 created_account_is_default: None,
                 created_account_is_locked: None,
+                exported_account_address: None,
+                exported_account_output_file: None,
+                imported_account_address: None,
+                imported_account_public_key: None,
+                imported_account_curve: None,
+                imported_account_is_default: None,
+                imported_account_is_locked: None,
             },
         );
 
@@ -689,6 +848,13 @@ mod tests {
                 created_account_curve: None,
                 created_account_is_default: None,
                 created_account_is_locked: None,
+                exported_account_address: None,
+                exported_account_output_file: None,
+                imported_account_address: None,
+                imported_account_public_key: None,
+                imported_account_curve: None,
+                imported_account_is_default: None,
+                imported_account_is_locked: None,
             },
         );
 
@@ -697,7 +863,7 @@ mod tests {
             NativeBridgeResponse::ExtensionError {
                 reply_to: Some("msg-resolve-mixed".to_owned()),
                 code: SharedErrorCode::InternalBridgeError,
-                message: "created_account_* fields must be omitted for signed_message".to_owned(),
+                message: "account result fields must be omitted for signed_message".to_owned(),
                 retryable: Some(false),
             }
         );
@@ -723,6 +889,13 @@ mod tests {
                 created_account_curve: Some(Curve::Ed25519),
                 created_account_is_default: Some(true),
                 created_account_is_locked: Some(false),
+                exported_account_address: None,
+                exported_account_output_file: None,
+                imported_account_address: None,
+                imported_account_public_key: None,
+                imported_account_curve: None,
+                imported_account_is_default: None,
+                imported_account_is_locked: None,
             },
         );
 

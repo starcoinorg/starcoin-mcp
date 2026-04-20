@@ -11,7 +11,9 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 
 use starmask_core::CoordinatorConfig;
-use starmask_types::{Channel, JsonRpcResponse};
+use starmask_types::{
+    Channel, DAEMON_PROTOCOL_VERSION, GENERIC_BACKEND_PROTOCOL_VERSION, JsonRpcResponse,
+};
 use starmaskd::{
     config::{
         LocalAccountDirBackendConfig, LocalPromptMode, StarmaskExtensionBackendConfig,
@@ -101,7 +103,7 @@ async fn register_wallet(socket_path: &std::path::Path, wallet_instance_id: &str
         "req-register",
         "extension.register",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "wallet_instance_id": wallet_instance_id,
             "extension_id": "ext.allowed",
             "extension_version": "1.0.0",
@@ -148,7 +150,7 @@ async fn register_local_backend(
         "req-register-local",
         "backend.register",
         json!({
-            "protocol_version": 2,
+            "protocol_version": GENERIC_BACKEND_PROTOCOL_VERSION,
             "wallet_instance_id": "local-default",
             "backend_kind": "local_account_dir",
             "transport_kind": "local_socket",
@@ -176,7 +178,7 @@ async fn list_wallet_instances(socket_path: &std::path::Path) -> serde_json::Val
         "req-list-instances",
         "wallet.listInstances",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "connected_only": true,
         }),
     )
@@ -196,7 +198,7 @@ async fn list_wallet_accounts(
         "req-list-accounts",
         "wallet.listAccounts",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "wallet_instance_id": wallet_instance_id,
             "include_public_key": true,
         }),
@@ -219,7 +221,7 @@ async fn set_account_label(
         "req-set-account-label",
         "wallet.setAccountLabel",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "wallet_instance_id": wallet_instance_id,
             "address": address,
             "label": label,
@@ -241,7 +243,7 @@ async fn has_available(
         "req-has-available",
         "request.hasAvailable",
         json!({
-            "protocol_version": 2,
+            "protocol_version": GENERIC_BACKEND_PROTOCOL_VERSION,
             "wallet_instance_id": wallet_instance_id,
         }),
     )
@@ -263,7 +265,7 @@ async fn unix_server_round_trips_extension_register_create_and_status() {
         "req-create",
         "request.createSignTransaction",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "client_request_id": "client-transport",
             "account_address": "0x1",
             "wallet_instance_id": "wallet-1",
@@ -287,7 +289,7 @@ async fn unix_server_round_trips_extension_register_create_and_status() {
         "req-status",
         "request.getStatus",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "request_id": request_id,
         }),
     )
@@ -312,7 +314,7 @@ async fn unix_server_preserves_request_id_for_idempotent_retry() {
         "req-create-1",
         "request.createSignTransaction",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "client_request_id": "client-idempotent",
             "account_address": "0x1",
             "wallet_instance_id": "wallet-1",
@@ -327,7 +329,7 @@ async fn unix_server_preserves_request_id_for_idempotent_retry() {
         "req-create-2",
         "request.createSignTransaction",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "client_request_id": "client-idempotent",
             "account_address": "0x1",
             "wallet_instance_id": "wallet-1",
@@ -360,7 +362,7 @@ async fn unix_server_reports_idempotency_conflict_for_changed_payload() {
         "req-create-1",
         "request.createSignTransaction",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "client_request_id": "client-conflict",
             "account_address": "0x1",
             "wallet_instance_id": "wallet-1",
@@ -375,7 +377,7 @@ async fn unix_server_reports_idempotency_conflict_for_changed_payload() {
         "req-create-2",
         "request.createSignTransaction",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "client_request_id": "client-conflict",
             "account_address": "0x1",
             "wallet_instance_id": "wallet-1",
@@ -421,7 +423,7 @@ async fn unix_server_round_trips_generic_backend_register_and_resolve() {
         "req-create-local",
         "request.createSignMessage",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "client_request_id": "client-local-sign",
             "account_address": "0x1",
             "wallet_instance_id": "local-default",
@@ -440,7 +442,7 @@ async fn unix_server_round_trips_generic_backend_register_and_resolve() {
         "req-pull-local",
         "request.pullNext",
         json!({
-            "protocol_version": 2,
+            "protocol_version": GENERIC_BACKEND_PROTOCOL_VERSION,
             "wallet_instance_id": "local-default",
         }),
     )
@@ -457,7 +459,7 @@ async fn unix_server_round_trips_generic_backend_register_and_resolve() {
         "req-presented-local",
         "request.presented",
         json!({
-            "protocol_version": 2,
+            "protocol_version": GENERIC_BACKEND_PROTOCOL_VERSION,
             "wallet_instance_id": "local-default",
             "request_id": request_id,
             "delivery_lease_id": delivery_lease_id,
@@ -475,7 +477,7 @@ async fn unix_server_round_trips_generic_backend_register_and_resolve() {
         "req-resolve-local",
         "request.resolve",
         json!({
-            "protocol_version": 2,
+            "protocol_version": GENERIC_BACKEND_PROTOCOL_VERSION,
             "wallet_instance_id": "local-default",
             "request_id": request_id,
             "presentation_id": "presentation-1",
@@ -494,7 +496,7 @@ async fn unix_server_round_trips_generic_backend_register_and_resolve() {
         "req-status-local",
         "request.getStatus",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "request_id": request_id,
         }),
     )
@@ -526,7 +528,7 @@ async fn unix_server_round_trips_local_create_account_request() {
         "req-create-account-local",
         "request.createAccount",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "client_request_id": "client-local-create-account",
             "wallet_instance_id": "local-default",
             "display_hint": "Create account",
@@ -546,7 +548,7 @@ async fn unix_server_round_trips_local_create_account_request() {
         "req-status-create-account-local",
         "request.getStatus",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "request_id": request_id,
         }),
     )
@@ -584,7 +586,7 @@ async fn unix_server_round_trips_generic_backend_reject() {
         "req-create-local-reject",
         "request.createSignMessage",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "client_request_id": "client-local-reject",
             "account_address": "0x1",
             "wallet_instance_id": "local-default",
@@ -603,7 +605,7 @@ async fn unix_server_round_trips_generic_backend_reject() {
         "req-pull-local-reject",
         "request.pullNext",
         json!({
-            "protocol_version": 2,
+            "protocol_version": GENERIC_BACKEND_PROTOCOL_VERSION,
             "wallet_instance_id": "local-default",
         }),
     )
@@ -620,7 +622,7 @@ async fn unix_server_round_trips_generic_backend_reject() {
         "req-presented-local-reject",
         "request.presented",
         json!({
-            "protocol_version": 2,
+            "protocol_version": GENERIC_BACKEND_PROTOCOL_VERSION,
             "wallet_instance_id": "local-default",
             "request_id": request_id,
             "delivery_lease_id": delivery_lease_id,
@@ -638,7 +640,7 @@ async fn unix_server_round_trips_generic_backend_reject() {
         "req-reject-local",
         "request.reject",
         json!({
-            "protocol_version": 2,
+            "protocol_version": GENERIC_BACKEND_PROTOCOL_VERSION,
             "wallet_instance_id": "local-default",
             "request_id": request_id,
             "presentation_id": "presentation-reject",
@@ -657,7 +659,7 @@ async fn unix_server_round_trips_generic_backend_reject() {
         "req-status-local-reject",
         "request.getStatus",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "request_id": request_id,
         }),
     )
@@ -702,7 +704,7 @@ async fn unix_server_reports_request_has_available_for_local_backend() {
         "req-create-available",
         "request.createSignMessage",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "client_request_id": "client-has-available",
             "account_address": "0x1",
             "wallet_instance_id": "local-default",
@@ -749,7 +751,7 @@ async fn unix_server_repeated_empty_pull_next_remains_stable_for_local_backend()
                 &format!("req-pull-empty-{attempt}"),
                 "request.pullNext",
                 json!({
-                    "protocol_version": 2,
+                    "protocol_version": GENERIC_BACKEND_PROTOCOL_VERSION,
                     "wallet_instance_id": "local-default",
                 }),
             ),
@@ -775,7 +777,7 @@ async fn unix_server_rejects_unknown_local_backend_registration() {
         "req-register-unknown-local",
         "backend.register",
         json!({
-            "protocol_version": 2,
+            "protocol_version": GENERIC_BACKEND_PROTOCOL_VERSION,
             "wallet_instance_id": "local-unknown",
             "backend_kind": "local_account_dir",
             "transport_kind": "local_socket",
@@ -812,7 +814,7 @@ async fn unix_server_rejects_generic_backend_registration_over_v1_protocol() {
         "req-register-local-v1",
         "backend.register",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "wallet_instance_id": "local-default",
             "backend_kind": "local_account_dir",
             "transport_kind": "local_socket",
@@ -849,7 +851,7 @@ async fn unix_server_rejects_local_backend_registration_when_backend_is_not_enab
         "req-register-disabled-local",
         "backend.register",
         json!({
-            "protocol_version": 2,
+            "protocol_version": GENERIC_BACKEND_PROTOCOL_VERSION,
             "wallet_instance_id": "local-default",
             "backend_kind": "local_account_dir",
             "transport_kind": "local_socket",
@@ -900,7 +902,7 @@ async fn unix_server_backend_heartbeat_updates_lock_state() {
         "req-heartbeat-local",
         "backend.heartbeat",
         json!({
-            "protocol_version": 2,
+            "protocol_version": GENERIC_BACKEND_PROTOCOL_VERSION,
             "wallet_instance_id": "local-default",
             "presented_request_ids": [],
             "lock_state": "locked",
@@ -949,7 +951,7 @@ async fn unix_server_backend_update_accounts_replaces_snapshot() {
         "req-update-accounts-local",
         "backend.updateAccounts",
         json!({
-            "protocol_version": 2,
+            "protocol_version": GENERIC_BACKEND_PROTOCOL_VERSION,
             "wallet_instance_id": "local-default",
             "lock_state": "locked",
             "capabilities": ["unlock", "get_public_key", "sign_message", "sign_transaction", "create_account"],
@@ -1064,7 +1066,7 @@ async fn unix_server_rejects_empty_local_account_label() {
         "req-set-empty-account-label",
         "wallet.setAccountLabel",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "wallet_instance_id": "local-default",
             "address": "0x2",
             "label": "   ",
@@ -1106,7 +1108,7 @@ async fn unix_server_rejects_missing_local_account_label_target() {
         "req-set-missing-account-label",
         "wallet.setAccountLabel",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "wallet_instance_id": "local-default",
             "address": "0x9",
             "label": "main",
@@ -1136,7 +1138,7 @@ async fn unix_server_rejects_extension_account_label() {
         "req-set-extension-account-label",
         "wallet.setAccountLabel",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "wallet_instance_id": "wallet-1",
             "address": "0x1",
             "label": "main",
@@ -1164,7 +1166,7 @@ async fn unix_server_rejects_disallowed_extension_over_transport() {
         "req-blocked",
         "extension.register",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "wallet_instance_id": "wallet-1",
             "extension_id": "ext.blocked",
             "extension_version": "1.0.0",

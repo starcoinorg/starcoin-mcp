@@ -32,11 +32,33 @@ pub struct CreateAccountPayload {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct ExportAccountPayload {
+    pub output_file: String,
+    #[serde(default)]
+    pub force: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_context: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub struct ImportAccountPayload {
+    pub private_key_file: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub display_hint: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_context: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 #[serde(tag = "kind", content = "payload", rename_all = "snake_case")]
 pub enum RequestPayload {
     SignTransaction(TransactionPayload),
     SignMessage(MessagePayload),
     CreateAccount(CreateAccountPayload),
+    ExportAccount(ExportAccountPayload),
+    ImportAccount(ImportAccountPayload),
 }
 
 impl RequestPayload {
@@ -45,6 +67,8 @@ impl RequestPayload {
             Self::SignTransaction(_) => ResultKind::SignedTransaction,
             Self::SignMessage(_) => ResultKind::SignedMessage,
             Self::CreateAccount(_) => ResultKind::CreatedAccount,
+            Self::ExportAccount(_) => ResultKind::ExportedAccount,
+            Self::ImportAccount(_) => ResultKind::ImportedAccount,
         }
     }
 }
@@ -65,6 +89,17 @@ pub enum RequestResult {
         is_default: bool,
         is_locked: bool,
     },
+    ExportedAccount {
+        address: String,
+        output_file: String,
+    },
+    ImportedAccount {
+        address: String,
+        public_key: String,
+        curve: Curve,
+        is_default: bool,
+        is_locked: bool,
+    },
 }
 
 impl RequestResult {
@@ -73,6 +108,8 @@ impl RequestResult {
             Self::SignedTransaction { .. } => ResultKind::SignedTransaction,
             Self::SignedMessage { .. } => ResultKind::SignedMessage,
             Self::CreatedAccount { .. } => ResultKind::CreatedAccount,
+            Self::ExportedAccount { .. } => ResultKind::ExportedAccount,
+            Self::ImportedAccount { .. } => ResultKind::ImportedAccount,
         }
     }
 }

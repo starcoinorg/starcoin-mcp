@@ -1,8 +1,9 @@
-use std::{str::FromStr, time::Duration};
+use std::{convert::TryFrom, fs, io::Write, path::Path, str::FromStr, time::Duration};
 
 use anyhow::{Context, Result};
 use starcoin_account::AccountManager;
-use starcoin_account_api::AccountInfo;
+use starcoin_account_api::{AccountInfo, AccountPrivateKey};
+use starcoin_crypto::{ValidCryptoMaterial, ValidCryptoMaterialStringExt};
 use starcoin_types::{
     account_address::AccountAddress, sign_message::SigningMessage, transaction::RawUserTransaction,
 };
@@ -10,6 +11,7 @@ use starmask_types::{
     BackendAccount, Curve, MessageFormat, PulledRequest, RejectReasonCode, RequestKind,
     RequestResult, WalletCapability,
 };
+use tempfile::NamedTempFile;
 
 #[derive(Clone, Debug)]
 pub(crate) struct RequestRejection {
@@ -72,10 +74,17 @@ pub(crate) fn fulfill_request(
     match request.kind {
         RequestKind::SignTransaction => sign_transaction(manager, request, account_address),
         RequestKind::SignMessage => sign_message(manager, request, account_address),
+        RequestKind::ExportAccount => export_account(manager, request, account_address, password),
         RequestKind::CreateAccount => Err(RequestRejection {
             reason_code: RejectReasonCode::UnsupportedOperation,
             message: Some(
                 "CreateAccount requests must use the dedicated create-account flow".to_owned(),
+            ),
+        }),
+        RequestKind::ImportAccount => Err(RequestRejection {
+            reason_code: RejectReasonCode::UnsupportedOperation,
+            message: Some(
+                "ImportAccount requests must use the dedicated import-account flow".to_owned(),
             ),
         }),
     }
@@ -118,6 +127,246 @@ pub(crate) fn create_account(
         is_default: account_info.is_default,
         is_locked: account_info.is_locked,
     })
+}
+
+pub(crate) fn import_account(
+    manager: &AccountManager,
+    request: &PulledRequest,
+    password: &str,
+) -> std::result::Result<RequestResult, RequestRejection> {
+    if password.is_empty() {
+        return Err(RequestRejection {
+            reason_code: RejectReasonCode::BackendPolicyBlocked,
+            message: Some("Account password cannot be empty".to_owned()),
+        });
+    }
+    let private_key_file = request
+        .private_key_file
+        .as_deref()
+        .ok_or_else(|| RequestRejection {
+            reason_code: RejectReasonCode::BackendPolicyBlocked,
+            message: Some("Missing private key file for account import".to_owned()),
+        })?;
+    let private_key_data =
+        std::fs::read_to_string(private_key_file).map_err(|error| RequestRejection {
+            reason_code: RejectReasonCode::BackendUnavailable,
+            message: Some(format!("Failed to read private key file: {error}")),
+        })?;
+    let private_key =
+        AccountPrivateKey::from_encoded_string(private_key_data.trim()).map_err(|error| {
+            RequestRejection {
+                reason_code: RejectReasonCode::BackendPolicyBlocked,
+                message: Some(format!("Invalid private key file: {error}")),
+            }
+        })?;
+    let derived_address = private_key.public_key().derived_address();
+    if request.account_address.trim().is_empty() {
+        return Err(RequestRejection {
+            reason_code: RejectReasonCode::BackendPolicyBlocked,
+            message: Some("Import request is missing the expected account address".to_owned()),
+        });
+    }
+    let address =
+        parse_account_address(&request.account_address).map_err(|error| RequestRejection {
+            reason_code: RejectReasonCode::BackendPolicyBlocked,
+            message: Some(error.to_string()),
+        })?;
+    if address != derived_address {
+        return Err(RequestRejection {
+            reason_code: RejectReasonCode::BackendPolicyBlocked,
+            message: Some(
+                "Requested import address does not match the private key's derived address"
+                    .to_owned(),
+            ),
+        });
+    }
+
+    let account = manager
+        .import_account(address, private_key.to_bytes().to_vec(), password)
+        .map_err(|error| RequestRejection {
+            reason_code: RejectReasonCode::BackendUnavailable,
+            message: Some(format!("Failed to import local account: {error}")),
+        })?;
+    let account_info = manager
+        .account_info(*account.address())
+        .map_err(|error| RequestRejection {
+            reason_code: RejectReasonCode::BackendUnavailable,
+            message: Some(format!("Failed to load imported account: {error}")),
+        })?
+        .ok_or_else(|| RequestRejection {
+            reason_code: RejectReasonCode::BackendUnavailable,
+            message: Some("Imported account was not visible after import".to_owned()),
+        })?;
+
+    Ok(RequestResult::ImportedAccount {
+        address: account_info.address.to_string(),
+        public_key: format!(
+            "0x{}",
+            hex::encode(account_info.public_key.public_key_bytes())
+        ),
+        curve: Curve::Ed25519,
+        is_default: account_info.is_default,
+        is_locked: account_info.is_locked,
+    })
+}
+
+fn export_account(
+    manager: &AccountManager,
+    request: &PulledRequest,
+    address: AccountAddress,
+    password: Option<&str>,
+) -> std::result::Result<RequestResult, RequestRejection> {
+    let Some(password) = password else {
+        return Err(RequestRejection {
+            reason_code: RejectReasonCode::WalletLocked,
+            message: Some("Account password is required for export".to_owned()),
+        });
+    };
+    let output_file = request
+        .output_file
+        .as_deref()
+        .ok_or_else(|| RequestRejection {
+            reason_code: RejectReasonCode::BackendPolicyBlocked,
+            message: Some("Missing output file for account export".to_owned()),
+        })?;
+    let private_key_bytes =
+        manager
+            .export_account(address, password)
+            .map_err(|error| RequestRejection {
+                reason_code: RejectReasonCode::WalletLocked,
+                message: Some(format!("Failed to export local account: {error}")),
+            })?;
+    if private_key_bytes.is_empty() {
+        return Err(RequestRejection {
+            reason_code: RejectReasonCode::UnsupportedOperation,
+            message: Some("Account has no exportable private key; it may be read-only".to_owned()),
+        });
+    }
+
+    let private_key =
+        AccountPrivateKey::try_from(private_key_bytes.as_slice()).map_err(|error| {
+            RequestRejection {
+                reason_code: RejectReasonCode::BackendUnavailable,
+                message: Some(format!("Exported account private key is invalid: {error}")),
+            }
+        })?;
+    let encoded = private_key
+        .to_encoded_string()
+        .map_err(|error| RequestRejection {
+            reason_code: RejectReasonCode::BackendUnavailable,
+            message: Some(format!("Failed to encode account private key: {error}")),
+        })?;
+    write_private_key_file(Path::new(output_file), &encoded, request.force)?;
+
+    Ok(RequestResult::ExportedAccount {
+        address: address.to_string(),
+        output_file: output_file.to_owned(),
+    })
+}
+
+fn write_private_key_file(
+    path: &Path,
+    encoded: &str,
+    force: bool,
+) -> std::result::Result<(), RequestRejection> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|error| RequestRejection {
+            reason_code: RejectReasonCode::BackendUnavailable,
+            message: Some(format!(
+                "Failed to create output directory {}: {error}",
+                parent.display()
+            )),
+        })?;
+    }
+    if path.exists() && !force {
+        return Err(RequestRejection {
+            reason_code: RejectReasonCode::BackendPolicyBlocked,
+            message: Some(format!(
+                "Output file already exists: {}; pass --force to overwrite it",
+                path.display()
+            )),
+        });
+    }
+
+    let parent = path.parent().unwrap_or_else(|| Path::new("."));
+    let mut temp_file = NamedTempFile::new_in(parent).map_err(|error| RequestRejection {
+        reason_code: RejectReasonCode::BackendUnavailable,
+        message: Some(format!(
+            "Failed to create temporary export file in {}: {error}",
+            parent.display()
+        )),
+    })?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        temp_file
+            .as_file()
+            .set_permissions(fs::Permissions::from_mode(0o600))
+            .map_err(|error| RequestRejection {
+                reason_code: RejectReasonCode::BackendUnavailable,
+                message: Some(format!(
+                    "Failed to restrict permissions on temporary export file in {}: {error}",
+                    parent.display()
+                )),
+            })?;
+    }
+    temp_file
+        .write_all(encoded.as_bytes())
+        .and_then(|_| temp_file.write_all(b"\n"))
+        .and_then(|_| temp_file.as_file().sync_all())
+        .map_err(|error| RequestRejection {
+            reason_code: RejectReasonCode::BackendUnavailable,
+            message: Some(format!(
+                "Failed to write account private-key export: {error}"
+            )),
+        })?;
+
+    if force {
+        #[cfg(windows)]
+        if path.exists() {
+            fs::remove_file(path).map_err(|error| RequestRejection {
+                reason_code: RejectReasonCode::BackendUnavailable,
+                message: Some(format!(
+                    "Failed to replace existing output file {}: {error}",
+                    path.display()
+                )),
+            })?;
+        }
+        temp_file.persist(path).map_err(|error| RequestRejection {
+            reason_code: RejectReasonCode::BackendUnavailable,
+            message: Some(format!(
+                "Failed to move account private-key export into {}: {}",
+                path.display(),
+                error.error
+            )),
+        })?;
+        return Ok(());
+    }
+
+    temp_file.persist_noclobber(path).map_err(|error| {
+        let reason_code = if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+            RejectReasonCode::BackendPolicyBlocked
+        } else {
+            RejectReasonCode::BackendUnavailable
+        };
+        let message = if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+            format!(
+                "Output file already exists: {}; pass --force to overwrite it",
+                path.display()
+            )
+        } else {
+            format!(
+                "Failed to move account private-key export into {}: {}",
+                path.display(),
+                error.error
+            )
+        };
+        RequestRejection {
+            reason_code,
+            message: Some(message),
+        }
+    })?;
+    Ok(())
 }
 
 fn sign_transaction(
@@ -222,6 +471,7 @@ mod tests {
 
     use super::{
         account_info_to_backend_account, decode_signing_message, ensure_local_unlock_capability,
+        write_private_key_file,
     };
     use starmask_types::{MessageFormat, WalletCapability};
 
@@ -277,5 +527,23 @@ mod tests {
             ],
         )
         .unwrap();
+    }
+
+    #[test]
+    fn write_private_key_file_creates_private_output_with_expected_contents() {
+        let tempdir = tempdir().unwrap();
+        let path = tempdir.path().join("exports/account.key");
+
+        write_private_key_file(&path, "private-key-data", false).unwrap();
+
+        assert_eq!(
+            std::fs::read_to_string(&path).unwrap(),
+            "private-key-data\n"
+        );
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(path.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+        }
     }
 }

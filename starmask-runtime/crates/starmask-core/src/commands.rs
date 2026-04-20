@@ -39,6 +39,29 @@ pub struct CreateAccountCommand {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreateExportAccountCommand {
+    pub client_request_id: ClientRequestId,
+    pub account_address: String,
+    pub wallet_instance_id: Option<WalletInstanceId>,
+    pub output_file: String,
+    pub force: bool,
+    pub display_hint: Option<String>,
+    pub client_context: Option<String>,
+    pub ttl_seconds: Option<DurationSeconds>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct CreateImportAccountCommand {
+    pub client_request_id: ClientRequestId,
+    pub account_address: String,
+    pub wallet_instance_id: WalletInstanceId,
+    pub private_key_file: String,
+    pub display_hint: Option<String>,
+    pub client_context: Option<String>,
+    pub ttl_seconds: Option<DurationSeconds>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SetAccountLabelCommand {
     pub wallet_instance_id: WalletInstanceId,
     pub address: String,
@@ -144,6 +167,8 @@ pub enum CoordinatorCommand {
     },
     WalletSetAccountLabel(SetAccountLabelCommand),
     CreateAccount(CreateAccountCommand),
+    CreateExportAccount(CreateExportAccountCommand),
+    CreateImportAccount(CreateImportAccountCommand),
     CreateSignTransaction(CreateSignTransactionCommand),
     CreateSignMessage(CreateSignMessageCommand),
     GetRequestStatus {

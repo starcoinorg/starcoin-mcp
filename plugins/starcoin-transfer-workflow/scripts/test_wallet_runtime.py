@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import json
 import subprocess
 import sys
 import tempfile
@@ -10,15 +9,39 @@ from pathlib import Path
 from unittest.mock import patch
 
 from wallet_runtime import (
-    export_account_private_key,
-    resolve_account_export_chain_id,
+    ensure_private_wallet_dir,
     resolve_account_export_output_file,
-    resolve_account_export_wallet_dir,
-    runtime_paths,
+    request_account_export,
+    request_account_import,
 )
 
 
+class FakeWalletClient:
+    def __init__(self, *, request_result: dict, status_result: dict) -> None:
+        self.request_result = request_result
+        self.status_result = status_result
+        self.calls: list[tuple[str, dict]] = []
+
+    def call_tool(self, name: str, arguments: dict | None = None) -> dict:
+        self.calls.append((name, arguments or {}))
+        if name in {"wallet_request_export_account", "wallet_request_import_account"}:
+            return self.request_result
+        if name == "wallet_get_request_status":
+            return self.status_result
+        raise AssertionError(f"unexpected tool call: {name}")
+
+
 class WalletRuntimeAccountExportTests(unittest.TestCase):
+    def test_ensure_private_wallet_dir_creates_missing_directory(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            wallet_dir = Path(tmpdir) / "local-accounts" / "default"
+
+            ensure_private_wallet_dir(wallet_dir)
+
+            self.assertTrue(wallet_dir.is_dir())
+            self.assertEqual(wallet_dir.stat().st_mode & 0o777, 0o700)
+            self.assertEqual(wallet_dir.parent.stat().st_mode & 0o777, 0o700)
+
     def test_export_account_help_uses_output_file(self) -> None:
         completed = subprocess.run(
             [
@@ -52,43 +75,6 @@ class WalletRuntimeAccountExportTests(unittest.TestCase):
         self.assertNotEqual(completed.returncode, 0)
         self.assertIn("invalid choice: 'backup'", completed.stderr)
 
-    def test_resolve_account_export_wallet_dir_prefers_runtime_metadata(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            runtime_dir = Path(tmpdir) / "runtime"
-            wallet_dir = Path(tmpdir) / "wallet"
-            wallet_dir.mkdir()
-            metadata_path = runtime_paths(runtime_dir)["metadata_path"]
-            metadata_path.parent.mkdir(parents=True, exist_ok=True)
-            metadata_path.write_text(
-                json.dumps({"wallet_dir": str(wallet_dir)}),
-                encoding="utf-8",
-            )
-
-            self.assertEqual(
-                resolve_account_export_wallet_dir(runtime_dir, None),
-                wallet_dir.resolve(),
-            )
-
-    def test_resolve_account_export_wallet_dir_falls_back_to_runtime_config(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            runtime_dir = Path(tmpdir) / "runtime"
-            wallet_dir = Path(tmpdir) / "wallet"
-            wallet_dir.mkdir()
-            config_path = runtime_paths(runtime_dir)["config_path"]
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            config_path.write_text(
-                (
-                    '[[wallet_backends]]\n'
-                    f'account_dir = "{wallet_dir}"\n'
-                ),
-                encoding="utf-8",
-            )
-
-            self.assertEqual(
-                resolve_account_export_wallet_dir(runtime_dir, None),
-                wallet_dir.resolve(),
-            )
-
     def test_resolve_account_export_output_file_appends_timestamped_child_for_existing_parent(
         self,
     ) -> None:
@@ -105,74 +91,88 @@ class WalletRuntimeAccountExportTests(unittest.TestCase):
                     parent_dir.resolve() / "abcdef-private-key-export-20260414-120000.txt",
                 )
 
-    def test_resolve_account_export_chain_id_prefers_runtime_metadata(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            runtime_dir = Path(tmpdir) / "runtime"
-            metadata_path = runtime_paths(runtime_dir)["metadata_path"]
-            metadata_path.parent.mkdir(parents=True, exist_ok=True)
-            metadata_path.write_text(json.dumps({"chain_id": 251}), encoding="utf-8")
+    def test_import_account_help_is_registered(self) -> None:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(Path(__file__).with_name("wallet_runtime.py")),
+                "import-account",
+                "--help",
+            ],
+            text=True,
+            capture_output=True,
+            check=False,
+        )
 
-            self.assertEqual(resolve_account_export_chain_id(runtime_dir, None), 251)
+        self.assertEqual(completed.returncode, 0)
+        self.assertIn("--private-key-file", completed.stdout)
+        self.assertIn("--address", completed.stdout)
 
-    def test_resolve_account_export_chain_id_falls_back_to_runtime_config(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            runtime_dir = Path(tmpdir) / "runtime"
-            config_path = runtime_paths(runtime_dir)["config_path"]
-            config_path.parent.mkdir(parents=True, exist_ok=True)
-            config_path.write_text(
-                "[[wallet_backends]]\nchain_id = 250\n",
-                encoding="utf-8",
+    def test_request_account_export_submits_online_wallet_request(self) -> None:
+        client = FakeWalletClient(
+            request_result={"request_id": "req-export"},
+            status_result={
+                "status": "approved",
+                "result": {
+                    "kind": "exported_account",
+                    "address": "0x1",
+                    "output_file": "/tmp/account.key",
+                },
+            },
+        )
+
+        with patch("wallet_runtime.new_client_request_id", return_value="client-export"):
+            result = request_account_export(
+                client,  # type: ignore[arg-type]
+                account_address="0x1",
+                output_file=Path("/tmp/account.key"),
+                wallet_instance_id="local-default",
+                force=True,
+                ttl_seconds=300,
+                wait_timeout_seconds=1,
             )
 
-            self.assertEqual(resolve_account_export_chain_id(runtime_dir, None), 250)
+        self.assertEqual(result["request_id"], "req-export")
+        self.assertEqual(client.calls[0][0], "wallet_request_export_account")
+        self.assertEqual(client.calls[0][1]["client_request_id"], "client-export")
+        self.assertEqual(client.calls[0][1]["account_address"], "0x1")
+        self.assertEqual(client.calls[0][1]["output_file"], "/tmp/account.key")
+        self.assertTrue(client.calls[0][1]["force"])
+        self.assertEqual(client.calls[1], ("wallet_get_request_status", {"request_id": "req-export"}))
 
-    def test_resolve_account_export_chain_id_uses_explicit_arg(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            self.assertEqual(
-                resolve_account_export_chain_id(Path(tmpdir) / "runtime", 249), 249
+    def test_request_account_import_submits_online_wallet_request(self) -> None:
+        client = FakeWalletClient(
+            request_result={"request_id": "req-import"},
+            status_result={
+                "status": "approved",
+                "result": {
+                    "kind": "imported_account",
+                    "address": "0x2",
+                    "public_key": "0xpub",
+                    "curve": "ed25519",
+                    "is_default": False,
+                    "is_locked": True,
+                },
+            },
+        )
+
+        with patch("wallet_runtime.new_client_request_id", return_value="client-import"):
+            result = request_account_import(
+                client,  # type: ignore[arg-type]
+                private_key_file=Path("/tmp/import.key"),
+                account_address="0x2",
+                wallet_instance_id="local-default",
+                ttl_seconds=300,
+                wait_timeout_seconds=1,
             )
 
-    def test_export_account_private_key_invokes_export_binary(self) -> None:
-        with tempfile.TemporaryDirectory() as tmpdir:
-            base_dir = Path(tmpdir)
-            wallet_dir = base_dir / "wallet"
-            wallet_dir.mkdir()
-            output_file = base_dir / "account.key"
-            completed = subprocess.CompletedProcess(
-                args=["local-account-export"],
-                returncode=0,
-                stdout=json.dumps(
-                    {
-                        "address": "0x1",
-                        "wallet_dir": str(wallet_dir),
-                        "output_file": str(output_file),
-                    }
-                ),
-                stderr="",
-            )
-
-            with patch(
-                "wallet_runtime.launch_command",
-                return_value=(["local-account-export"], "/bin/local-account-export"),
-            ) as launch_command, patch(
-                "wallet_runtime.subprocess.run", return_value=completed
-            ) as subprocess_run:
-                result = export_account_private_key(
-                    wallet_dir=wallet_dir,
-                    destination_file=output_file,
-                    runtime_dir=base_dir / "runtime",
-                    account_address="0x1",
-                    chain_id=254,
-                    password="secret\n",
-                    force=False,
-                )
-
-            launch_args = launch_command.call_args.kwargs["program_args"]
-            self.assertIn("--address", launch_args)
-            self.assertIn("0x1", launch_args)
-            self.assertIn("--password-stdin", launch_args)
-            self.assertEqual(subprocess_run.call_args.kwargs["input"], "secret\n")
-            self.assertEqual(result["export_launch"], "/bin/local-account-export")
+        self.assertEqual(result["request_id"], "req-import")
+        self.assertEqual(client.calls[0][0], "wallet_request_import_account")
+        self.assertEqual(client.calls[0][1]["client_request_id"], "client-import")
+        self.assertEqual(client.calls[0][1]["private_key_file"], "/tmp/import.key")
+        self.assertEqual(client.calls[0][1]["wallet_instance_id"], "local-default")
+        self.assertEqual(client.calls[0][1]["account_address"], "0x2")
+        self.assertEqual(client.calls[1], ("wallet_get_request_status", {"request_id": "req-import"}))
 
 
 if __name__ == "__main__":

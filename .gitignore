@@ -1,6 +1,5 @@
 .DS_Store
 .idea/
 target/
-.runtime/
 __pycache__/
 *.pyc

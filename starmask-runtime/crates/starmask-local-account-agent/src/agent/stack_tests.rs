@@ -37,8 +37,9 @@ use crate::{
 };
 use starmask_core::{CoordinatorCommand, CoordinatorConfig};
 use starmask_types::{
-    JsonRpcRequest, JsonRpcResponse, PresentationId, PulledRequest, RequestHasAvailableParams,
-    RequestPresentedParams, WalletCapability, WalletInstanceId,
+    DAEMON_PROTOCOL_VERSION, GENERIC_BACKEND_PROTOCOL_VERSION, JsonRpcRequest, JsonRpcResponse,
+    PresentationId, PulledRequest, RequestHasAvailableParams, RequestPresentedParams,
+    WalletCapability, WalletInstanceId,
 };
 use starmaskd::{
     config::{LocalAccountDirBackendConfig, LocalPromptMode, WalletBackendConfig},
@@ -73,6 +74,14 @@ impl ApprovalPrompt for StubPrompt {
     }
 
     fn prompt_for_create_account(
+        &self,
+        _request: &PulledRequest,
+        _capabilities: &[WalletCapability],
+    ) -> std::result::Result<PromptApproval, RequestRejection> {
+        Ok(self.response.clone())
+    }
+
+    fn prompt_for_import_account(
         &self,
         _request: &PulledRequest,
         _capabilities: &[WalletCapability],
@@ -381,7 +390,7 @@ async fn local_socket_stack_round_trips_sign_message_and_has_available() {
         "req-create-message",
         "request.createSignMessage",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "client_request_id": "client-stack-message",
             "account_address": harness.account_address.to_string(),
             "wallet_instance_id": "local-default",
@@ -400,7 +409,7 @@ async fn local_socket_stack_round_trips_sign_message_and_has_available() {
         "req-has-available-before",
         "request.hasAvailable",
         json!(RequestHasAvailableParams {
-            protocol_version: 2,
+            protocol_version: GENERIC_BACKEND_PROTOCOL_VERSION,
             wallet_instance_id: WalletInstanceId::new("local-default").unwrap(),
         }),
     )
@@ -417,7 +426,7 @@ async fn local_socket_stack_round_trips_sign_message_and_has_available() {
         "req-status-message",
         "request.getStatus",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "request_id": request_id,
         }),
     )
@@ -434,7 +443,7 @@ async fn local_socket_stack_round_trips_sign_message_and_has_available() {
         "req-has-available-after",
         "request.hasAvailable",
         json!(RequestHasAvailableParams {
-            protocol_version: 2,
+            protocol_version: GENERIC_BACKEND_PROTOCOL_VERSION,
             wallet_instance_id: WalletInstanceId::new("local-default").unwrap(),
         }),
     )
@@ -457,7 +466,7 @@ async fn local_socket_stack_round_trips_sign_transaction() {
         "req-create-transaction",
         "request.createSignTransaction",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "client_request_id": "client-stack-transaction",
             "account_address": harness.account_address.to_string(),
             "wallet_instance_id": "local-default",
@@ -479,7 +488,7 @@ async fn local_socket_stack_round_trips_sign_transaction() {
         "req-status-transaction",
         "request.getStatus",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "request_id": request_id,
         }),
     )
@@ -518,7 +527,7 @@ async fn local_socket_stack_logs_omit_sensitive_signing_material() {
         "req-log-message",
         "request.createSignMessage",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "client_request_id": "client-log-message",
             "account_address": harness.account_address.to_string(),
             "wallet_instance_id": "local-default",
@@ -540,7 +549,7 @@ async fn local_socket_stack_logs_omit_sensitive_signing_material() {
         "req-log-transaction",
         "request.createSignTransaction",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "client_request_id": "client-log-transaction",
             "account_address": harness.account_address.to_string(),
             "wallet_instance_id": "local-default",
@@ -577,7 +586,7 @@ async fn local_backend_restart_before_presented_requeues_after_lease_expiry() {
         "req-create-requeue",
         "request.createSignMessage",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "client_request_id": "client-requeue",
             "account_address": harness.account_address.to_string(),
             "wallet_instance_id": "local-default",
@@ -636,7 +645,7 @@ async fn local_backend_restart_after_presented_resumes_same_instance() {
         "req-create-resume",
         "request.createSignMessage",
         json!({
-            "protocol_version": 1,
+            "protocol_version": DAEMON_PROTOCOL_VERSION,
             "client_request_id": "client-resume",
             "account_address": harness.account_address.to_string(),
             "wallet_instance_id": "local-default",
